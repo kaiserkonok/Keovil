@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+venv/
+.venv/
+rag_env/
+
+# FAISS vectorstore
+faiss_store/
+
+# Data (real, sensitive)
+test_data/
+
+# Python egg info
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# IDE specific
+.vscode/
+.idea/
+
