@@ -1,26 +1,21 @@
 """
 intelligent_rag_chunker_fixed.py
 
-Corrected production-grade intelligent chunker for RAG systems (ChatGPT-style).
-
-This file fixes metadata aggregation, overlap flattening and prevents
-semantic-boundary splits across atomic blocks (tables/lists/code). It
-uses sentence-level overlaps to preserve structure and provides cleaner
-chunk metadata (block_types list).
-
-Author: Regenerated for Kaiser Konok — fixes applied
+Final Code: Raw Table Row Chunking
+This version reverts to keeping table rows as raw text, separating each row
+into its own chunk with a single newline as the separator.
 """
 
 from __future__ import annotations
 
 import os
 import re
-import json
 import uuid
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
+import json
 
-# Optional dependencies
+# Optional dependencies... (omitted for brevity, assume they are still here)
 try:
     import numpy as np
 except Exception:
@@ -33,17 +28,14 @@ except Exception:
     SentenceTransformer = None
     cosine_similarity = None
 
-
-# ----------------------------- Utilities -----------------------------
+# ----------------------------- Utilities & Data Classes (Unchanged) -----------------------------
 
 def _gen_id(prefix: str = "chunk") -> str:
     return f"{prefix}_{uuid.uuid4().hex[:8]}"
 
-
 def _approx_tokens(text: str) -> int:
     words = len(text.split())
     return int(words * 1.3)
-
 
 def _split_sentences(text: str) -> List[str]:
     if not text or not text.strip():
@@ -51,15 +43,11 @@ def _split_sentences(text: str) -> List[str]:
     sents = re.split(r'(?<=[.!?])\s+', text.strip())
     return [s.strip() for s in sents if s.strip()]
 
-
-# ----------------------------- Data classes -----------------------------
-
 @dataclass
 class Block:
     type: str
     text: str
     meta: Dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class Chunk:
@@ -67,8 +55,7 @@ class Chunk:
     text: str
     meta: Dict[str, Any] = field(default_factory=dict)
 
-
-# ----------------------------- Extractor -----------------------------
+# ----------------------------- Extractor (Unchanged) -----------------------------
 
 _HEADING_RE = re.compile(r"^\s{0,3}(#{1,6}\s+|[A-Z][A-Za-z0-9\- ]{2,120}:$)")
 _LIST_RE = re.compile(r"^(\s*[-*+]\s+|\s*\d+\.|\s*•\s+)")
@@ -127,7 +114,8 @@ def extract_structured_blocks_from_text(text: str) -> List[Block]:
             buf.append(s)
             continue
 
-        if _TABLE_LINE_RE.search(s) and ("|" in s):
+        # Table detection now includes the separator line or lines containing pipes
+        if _TABLE_LINE_RE.search(s) and ("|" in s) or all(c in ('-', '|', ' ', ':') for c in s.strip()):
             if cur_type != "table":
                 flush()
                 cur_type = "table"
@@ -143,10 +131,9 @@ def extract_structured_blocks_from_text(text: str) -> List[Block]:
     flush()
     return blocks
 
+# ----------------------------- Embedding helper (Unchanged) -----------------------------
 
-# ----------------------------- Embedding helper -----------------------------
 _embedding_model = None
-
 
 def load_embedding_model(name: str = "all-MiniLM-L6-v2"):
     global _embedding_model
@@ -191,6 +178,50 @@ class IntelligentChunker:
         self.semantic_threshold = semantic_threshold
         self.embed_model_name = embed_model_name
 
+    def _transform_universal_table(self, table_text: str) -> List[str]:
+        """
+        Splits the raw table text into individual rows, keeping the raw format.
+        Headers and separator lines are discarded.
+        """
+        lines = [line.strip() for line in table_text.split('\n') if line.strip()]
+        if not lines:
+            return []
+
+        headers: List[str] = []
+        data_lines: List[str] = []
+        found_separator = False
+
+        for line in lines:
+            # Must check for the pipe separator to distinguish data lines
+            if not _TABLE_LINE_RE.search(line):
+                continue
+
+            parts = [p.strip() for p in line.split('|') if p.strip()]
+
+            # Detect the separator line (like |---|---|)
+            if all(re.match(r'[-=]+', p) for p in parts) and len(parts) > 1:
+                found_separator = True
+                continue
+
+            # If we haven't found the separator yet, the first valid line is the header
+            if not found_separator and not headers and len(parts) > 1:
+                headers = parts
+                continue
+
+            # After the separator, all valid lines are data
+            if found_separator and len(parts) > 1:
+                # CRITICAL CHANGE: Keep the raw line, only strip outer whitespace
+                data_lines.append(line.strip())
+
+            # If we didn't find a separator, all lines after the header are data (simpler table)
+            elif len(headers) > 0 and line != lines[0]:
+                data_lines.append(line.strip())
+
+        # The data_lines list now contains the raw text for each row,
+        # which will be used as the atomic chunks.
+        return data_lines
+
+    # --- Rest of the Chunking Logic (Unchanged) ---
     def chunk_document(self, text: str, meta: Optional[Dict[str, Any]] = None) -> List[Chunk]:
         if meta is None:
             meta = {}
@@ -241,42 +272,82 @@ class IntelligentChunker:
             cur_pack = []
             cur_meta_sources = []
 
+        # ----------------------------------------------------
+        # 🟢 START: CHUNKING LOOP WITH ATOMIC TABLE FIX
+        # ----------------------------------------------------
+
         for idx, b in enumerate(atomic_blocks):
-            b_tokens = _approx_tokens(b.text)
+            # STEP 1: Transform Tables Universally
+            # current_block_texts will be a list of raw table rows (for tables) or just [b.text] (for everything else)
+            current_block_texts = [b.text]
+            if b.type == "table":
+                # For tables, we get one raw line per row
+                current_block_texts = self._transform_universal_table(b.text)
 
-            if b_tokens > self.max_tokens:
-                sents = _split_sentences(b.text)
-                pack: List[str] = []
-                for s in sents:
-                    if _approx_tokens(" ".join(pack + [s])) <= self.target_tokens:
-                        pack.append(s)
+            # Check for a split boundary BEFORE processing the block
+            is_semantic_boundary = idx in boundaries
+
+            # STEP 2: Process the Block(s) (handles original blocks and new table sentences)
+            for block_text in current_block_texts:
+                block_tokens = _approx_tokens(block_text)
+
+                # This handles case where the original block was huge (e.g., massive code block)
+                if block_tokens > self.max_tokens:
+                    sents = _split_sentences(block_text)
+                    pack: List[str] = []
+                    for s in sents:
+                        if _approx_tokens(" ".join(pack + [s])) <= self.target_tokens:
+                            pack.append(s)
+                        else:
+                            if pack:
+                                cur_pack.extend(pack)
+                                cur_meta_sources.extend([b.type])
+                                flush_pack()
+                            pack = [s]
+                    if pack:
+                        cur_pack.extend(pack)
+                        cur_meta_sources.extend([b.type])
+                        flush_pack()
+                    continue
+
+                cur_text = "\n\n".join(cur_pack + [block_text]).strip()
+
+                # Check 1: Exceeds target size? OR Check 2: Was the *previous* block a semantic boundary?
+                if _approx_tokens(cur_text) > self.target_tokens or is_semantic_boundary:
+                    if not cur_pack:
+                        # If the pack is empty, start a new one with the current block
+                        cur_pack.append(block_text)
+                        cur_meta_sources.append(b.type)
+                        flush_pack()
                     else:
-                        if pack:
-                            cur_pack.extend(pack)
-                            cur_meta_sources.extend([b.type])
-                            flush_pack()
-                        pack = [s]
-                if pack:
-                    cur_pack.extend(pack)
-                    cur_meta_sources.extend([b.type])
-                    flush_pack()
-                continue
-
-            cur_text = "\n\n".join(cur_pack + [b.text]).strip()
-            if _approx_tokens(cur_text) > self.target_tokens or idx in boundaries:
-                if not cur_pack:
-                    cur_pack.append(b.text)
-                    cur_meta_sources.append(b.type)
-                    flush_pack()
+                        # Flush the existing pack, then start a new one with the current block
+                        flush_pack()
+                        cur_pack.append(block_text)
+                        cur_meta_sources.append(b.type)
+                        is_semantic_boundary = False # Boundary handled
                 else:
-                    flush_pack()
-                    cur_pack.append(b.text)
+                    # Continue packing
+                    cur_pack.append(block_text)
                     cur_meta_sources.append(b.type)
-            else:
-                cur_pack.append(b.text)
-                cur_meta_sources.append(b.type)
+
+                # ------------------------------------------------------------------
+                # 🟢 CRITICAL FIX: FORCE ATOMIC CHUNKING FOR TABLE RECORDS
+                # ------------------------------------------------------------------
+                # If we processed a block that originated from a table, flush it immediately.
+                # This makes each semantic table sentence its own dedicated, atomic chunk.
+                if b.type == "table":
+                    flush_pack()
+                    is_semantic_boundary = False # Ensure the boundary doesn't trigger again
+
+
+            # STEP 3: Ensure the boundary is handled if it was triggered for non-table blocks
+            if is_semantic_boundary and cur_pack:
+                flush_pack()
 
         flush_pack()
+        # ----------------------------------------------------
+        # 🟢 END: CHUNKING LOOP
+        # ----------------------------------------------------
 
         chunks = self._refinement_pass(chunks)
 
@@ -339,7 +410,7 @@ class IntelligentChunker:
         return out
 
 
-# ----------------------------- Helpers -----------------------------
+# ----------------------------- Helpers (Unchanged) -----------------------------
 
 def _naive_similarity(a: str, b: str) -> float:
     def trigrams(s: str):
@@ -355,14 +426,14 @@ def _naive_similarity(a: str, b: str) -> float:
     return inter / denom
 
 
-# ----------------------------- File helpers -----------------------------
+# ----------------------------- File helpers (Unchanged) -----------------------------
 
 def chunk_file(path: str, chunker: Optional[IntelligentChunker] = None) -> List[Chunk]:
     if chunker is None:
         chunker = IntelligentChunker()
 
     ext = os.path.splitext(path)[1].lower()
-    print(f'File Extension: ext')
+    print(f'File Extension: {ext}')
     text = ""
     if ext == ".txt":
         with open(path, 'r', encoding='utf-8', errors='ignore') as f:
@@ -396,7 +467,6 @@ def chunk_file(path: str, chunker: Optional[IntelligentChunker] = None) -> List[
             text = f.read()
 
     return chunker.chunk_document(text, meta={"source_path": path})
-
 
 # ----------------------------- Module usage example -----------------------------
 if __name__ == "__main__":

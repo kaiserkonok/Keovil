@@ -435,7 +435,7 @@ class CollegeRAG:
             # Print the new Probability Score
             print(
                 f"{Colors.BOLD}[{i + 1}] Prob Score: {probabilities[idx]:.4f}{Colors.ENDC} | Source: {source} (ID: {chunk_id})")
-            print(f"    Snippet: {doc.page_content[:150].replace(os.linesep, ' ')}...{Colors.ENDC}")
+            print(f"    Snippet: {doc.page_content.replace(os.linesep, ' ')}...{Colors.ENDC}")
         print(f"{Colors.HEADER}--------------------------------------{Colors.ENDC}")
 
         # 7️⃣ Combine top docs into context
