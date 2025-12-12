@@ -386,41 +386,49 @@ class CollegeRAG:
         scores_array = np.array(scores)
         probabilities = 1 / (1 + np.exp(-scores_array))  # Apply Sigmoid function
 
-        # 🟢 NEW: 5.5 Dynamic Relative Filtering (The Robust Solution)
+        # 🟢 NEW: 5.5 Adaptive Top-K Selection (The "Gap" Method)
 
         if not probabilities.size:
-            # This should be caught by the earlier check, but kept for robustness
-            return "No documents found after RRF."
+            print(f"{Colors.FAIL}[DEBUG] No documents found after RRF.{Colors.ENDC}")
+            return "No relevant documents found."
 
-        # 1. Determine the highest score (the ceiling)
-        MAX_PROBABILITY = np.max(probabilities)
+        # 1. Start with the indices sorted by the reranker (descending)
+        sorted_indices = np.argsort(probabilities)[::-1]
+        sorted_probabilities = probabilities[sorted_indices]
 
-        # 2. Set the Relative Confidence Threshold
-        # We include any chunk that is at least 70% as good as the best one.
-        RELATIVE_CONFIDENCE_PERCENTAGE = 0.70
-        DYNAMIC_THRESHOLD = MAX_PROBABILITY * RELATIVE_CONFIDENCE_PERCENTAGE
+        # 2. Check for a significant score drop (We only look at the top self.top_k chunks for the gap)
+        # We calculate the drop between adjacent chunks.
+        score_drops = []
+        for i in range(1, min(self.top_k, len(sorted_probabilities))):
+            # Calculate the drop from the previous chunk
+            drop = sorted_probabilities[i - 1] - sorted_probabilities[i]
+            score_drops.append((drop, i))
 
-        # 3. Set a minimum absolute floor (to block total noise, like the 0.0001 table chunks)
-        ABSOLUTE_FLOOR = 0.10  # Must be at least 10% confident.
+        # 3. Determine the cut-off point
+        # We are looking for the largest score drop. This suggests the transition from relevant to noise.
+        MAX_DROP_THRESHOLD = 0.05  # A minimum drop of 5% is needed to count as a major separation
+        cut_index = self.top_k  # Default to the max (7) if no major gap is found
 
-        # Filter the indices: Must meet the DYNAMIC_THRESHOLD OR the ABSOLUTE_FLOOR
-        filtered_indices = [
-            i for i, prob in enumerate(probabilities)
-            if prob >= DYNAMIC_THRESHOLD or prob >= ABSOLUTE_FLOOR
-        ]
+        if score_drops:
+            # Find the largest drop that is also greater than the absolute threshold (0.05)
+            best_drop_index = -1
+            max_drop = -1
 
-        # Ensure the absolute best chunk is always included if it passes the absolute floor
-        if not filtered_indices and MAX_PROBABILITY >= ABSOLUTE_FLOOR:
-            # This covers the case where the highest score is low (e.g., 0.40) and the
-            # dynamic threshold (0.28) failed to capture it, but it's still the best bet.
-            filtered_indices.append(np.argmax(probabilities))
+            for drop, index in score_drops:
+                if drop > max_drop and drop > MAX_DROP_THRESHOLD:
+                    max_drop = drop
+                    best_drop_index = index
 
-        if not filtered_indices:
-            print(f"{Colors.FAIL}[DEBUG] All documents filtered below absolute floor ({ABSOLUTE_FLOOR}).{Colors.ENDC}")
-            return "No highly relevant documents found to answer the question."
+            if best_drop_index != -1:
+                # The cut should happen *at* the index where the drop occurred
+                cut_index = best_drop_index
 
-        # Re-sort the *filtered* results by probability score
-        filtered_indices_sorted = sorted(filtered_indices, key=lambda i: probabilities[i], reverse=True)[:self.top_k]
+        # 4. Filter the final list (Always includes at least 1, and max self.top_k)
+        final_indices = sorted_indices[:max(1, cut_index)]
+        top_docs_indices = final_indices
+
+        # 5. Re-sort the final selection for the final output (not strictly necessary as it's already sorted)
+        filtered_indices_sorted = top_docs_indices
 
         # 6️⃣ Collect top documents based on reranker
         print(
