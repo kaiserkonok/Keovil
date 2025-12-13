@@ -6,30 +6,183 @@
   <title>RAG Chat — Lora</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+
   <style>
     :root{
-      --bg:#0b0c0f; --panel:#0f1115; --muted:#9aa3b2; --accent:#6cc0ff; --accent-2:#7b61ff;
+      --bg:#07080b;
+      --bg-soft:#0b0c10;
+      --panel:#0e1016;
+      --panel-2:#10131a;
+      --muted:#9aa3b2;
+      --text:#e6eef6;
+      --accent:#7b61ff;
     }
-    html,body{height:100%; margin:0; font-family:'Inter',system-ui,Arial; background:linear-gradient(180deg,#09090b,#0f1115); color:#e6eef6;}
-    .app{height:100vh; display:flex; flex-direction:column;}
-    .header{height:60px; display:flex; align-items:center; padding:0 18px; border-bottom:1px solid rgba(255,255,255,0.02);}
-    .brand{font-weight:700; color:var(--accent-2); font-size:18px;}
-    .main{flex:1; display:flex; flex-direction:column; overflow:hidden;}
-    #messages{flex:1; padding:22px; overflow:auto; display:flex; flex-direction:column; gap:12px;}
-    .bubble{max-width:72%; padding:12px 14px; border-radius:12px; word-break:break-word; box-shadow:0 6px 22px rgba(0,0,0,0.6);}
-    .user{align-self:flex-end; background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#041025; font-weight:600;}
-    .ai{align-self:flex-start; background:#131417; color:#e6eef6; border:1px solid rgba(255,255,255,0.02);}
-    .meta{font-size:12px; color:var(--muted); margin-top:6px;}
-    .inputBar{display:flex; gap:10px; padding:14px; border-top:1px solid rgba(255,255,255,0.02); background:linear-gradient(180deg,#0b0b0d,#0f1115);}
-    .input{flex:1; padding:12px 14px; border-radius:10px; background:#0e0f11; border:1px solid rgba(255,255,255,0.02); color:#fff; font-size:15px;}
-    .sendBtn{padding:10px 16px; border-radius:10px; background:linear-gradient(90deg,var(--accent),var(--accent-2)); border:none; color:#041025; font-weight:700; cursor:pointer;}
-    .typing {display:inline-flex; gap:6px; align-items:center; padding:6px 10px; border-radius:10px; background:#111214;}
-    .dot { width:7px; height:7px; background:#9aa3b2; border-radius:50%; opacity:0.35; animation: blink 1s infinite; }
-    .dot:nth-child(2){animation-delay:.12s} .dot:nth-child(3){animation-delay:.24s}
-    @keyframes blink{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}
-    @media (max-width:700px){ .bubble{max-width:86%} .brand{font-size:16px} }
+
+    html,body{
+      height:100%;
+      margin:0;
+      font-family:'Inter',system-ui,Arial;
+      background:
+        radial-gradient(1200px 600px at 50% -10%, #0f1016 0%, transparent 60%),
+        linear-gradient(180deg,#07080b,#0b0c10);
+      color:var(--text);
+    }
+
+    body{
+      display:flex;
+      align-items:center;
+      justify-content:center;
+    }
+
+    .app{
+      width:100%;
+      max-width:980px;
+      height:92vh;
+      display:flex;
+      flex-direction:column;
+      background:transparent;
+    }
+
+    .header{
+      height:60px;
+      display:flex;
+      align-items:center;
+      padding:0 22px;
+    }
+
+    .brand{
+      font-weight:700;
+      color:#c7bfff;
+      font-size:17px;
+      letter-spacing:.3px;
+    }
+
+    .meta{
+      font-size:12px;
+      color:var(--muted);
+    }
+
+    .main{
+      flex:1;
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+
+    #messages{
+      flex:1;
+      padding:26px 22px;
+      overflow:auto;
+      display:flex;
+      flex-direction:column;
+      gap:14px;
+    }
+
+    .bubble{
+      max-width:70%;
+      padding:12px 14px;
+      border-radius:14px;
+      word-break:break-word;
+      line-height:1.45;
+    }
+
+    .user{
+      align-self:flex-end;
+      background:#1a1e2b;
+      color:#eaf0ff;
+      font-weight:600;
+    }
+
+    .ai{
+      align-self:flex-start;
+      background:#0e1016;
+      color:var(--text);
+    }
+
+    .inputBar{
+      display:flex;
+      gap:12px;
+      padding:16px 22px 20px;
+    }
+
+    .input{
+      flex:1;
+      padding:13px 15px;
+      border-radius:12px;
+      background:#0c0e14;
+      border:none;
+      outline:none;
+      color:#fff;
+      font-size:15px;
+    }
+
+    .input::placeholder{
+      color:#7d8696;
+    }
+
+    .input:focus{
+      outline:1px solid rgba(123,97,255,.25);
+    }
+
+    /* 🔥 Dark premium button */
+    .sendBtn{
+      padding:12px 18px;
+      border-radius:12px;
+      background:#141726;
+      border:1px solid rgba(255,255,255,0.04);
+      color:#e6e9ff;
+      font-weight:600;
+      cursor:pointer;
+      transition:
+        background .15s ease,
+        transform .12s ease,
+        border-color .15s ease;
+    }
+
+    .sendBtn:hover{
+      background:#191d2f;
+      border-color:rgba(123,97,255,.25);
+      transform:translateY(-1px);
+    }
+
+    .sendBtn:active{
+      transform:translateY(0);
+    }
+
+    .typing{
+      display:inline-flex;
+      gap:6px;
+      align-items:center;
+      padding:6px 10px;
+      border-radius:10px;
+      background:#0e1016;
+    }
+
+    .dot{
+      width:7px;
+      height:7px;
+      background:#9aa3b2;
+      border-radius:50%;
+      opacity:.35;
+      animation:blink 1s infinite;
+    }
+
+    .dot:nth-child(2){animation-delay:.12s}
+    .dot:nth-child(3){animation-delay:.24s}
+
+    @keyframes blink{
+      0%{opacity:.25}
+      50%{opacity:1}
+      100%{opacity:.25}
+    }
+
+    @media (max-width:900px){
+      .app{height:100vh}
+      .bubble{max-width:85%}
+    }
   </style>
 </head>
+
 <body>
   <div class="app">
     <div class="header">
@@ -39,10 +192,10 @@
     </div>
 
     <div class="main">
-      <div id="messages" aria-live="polite"></div>
+      <div id="messages"></div>
 
       <div class="inputBar">
-        <input id="inputBox" class="input" placeholder="Type your question and press Enter..." autocomplete="off" />
+        <input id="inputBox" class="input" placeholder="Type your question…" autocomplete="off" />
         <button id="sendBtn" class="sendBtn">Send</button>
       </div>
     </div>
@@ -53,7 +206,6 @@ const messages = document.getElementById('messages');
 const inputBox = document.getElementById('inputBox');
 const sendBtn = document.getElementById('sendBtn');
 
-// Ephemeral, per-tab chat history
 let history = [];
 
 function appendUser(text){
@@ -67,108 +219,74 @@ function appendUser(text){
 function appendAssistantPlaceholder(){
   const el = document.createElement('div');
   el.className = 'bubble ai';
-  el.dataset.streaming = '1';
-  el.textContent = '';
   messages.appendChild(el);
-  messages.scrollTop = messages.scrollHeight;
   return el;
 }
 
 function appendTyping(el){
-  el.innerHTML = '';
-  const span = document.createElement('span');
-  span.className = 'typing';
-  span.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-  el.appendChild(span);
-  messages.scrollTop = messages.scrollHeight;
+  el.innerHTML = `
+    <span class="typing">
+      <span class="dot"></span>
+      <span class="dot"></span>
+      <span class="dot"></span>
+    </span>`;
 }
 
 function removeTyping(el){
-  if (!el) return;
   el.innerHTML = '';
 }
 
 async function streamQuery(query){
-  // Show user bubble in UI only (do not push to history yet)
   appendUser(query);
-
-  // placeholder assistant bubble
   const placeholder = appendAssistantPlaceholder();
   appendTyping(placeholder);
 
-  // POST and stream with history
   const res = await fetch('/api/stream_chat', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({query, history})
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({query, history})
   });
 
-  if (!res.ok){
-    if (placeholder.querySelector('.typing')) removeTyping(placeholder);
-    placeholder.textContent = '(stream error)';
+  if(!res.ok){
+    placeholder.textContent='(error)';
     return;
   }
 
-  const reader = res.body.getReader();
-  const dec = new TextDecoder();
-  let buffer = '';
-  let done = false;
-  let assistantAccum = ''; // collect assistant text for history
+  const reader=res.body.getReader();
+  const decoder=new TextDecoder();
+  let buffer='', text='';
 
-  while(!done){
-    const { value, done: readerDone } = await reader.read();
-    if (readerDone) { done = true; break; }
-    buffer += dec.decode(value, {stream: true});
+  while(true){
+    const {value,done}=await reader.read();
+    if(done) break;
 
-    let parts = buffer.split('\n\n');
-    buffer = parts.pop();
+    buffer+=decoder.decode(value,{stream:true});
+    const parts=buffer.split('\n\n');
+    buffer=parts.pop();
 
-    for (const part of parts){
-      if (!part.trim()) continue;
-
-      if (part.includes('event: typing')) continue;
-      if (part.includes('event: done')) continue;
-
-      const lines = part.split('\n').filter(Boolean);
-      for (const ln of lines){
-        const chunk = ln.replace(/^data:\s?/, '');
-        if (placeholder.querySelector('.typing')) {
-          removeTyping(placeholder);
-          placeholder.textContent = '';
-        }
-        placeholder.textContent += chunk;
-        assistantAccum += chunk;
-        messages.scrollTop = messages.scrollHeight;
-      }
+    for(const part of parts){
+      if(!part.trim()||part.includes('event:')) continue;
+      const chunk=part.replace(/^data:\s?/,'');
+      if(placeholder.querySelector('.typing')) removeTyping(placeholder);
+      placeholder.textContent+=chunk;
+      text+=chunk;
+      messages.scrollTop=messages.scrollHeight;
     }
   }
 
-  if (buffer.trim()){
-    const leftover = buffer.split('\n').map(l=>l.replace(/^data:\s?/,'')).join('\n');
-    if (placeholder.querySelector('.typing')) removeTyping(placeholder);
-    placeholder.textContent += leftover;
-    assistantAccum += leftover;
-  }
-
-  // ✅ Now push both user and assistant together
-  history.push({role: 'user', content: query});
-  history.push({role: 'assistant', content: assistantAccum});
-
-  messages.scrollTop = messages.scrollHeight;
+  history.push({role:'user',content:query});
+  history.push({role:'assistant',content:text});
 }
 
-sendBtn.addEventListener('click', ()=>{
-  const q = inputBox.value.trim();
-  if (!q) return;
-  inputBox.value = '';
+sendBtn.onclick=()=>{
+  const q=inputBox.value.trim();
+  if(!q) return;
+  inputBox.value='';
   streamQuery(q);
-});
+};
 
-inputBox.addEventListener('keydown', (e)=>{
-  if (e.key === 'Enter'){
-    e.preventDefault();
-    sendBtn.click();
-  }
+inputBox.addEventListener('keydown',e=>{
+  if(e.key==='Enter'){e.preventDefault();sendBtn.click();}
 });
 
 inputBox.focus();
