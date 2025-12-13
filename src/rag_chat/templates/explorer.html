@@ -57,7 +57,6 @@
         .pane{ background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00)); border-radius:10px; padding:12px; height:calc(100% - 70px); overflow:auto; border:1px solid rgba(255,255,255,0.02); }
         textarea.editor{ width:100%; height:100%; background:transparent; color:#e6eef6; border:none; outline:none; resize:none; font-family: 'Inter', monospace; font-size:14px; line-height:1.5; }
 
-        /* footer small */
         .muted{ color:var(--muted); font-size:13px; }
 
         /* confirm dialog */
@@ -68,326 +67,285 @@
     </style>
 </head>
 <body>
-    <div class="left">
-        <div class="topbar">
-            <div class="logo">RAG Explorer</div>
-            <div style="flex:1"></div>
-            <button id="refreshBtn" class="btn small">Refresh</button>
-        </div>
-
-        <div class="controls">
-            <div style="flex:1" class="search">
-                <input id="searchInput" class="search-input" placeholder="Search file names..." />
-            </div>
-            <button id="newFolderBtn" class="action-btn small">New Folder</button>
-            <label class="btn small" style="display:inline-block">
-                Upload
-                <input id="uploadInput" type="file" style="display:none" />
-            </label>
-        </div>
-
-        <div id="fileList" class="file-list">
-            <!-- dynamically injected -->
-        </div>
-
-        <div style="margin-top:8px" class="muted">Path: <span id="currentPath">/</span></div>
+<div class="left">
+    <div class="topbar">
+        <div class="logo">RAG Explorer</div>
+        <div style="flex:1"></div>
+        <button id="refreshBtn" class="btn small">Refresh</button>
     </div>
 
-    <div class="right">
-        <div class="header">
-            <div>
-                <div class="file-name" id="selectedName">Select a file</div>
-                <div class="muted" id="selectedMeta">No file selected</div>
-            </div>
-            <div class="actions">
-                <button id="downloadBtn" class="action-btn">Download</button>
-                <button id="renameBtn" class="action-btn">Rename</button>
-                <button id="deleteBtn" class="action-btn" style="color:var(--danger); border-color:rgba(255,107,107,0.12)">Delete</button>
-                <button id="saveBtn" class="action-btn primary">Save</button>
-            </div>
+    <div class="controls">
+        <div style="flex:1" class="search">
+            <input id="searchInput" class="search-input" placeholder="Search file names..." />
         </div>
+        <button id="newFolderBtn" class="action-btn small">New Folder</button>
+        <label class="btn small" style="display:inline-block">
+            Upload
+            <input id="uploadInput" type="file" style="display:none" />
+        </label>
+    </div>
 
-        <div class="pane">
-            <textarea id="editor" class="editor" placeholder="File content will appear here..." disabled></textarea>
+    <div id="fileList" class="file-list"></div>
+
+    <div style="margin-top:8px" class="muted">Path: <span id="currentPath">/</span></div>
+</div>
+
+<div class="right">
+    <div class="header">
+        <div>
+            <div class="file-name" id="selectedName">Select a file</div>
+            <div class="muted" id="selectedMeta">No file selected</div>
         </div>
-
-        <div style="display:flex; justify-content:space-between; align-items:center">
-            <div class="muted" id="footerStatus">Ready</div>
-            <div class="muted">Files: <span id="fileCount">0</span></div>
+        <div class="actions">
+            <button id="downloadBtn" class="action-btn">Download</button>
+            <button id="renameBtn" class="action-btn">Rename</button>
+            <button id="deleteBtn" class="action-btn" style="color:var(--danger); border-color:rgba(255,107,107,0.12)">Delete</button>
+            <button id="saveBtn" class="action-btn primary">Save</button>
         </div>
     </div>
 
-    <!-- confirm -->
-    <div id="confirm" class="confirm">
-        <div id="confirmText">Confirm?</div>
-        <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
-            <button id="confirmNo" class="action-btn">No</button>
-            <button id="confirmYes" class="action-btn primary">Yes</button>
-        </div>
+    <div class="pane">
+        <textarea id="editor" class="editor" placeholder="File content will appear here..." disabled></textarea>
     </div>
 
-    <script>
-        const fileListEl = document.getElementById('fileList');
-        const editorEl = document.getElementById('editor');
-        const selectedNameEl = document.getElementById('selectedName');
-        const selectedMetaEl = document.getElementById('selectedMeta');
-        const footerStatus = document.getElementById('footerStatus');
-        const fileCountEl = document.getElementById('fileCount');
-        const currentPathEl = document.getElementById('currentPath');
+    <div style="display:flex; justify-content:space-between; align-items:center">
+        <div class="muted" id="footerStatus">Ready</div>
+        <div class="muted">Files: <span id="fileCount">0</span></div>
+    </div>
+</div>
 
-        let currentPath = ""; // relative
-        let selectedPath = null; // relative path to file
-        let filesCache = [];
+<!-- confirm -->
+<div id="confirm" class="confirm">
+    <div id="confirmText">Confirm?</div>
+    <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
+        <button id="confirmNo" class="action-btn">No</button>
+        <button id="confirmYes" class="action-btn primary">Yes</button>
+    </div>
+</div>
 
-        async function apiList(path="") {
-            const url = '/api/explorer/list' + (path ? ('?path=' + encodeURIComponent(path)) : '');
-            const res = await fetch(url);
-            return res.json();
-        }
+<script>
+    const fileListEl = document.getElementById('fileList');
+    const editorEl = document.getElementById('editor');
+    const selectedNameEl = document.getElementById('selectedName');
+    const selectedMetaEl = document.getElementById('selectedMeta');
+    const footerStatus = document.getElementById('footerStatus');
+    const fileCountEl = document.getElementById('fileCount');
+    const currentPathEl = document.getElementById('currentPath');
 
-        async function apiView(path) {
-            const res = await fetch('/api/explorer/view?path=' + encodeURIComponent(path));
-            return res.json();
-        }
+    let currentPath = "";
+    let selectedPath = null;
+    let filesCache = [];
 
-        async function apiSave(path, content) {
-            const res = await fetch('/api/explorer/save', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({path, content})
-            });
-            return res.json();
-        }
+    // Updated API calls
+    async function apiList(path="") {
+        const url = '/api/explorer/files' + (path ? ('?path=' + encodeURIComponent(path)) : '');
+        const res = await fetch(url);
+        return res.json();
+    }
 
-        async function apiDelete(path) {
-            const res = await fetch('/api/explorer/delete', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({path})
-            });
-            return res.json();
-        }
+    async function apiView(path) {
+        const res = await fetch('/api/explorer/files/view?path=' + encodeURIComponent(path));
+        return res.json();
+    }
 
-        async function apiRename(path, newName) {
-            const res = await fetch('/api/explorer/rename', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({path, new_name: newName})
-            });
-            return res.json();
-        }
-
-        async function apiMkdir(path, name) {
-            const res = await fetch('/api/explorer/mkdir', {
-                method:'POST', headers:{'Content-Type':'application/json'},
-                body: JSON.stringify({path, name})
-            });
-            return res.json();
-        }
-
-        async function apiUpload(path, file) {
-            const form = new FormData();
-            form.append('path', path || '');
-            form.append('file', file);
-            const res = await fetch('/api/explorer/upload', {
-                method:'POST', body: form
-            });
-            return res.json();
-        }
-
-        async function apiDownload(path) {
-            window.location.href = '/api/explorer/download?path=' + encodeURIComponent(path);
-        }
-
-        function setStatus(t) { footerStatus.textContent = t; }
-
-        // render list
-        function renderFiles(items) {
-            filesCache = items;
-            fileListEl.innerHTML = '';
-            if (!items || items.length === 0) {
-                fileListEl.innerHTML = '<div class="muted">Folder empty</div>';
-                fileCountEl.textContent = 0;
-                return;
-            }
-            let count = 0;
-            items.forEach(it => {
-                const div = document.createElement('div');
-                if (it.is_dir) {
-                    div.className = 'folder';
-                    div.innerHTML = `<div style="display:flex;flex-direction:column"><strong>${it.name}/</strong><div class="muted">${new Date(it.modified*1000).toLocaleString()}</div></div>
-                                     <div class="muted">Folder</div>`;
-                    div.onclick = () => {
-                        currentPath = (currentPath ? (currentPath + '/' + it.name) : it.name);
-                        loadCurrent();
-                    };
-                } else {
-                    div.className = 'file-item';
-                    div.innerHTML = `<div><strong>${it.name}</strong><div class="muted">${(it.size/1024).toFixed(1)} KB • ${new Date(it.modified*1000).toLocaleString()}</div></div>
-                                     <div class="meta">file</div>`;
-                    div.onclick = () => selectFile(it.name);
-                }
-                fileListEl.appendChild(div);
-                count++;
-            });
-            fileCountEl.textContent = count;
-        }
-
-        // load current folder
-        async function loadCurrent() {
-            setStatus('Loading files...');
-            currentPathEl.textContent = currentPath ? ('/' + currentPath) : '/';
-            const j = await apiList(currentPath);
-            if (j.error) {
-                setStatus('Error listing: ' + j.error);
-                renderFiles([]);
-                return;
-            }
-            renderFiles(j.files || []);
-            setStatus('Files loaded');
-            // clear selection
-            clearSelection();
-        }
-
-        // select file by name (in current folder)
-        async function selectFile(name) {
-            const rel = currentPath ? (currentPath + '/' + name) : name;
-            setStatus('Loading file...');
-            selectedPath = rel;
-            const j = await apiView(rel);
-            if (j.error) {
-                setStatus('Error: ' + j.error);
-                return;
-            }
-            selectedNameEl.textContent = j.name;
-            selectedMetaEl.textContent = `${(j.size/1024).toFixed(1)} KB`;
-            editorEl.disabled = false;
-            editorEl.value = j.content || '';
-            setStatus('File loaded');
-        }
-
-        function clearSelection() {
-            selectedPath = null;
-            selectedNameEl.textContent = 'Select a file';
-            selectedMetaEl.textContent = 'No file selected';
-            editorEl.value = '';
-            editorEl.disabled = true;
-        }
-
-        // Save current editor content
-        document.getElementById('saveBtn').addEventListener('click', async () => {
-            if (!selectedPath) { setStatus('No file selected'); return; }
-            setStatus('Saving...');
-            const j = await apiSave(selectedPath, editorEl.value);
-            if (j.ok) {
-                setStatus('Saved');
-                loadCurrent();
-            } else {
-                setStatus('Save failed: ' + (j.error || j.message || 'unknown'));
-            }
+    async function apiSave(path, content) {
+        const res = await fetch('/api/explorer/files/save', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({path, content})
         });
+        return res.json();
+    }
 
-        // Delete with confirm
-        document.getElementById('deleteBtn').addEventListener('click', () => {
-            if (!selectedPath) { setStatus('No file selected'); return; }
-            confirmDialog(`Delete "${selectedPath}"?`, async () => {
-                const j = await apiDelete(selectedPath);
-                if (j.ok) {
-                    setStatus('Deleted');
-                    clearSelection();
+    async function apiDelete(path) {
+        const res = await fetch('/api/explorer/files/delete', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({path})
+        });
+        return res.json();
+    }
+
+    async function apiRename(path, newName) {
+        const res = await fetch('/api/explorer/files/rename', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({old: path, new: newName})
+        });
+        return res.json();
+    }
+
+    async function apiMkdir(path, name) {
+        const res = await fetch('/api/explorer/files/mkdir', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({path: name})
+        });
+        return res.json();
+    }
+
+    async function apiUpload(path, file) {
+        const form = new FormData();
+        form.append('path', path || '');
+        form.append('file', file);
+        const res = await fetch('/api/explorer/files/upload', { method:'POST', body: form });
+        return res.json();
+    }
+
+    async function apiDownload(path) {
+        window.location.href = '/api/explorer/files/download?path=' + encodeURIComponent(path);
+    }
+
+    function setStatus(t) { footerStatus.textContent = t; }
+
+    function renderFiles(items) {
+        filesCache = items;
+        fileListEl.innerHTML = '';
+        if (!items || items.length === 0) {
+            fileListEl.innerHTML = '<div class="muted">Folder empty</div>';
+            fileCountEl.textContent = 0;
+            return;
+        }
+        let count = 0;
+        items.forEach(it => {
+            const div = document.createElement('div');
+            if (it.is_dir) {
+                div.className = 'folder';
+                div.innerHTML = `<div style="display:flex;flex-direction:column"><strong>${it.name}/</strong><div class="muted">${new Date(it.modified*1000).toLocaleString()}</div></div>
+                                 <div class="muted">Folder</div>`;
+                div.onclick = () => {
+                    currentPath = (currentPath ? (currentPath + '/' + it.name) : it.name);
                     loadCurrent();
-                } else {
-                    setStatus('Delete failed: ' + (j.error || j.message || 'unknown'));
-                }
-            });
-        });
-
-        // Rename
-        document.getElementById('renameBtn').addEventListener('click', async () => {
-            if (!selectedPath) { setStatus('No file selected'); return; }
-            const newName = prompt('New name (filename only):', selectedPath.split('/').pop());
-            if (!newName) return;
-            setStatus('Renaming...');
-            const j = await apiRename(selectedPath, newName);
-            if (j.ok) {
-                setStatus('Renamed');
-                // update path to new name in same folder
-                const parts = selectedPath.split('/');
-                parts[parts.length - 1] = newName;
-                selectedPath = parts.join('/');
-                loadCurrent();
+                };
             } else {
-                setStatus('Rename failed: ' + (j.error || j.message || 'unknown'));
+                div.className = 'file-item';
+                div.innerHTML = `<div><strong>${it.name}</strong><div class="muted">${(it.size/1024).toFixed(1)} KB • ${new Date(it.modified*1000).toLocaleString()}</div></div>
+                                 <div class="meta">file</div>`;
+                div.onclick = () => selectFile(it.name);
             }
+            fileListEl.appendChild(div);
+            count++;
         });
+        fileCountEl.textContent = count;
+    }
 
-        // Download
-        document.getElementById('downloadBtn').addEventListener('click', () => {
-            if (!selectedPath) { setStatus('No file selected'); return; }
-            apiDownload(selectedPath);
-        });
-
-        // New folder
-        document.getElementById('newFolderBtn').addEventListener('click', async () => {
-            const name = prompt('Folder name:');
-            if (!name) return;
-            setStatus('Creating folder...');
-            const j = await apiMkdir(currentPath, name);
-            if (j.ok) {
-                setStatus('Folder created');
-                loadCurrent();
-            } else setStatus('Create failed: ' + (j.error || j.message || 'unknown'));
-        });
-
-        // Upload
-        document.getElementById('uploadInput').addEventListener('change', async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            setStatus('Uploading...');
-            const j = await apiUpload(currentPath, file);
-            if (j.ok) {
-                setStatus('Uploaded: ' + j.filename);
-                loadCurrent();
-            } else {
-                setStatus('Upload failed: ' + (j.error || j.message || 'unknown'));
-            }
-            e.target.value = '';
-        });
-
-        // Search functionality
-        document.getElementById('searchInput').addEventListener('input', (e) => {
-            const q = e.target.value.toLowerCase().trim();
-            if (!q) {
-                renderFiles(filesCache);
-                return;
-            }
-            const filtered = filesCache.filter(it => it.name.toLowerCase().includes(q));
-            renderFiles(filtered);
-        });
-
-        // Refresh
-        document.getElementById('refreshBtn').addEventListener('click', loadCurrent);
-
-        // Confirm dialog helpers
-        const confirmEl = document.getElementById('confirm');
-        const confirmText = document.getElementById('confirmText');
-        const confirmYes = document.getElementById('confirmYes');
-        const confirmNo = document.getElementById('confirmNo');
-        let confirmCallback = null;
-        function confirmDialog(text, cb) {
-            confirmText.textContent = text;
-            confirmEl.style.display = 'block';
-            confirmCallback = cb;
+    async function loadCurrent() {
+        setStatus('Loading files...');
+        currentPathEl.textContent = currentPath ? ('/' + currentPath) : '/';
+        const j = await apiList(currentPath);
+        if (j.error) {
+            setStatus('Error listing: ' + j.error);
+            renderFiles([]);
+            return;
         }
-        confirmYes.addEventListener('click', () => {
-            confirmEl.style.display = 'none';
-            if (confirmCallback) confirmCallback();
-            confirmCallback = null;
-        });
-        confirmNo.addEventListener('click', () => {
-            confirmEl.style.display = 'none';
-            confirmCallback = null;
-        });
+        renderFiles(j.files || []);
+        setStatus('Files loaded');
+        clearSelection();
+    }
 
-        // load initial
+    async function selectFile(name) {
+        const rel = currentPath ? (currentPath + '/' + name) : name;
+        setStatus('Loading file...');
+        selectedPath = rel;
+        const j = await apiView(rel);
+        if (j.error) {
+            setStatus('Error: ' + j.error);
+            return;
+        }
+        selectedNameEl.textContent = j.name;
+        selectedMetaEl.textContent = `${(j.size/1024).toFixed(1)} KB`;
+        editorEl.disabled = false;
+        editorEl.value = j.content || '';
+        setStatus('File loaded');
+    }
+
+    function clearSelection() {
+        selectedPath = null;
+        selectedNameEl.textContent = 'Select a file';
+        selectedMetaEl.textContent = 'No file selected';
+        editorEl.value = '';
+        editorEl.disabled = true;
+    }
+
+    // Buttons
+    document.getElementById('saveBtn').addEventListener('click', async () => {
+        if (!selectedPath) { setStatus('No file selected'); return; }
+        setStatus('Saving...');
+        const j = await apiSave(selectedPath, editorEl.value);
+        setStatus(j.ok ? 'Saved' : ('Save failed: ' + (j.error || 'unknown')));
         loadCurrent();
-    </script>
+    });
+
+    document.getElementById('deleteBtn').addEventListener('click', () => {
+        if (!selectedPath) { setStatus('No file selected'); return; }
+        confirmDialog(`Delete "${selectedPath}"?`, async () => {
+            const j = await apiDelete(selectedPath);
+            if (j.ok) {
+                setStatus('Deleted');
+                clearSelection();
+                loadCurrent();
+            } else setStatus('Delete failed: ' + (j.error || 'unknown'));
+        });
+    });
+
+    document.getElementById('renameBtn').addEventListener('click', async () => {
+        if (!selectedPath) { setStatus('No file selected'); return; }
+        const newName = prompt('New name (filename only):', selectedPath.split('/').pop());
+        if (!newName) return;
+        setStatus('Renaming...');
+        const j = await apiRename(selectedPath, newName);
+        if (j.ok) {
+            setStatus('Renamed');
+            const parts = selectedPath.split('/');
+            parts[parts.length-1] = newName;
+            selectedPath = parts.join('/');
+            loadCurrent();
+        } else setStatus('Rename failed: ' + (j.error || 'unknown'));
+    });
+
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+        if (!selectedPath) { setStatus('No file selected'); return; }
+        apiDownload(selectedPath);
+    });
+
+    document.getElementById('newFolderBtn').addEventListener('click', async () => {
+        const name = prompt('Folder name:');
+        if (!name) return;
+        setStatus('Creating folder...');
+        const j = await apiMkdir(currentPath, name);
+        setStatus(j.ok ? 'Folder created' : ('Create failed: ' + (j.error || 'unknown')));
+        loadCurrent();
+    });
+
+    document.getElementById('uploadInput').addEventListener('change', async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setStatus('Uploading...');
+        const j = await apiUpload(currentPath, file);
+        setStatus(j.ok ? 'Uploaded' : ('Upload failed: ' + (j.error || 'unknown')));
+        loadCurrent();
+        e.target.value = '';
+    });
+
+    document.getElementById('searchInput').addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase().trim();
+        renderFiles(q ? filesCache.filter(it => it.name.toLowerCase().includes(q)) : filesCache);
+    });
+
+    document.getElementById('refreshBtn').addEventListener('click', loadCurrent);
+
+    // Confirm dialog helpers
+    const confirmEl = document.getElementById('confirm');
+    const confirmText = document.getElementById('confirmText');
+    const confirmYes = document.getElementById('confirmYes');
+    const confirmNo = document.getElementById('confirmNo');
+    let confirmCallback = null;
+    function confirmDialog(text, cb) {
+        confirmText.textContent = text;
+        confirmEl.style.display = 'block';
+        confirmCallback = cb;
+    }
+    confirmYes.addEventListener('click', () => { confirmEl.style.display='none'; if(confirmCallback) confirmCallback(); confirmCallback=null; });
+    confirmNo.addEventListener('click', () => { confirmEl.style.display='none'; confirmCallback=null; });
+
+    // Load initial
+    loadCurrent();
+</script>
 </body>
 </html>

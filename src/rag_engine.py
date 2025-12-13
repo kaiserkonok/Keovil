@@ -17,6 +17,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from typing import List, Dict, Any, Union
 
+
 # ----------------------
 # ANSI Color Class for Debugging
 # ----------------------
@@ -24,12 +25,13 @@ class Colors:
     HEADER = '\033[95m'  # Magenta
     OKBLUE = '\033[94m'  # Blue
     OKCYAN = '\033[96m'  # Cyan
-    OKGREEN = '\033[92m' # Green
-    WARNING = '\033[93m' # Yellow
-    FAIL = '\033[91m'    # Red
-    ENDC = '\033[0m'     # Reset color
+    OKGREEN = '\033[92m'  # Green
+    WARNING = '\033[93m'  # Yellow
+    FAIL = '\033[91m'  # Red
+    ENDC = '\033[0m'  # Reset color
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+
 
 # ----------------------
 # RRF Utility Function (Outside the Class)
@@ -104,6 +106,7 @@ class CollegeRAG:
         self.top_k = top_k
         self.rerank_top_k = rerank_top_k
         self.docs = []
+        # self.chat_history is used only for the interactive terminal test
         self.chat_history = []
         self.vectorestore = None
         self.bm25_retriever = None
@@ -315,6 +318,7 @@ class CollegeRAG:
     # Rewrite query (Unchanged)
     # ----------------------
     def rewrite_query(self, query, chat_history=None):
+        # NOTE: chat_history here will be self.chat_history in the terminal or the flask session history
         if chat_history is None:
             chat_history = self.chat_history
 
@@ -340,12 +344,17 @@ class CollegeRAG:
         return self.llm.invoke(prompt).strip()
 
     # ----------------------
-    # Ask a question (streaming or normal) - MODIFIED FOR HYBRID RAG
+    # Ask a question (streaming or normal) - MODIFIED FOR HISTORY MANAGEMENT
     # ----------------------
-    def ask(self, query, chat_history=None, stream=False):
-        # 1️⃣ Setup and Query Rewriting (Unchanged)
+    def ask(self, query, chat_history: Union[List[tuple], None] = None, stream=False):
+
+        # Determine which history to use and if we should update the internal state.
+        use_internal_history = False
         if chat_history is None:
             chat_history = self.chat_history
+            use_internal_history = True  # This is true only for the terminal test
+
+        # 1️⃣ Setup and Query Rewriting
 
         # 1️⃣ Rewrite query to be self-contained
         rewritten_query = self.rewrite_query(query, chat_history)
@@ -397,7 +406,6 @@ class CollegeRAG:
         sorted_probabilities = probabilities[sorted_indices]
 
         # 2. Check for a significant score drop (We only look at the top self.top_k chunks for the gap)
-        # We calculate the drop between adjacent chunks.
         score_drops = []
         for i in range(1, min(self.top_k, len(sorted_probabilities))):
             # Calculate the drop from the previous chunk
@@ -405,7 +413,6 @@ class CollegeRAG:
             score_drops.append((drop, i))
 
         # 3. Determine the cut-off point
-        # We are looking for the largest score drop. This suggests the transition from relevant to noise.
         MAX_DROP_THRESHOLD = 0.05  # A minimum drop of 5% is needed to count as a major separation
         cut_index = self.top_k  # Default to the max (7) if no major gap is found
 
@@ -471,21 +478,30 @@ class CollegeRAG:
             ANSWER:
         """.strip()
 
+        print(prompt)
+
         if stream:
-            # ... (streaming logic remains the same) ...
             response = ""
             print(f"{Colors.BOLD}AI:{Colors.ENDC} ", end="", flush=True)
             for chunk in self.llm.stream(prompt):
                 print(chunk, end="", flush=True)
                 response += chunk
-            chat_history.append(("You", query))
-            chat_history.append(("AI", response))
+
+            # 🟢 Conditional History Update (for terminal test only)
+            if use_internal_history:
+                self.chat_history.append(("You", query))
+                self.chat_history.append(("AI", response))
+
             print()
             return response
         else:
             response = self.llm.invoke(prompt)
-            chat_history.append(("You", query))
-            chat_history.append(("AI", response))
+
+            # 🟢 Conditional History Update (for terminal test only)
+            if use_internal_history:
+                self.chat_history.append(("You", query))
+                self.chat_history.append(("AI", response))
+
             return response
 
 
@@ -493,18 +509,21 @@ class CollegeRAG:
 # Run interactively
 # ----------------------
 if __name__ == "__main__":
+    # NOTE: Update this path to your actual data directory
     data_dir = '/home/kaiserkonok/computer_programming/K_RAG/test_data/'
     rag = CollegeRAG(data_dir)
     rag.create_vectorestore(force_create=True)
 
     for doc in rag.docs:
-        print(f'{Colors.HEADER}___ Starting of Chunk ({os.path.basename(doc.metadata.get("source", "N/A"))}) ___{Colors.ENDC}\n')
+        print(
+            f'{Colors.HEADER}___ Starting of Chunk ({os.path.basename(doc.metadata.get("source", "N/A"))}) ___{Colors.ENDC}\n')
         print(doc.page_content)
         print(f'\n{Colors.HEADER}___ Ending of Chunk ___{Colors.ENDC}')
 
     try:
         while True:
             question = input(f"{Colors.BOLD}You:{Colors.ENDC} ")
+            # History works here because rag.ask uses and updates self.chat_history
             rag.ask(question, stream=True)
     except KeyboardInterrupt:
         print(f"\n{Colors.FAIL}Stopping...{Colors.ENDC}")

@@ -1,124 +1,188 @@
 <!-- src/rag_chat/templates/chat.html -->
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>RAG Chat</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            margin: 0;
-            font-family: 'Inter', sans-serif;
-            background-color: #121212;
-            color: #ffffff;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        #chat-box {
-            flex: 1;
-            padding: 20px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
-        .message {
-            padding: 12px 16px;
-            border-radius: 12px;
-            max-width: 70%;
-            word-wrap: break-word;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-        }
-        .user {
-            align-self: flex-end;
-            background: #1e88e5;
-            color: #fff;
-        }
-        .ai {
-            align-self: flex-start;
-            background: #2c2c2c;
-            color: #fff;
-        }
-        #input-container {
-            display: flex;
-            padding: 15px;
-            border-top: 1px solid #333;
-            background-color: #1a1a1a;
-        }
-        #query {
-            flex: 1;
-            padding: 12px 16px;
-            font-size: 16px;
-            border-radius: 8px;
-            border: none;
-            background-color: #2c2c2c;
-            color: #fff;
-        }
-        #query:focus {
-            outline: 2px solid #1e88e5;
-        }
-        #send {
-            padding: 12px 20px;
-            margin-left: 10px;
-            font-size: 16px;
-            background-color: #1e88e5;
-            color: #fff;
-            border: none;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-        #send:hover {
-            background-color: #1565c0;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <title>RAG Chat — Lora</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0b0c0f; --panel:#0f1115; --muted:#9aa3b2; --accent:#6cc0ff; --accent-2:#7b61ff;
+    }
+    html,body{height:100%; margin:0; font-family:'Inter',system-ui,Arial; background:linear-gradient(180deg,#09090b,#0f1115); color:#e6eef6;}
+    .app{height:100vh; display:flex; flex-direction:column;}
+    .header{height:60px; display:flex; align-items:center; padding:0 18px; border-bottom:1px solid rgba(255,255,255,0.02);}
+    .brand{font-weight:700; color:var(--accent-2); font-size:18px;}
+    .main{flex:1; display:flex; flex-direction:column; overflow:hidden;}
+    #messages{flex:1; padding:22px; overflow:auto; display:flex; flex-direction:column; gap:12px;}
+    .bubble{max-width:72%; padding:12px 14px; border-radius:12px; word-break:break-word; box-shadow:0 6px 22px rgba(0,0,0,0.6);}
+    .user{align-self:flex-end; background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#041025; font-weight:600;}
+    .ai{align-self:flex-start; background:#131417; color:#e6eef6; border:1px solid rgba(255,255,255,0.02);}
+    .meta{font-size:12px; color:var(--muted); margin-top:6px;}
+    .inputBar{display:flex; gap:10px; padding:14px; border-top:1px solid rgba(255,255,255,0.02); background:linear-gradient(180deg,#0b0b0d,#0f1115);}
+    .input{flex:1; padding:12px 14px; border-radius:10px; background:#0e0f11; border:1px solid rgba(255,255,255,0.02); color:#fff; font-size:15px;}
+    .sendBtn{padding:10px 16px; border-radius:10px; background:linear-gradient(90deg,var(--accent),var(--accent-2)); border:none; color:#041025; font-weight:700; cursor:pointer;}
+    .typing {display:inline-flex; gap:6px; align-items:center; padding:6px 10px; border-radius:10px; background:#111214;}
+    .dot { width:7px; height:7px; background:#9aa3b2; border-radius:50%; opacity:0.35; animation: blink 1s infinite; }
+    .dot:nth-child(2){animation-delay:.12s} .dot:nth-child(3){animation-delay:.24s}
+    @keyframes blink{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}
+    @media (max-width:700px){ .bubble{max-width:86%} .brand{font-size:16px} }
+  </style>
 </head>
 <body>
-    <div id="chat-box"></div>
-    <div id="input-container">
-        <input id="query" type="text" placeholder="Type your message..." autofocus />
-        <button id="send">Send</button>
+  <div class="app">
+    <div class="header">
+      <div class="brand">Lora — Private RAG Assistant</div>
+      <div style="flex:1"></div>
+      <div class="meta">Local demo</div>
     </div>
 
-    <script>
-        const chatBox = document.getElementById('chat-box');
-        const queryInput = document.getElementById('query');
-        const sendBtn = document.getElementById('send');
+    <div class="main">
+      <div id="messages" aria-live="polite"></div>
 
-        function appendMessage(text, cls) {
-            const div = document.createElement('div');
-            div.className = 'message ' + cls;
-            div.textContent = text;
-            chatBox.appendChild(div);
-            chatBox.scrollTop = chatBox.scrollHeight;
+      <div class="inputBar">
+        <input id="inputBox" class="input" placeholder="Type your question and press Enter..." autocomplete="off" />
+        <button id="sendBtn" class="sendBtn">Send</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+const messages = document.getElementById('messages');
+const inputBox = document.getElementById('inputBox');
+const sendBtn = document.getElementById('sendBtn');
+
+// Ephemeral, per-tab chat history
+let history = [];
+
+function appendUser(text){
+  const el = document.createElement('div');
+  el.className = 'bubble user';
+  el.textContent = text;
+  messages.appendChild(el);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function appendAssistantPlaceholder(){
+  const el = document.createElement('div');
+  el.className = 'bubble ai';
+  el.dataset.streaming = '1';
+  el.textContent = '';
+  messages.appendChild(el);
+  messages.scrollTop = messages.scrollHeight;
+  return el;
+}
+
+function appendTyping(el){
+  el.innerHTML = '';
+  const span = document.createElement('span');
+  span.className = 'typing';
+  span.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+  el.appendChild(span);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function removeTyping(el){
+  if (!el) return;
+  el.innerHTML = '';
+}
+
+async function streamQuery(query){
+  // Immediately add user message to local history and UI
+  history.push({role: 'user', content: query});
+  appendUser(query);
+
+  // placeholder assistant bubble
+  const placeholder = appendAssistantPlaceholder();
+  appendTyping(placeholder);
+
+  // POST and stream with history
+  const res = await fetch('/api/stream_chat', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({query, history})
+  });
+
+  if (!res.ok){
+    if (placeholder.querySelector('.typing')) removeTyping(placeholder);
+    placeholder.textContent = '(stream error)';
+    // Do not push assistant message into history on error
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buffer = '';
+  let done = false;
+  let assistantAccum = ''; // collect assistant text for history
+
+  while(!done){
+    const { value, done: readerDone } = await reader.read();
+    if (readerDone) { done = true; break; }
+    buffer += dec.decode(value, {stream: true});
+
+    // frames separated by double newline
+    let parts = buffer.split('\n\n');
+    buffer = parts.pop(); // remainder
+
+    for (const part of parts){
+      if (!part.trim()) continue;
+
+      if (part.includes('event: typing')) {
+        // keep typing animation (already shown)
+        continue;
+      }
+      if (part.includes('event: done')) {
+        // finished; will finalize after loop
+        continue;
+      }
+
+      // Data lines
+      const lines = part.split('\n').filter(Boolean);
+      for (const ln of lines){
+        const chunk = ln.replace(/^data:\s?/, '');
+        if (placeholder.querySelector('.typing')) {
+          removeTyping(placeholder);
+          placeholder.textContent = '';
         }
+        placeholder.textContent += chunk;
+        assistantAccum += chunk;
+        messages.scrollTop = messages.scrollHeight;
+      }
+    }
+  }
 
-        async function sendMessage() {
-            const query = queryInput.value.trim();
-            if (!query) return;
-            appendMessage(query, 'user');
-            queryInput.value = '';
-            appendMessage("Typing...", 'ai'); // temporary placeholder
+  // flush leftover buffer (if any)
+  if (buffer.trim()){
+    const leftover = buffer.split('\n').map(l=>l.replace(/^data:\s?/,'')).join('\n');
+    if (placeholder.querySelector('.typing')) removeTyping(placeholder);
+    placeholder.textContent += leftover;
+    assistantAccum += leftover;
+  }
 
-            const resp = await fetch('/api/chat', {
-                method:'POST',
-                headers:{ 'Content-Type':'application/json' },
-                body: JSON.stringify({query})
-            });
-            const data = await resp.json();
+  // Now that full assistant response is known, append to local history
+  history.push({role: 'assistant', content: assistantAccum});
 
-            // Remove placeholder
-            const typingMsg = document.querySelector('.ai:last-child');
-            if (typingMsg) typingMsg.remove();
+  // final scroll
+  messages.scrollTop = messages.scrollHeight;
+}
 
-            appendMessage(data.response, 'ai');
-        }
+sendBtn.addEventListener('click', ()=>{
+  const q = inputBox.value.trim();
+  if (!q) return;
+  inputBox.value = '';
+  streamQuery(q);
+});
 
-        sendBtn.addEventListener('click', sendMessage);
-        queryInput.addEventListener('keypress', e => {
-            if (e.key === 'Enter') sendMessage();
-        });
-    </script>
+inputBox.addEventListener('keydown', (e)=>{
+  if (e.key === 'Enter'){
+    e.preventDefault();
+    sendBtn.click();
+  }
+});
+
+inputBox.focus();
+</script>
 </body>
 </html>

@@ -1,296 +1,276 @@
-from flask import Flask, render_template, request, jsonify, send_file, session
+# src/rag_chat/app.py
+from flask import (
+    Flask, render_template, request, jsonify, send_file,
+    Response, stream_with_context
+)
 import sys
 from pathlib import Path
 import os
 import shutil
-import uuid
+import time
+from typing import List, Dict
 
-# ----------------------
-# Fix Python path to access rag_engine
-# ----------------------
-sys.path.append(str(Path(__file__).parent))
-sys.path.append(str(Path(__file__).parent.parent))
+# ---------------------------------------------------------
+# Fix Python path so rag_engine can be imported
+# ---------------------------------------------------------
+ROOT = Path(__file__).parent.parent  # /src
+sys.path.append(str(ROOT))
+sys.path.append(str(ROOT.parent))  # project root
 
-# Import CollegeRAG (your RAG engine)
 try:
     from rag_engine import CollegeRAG
 except Exception:
     CollegeRAG = None
 
-# ----------------------
-# Initialize Flask
-# ----------------------
+# ---------------------------------------------------------
+# Flask Init
+# ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
-app.secret_key = "super-secret-key"
 
-
-# ----------------------
+# ---------------------------------------------------------
 # Project directories
-# ----------------------
-PROJECT_ROOT = Path(__file__).parent.parent.parent.resolve()
+# ---------------------------------------------------------
+PROJECT_ROOT = ROOT.parent
 DATA_DIR = PROJECT_ROOT / "test_data"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 FILES_DIR = DATA_DIR
 
-print("Using FILES_DIR:", str(FILES_DIR))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 
+print("FILES_DIR →", FILES_DIR)
 
-# ----------------------
-# Initialize RAG
-# ----------------------
+# ---------------------------------------------------------
+# Init RAG engine
+# ---------------------------------------------------------
 rag = None
 if CollegeRAG:
     try:
         rag = CollegeRAG(str(DATA_DIR))
-        print("CollegeRAG initialized successfully.")
+        print("RAG initialized OK")
     except Exception as e:
-        print("RAG initialization failed:", e)
-        rag = None
+        print("RAG init failed:", e)
 
 
-# ----------------------
-# Helper functions
-# ----------------------
-def safe_path_join(base: Path, rel_path: str) -> Path:
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
+def chunks(text, size=120):
+    """Split text into chunks for streaming"""
+    for i in range(0, len(text), size):
+        yield text[i:i + size]
+
+
+def convert_client_history_to_rag_history(client_history: List[Dict[str, str]]):
     """
-    Prevent path escape
+    Convert client-side history [{role: 'user'|'assistant', content: str}, ...]
+    to RAG engine format: [("You", "..."), ("AI", "..."), ...]
     """
-    candidate = (base / rel_path).resolve()
-    if not str(candidate).startswith(str(base.resolve())):
-        raise ValueError("Unsafe path")
-    return candidate
+    rag_history = []
+    for item in client_history or []:
+        role = item.get("role")
+        content = item.get("content", "")
+        if role == "user":
+            rag_history.append(("You", content))
+        elif role == "assistant":
+            rag_history.append(("AI", content))
+    return rag_history
 
 
-def list_dir_tree(base: Path):
-    items = []
-    for entry in sorted(base.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
-        stat = entry.stat()
-        items.append({
-            "name": entry.name,
-            "is_dir": entry.is_dir(),
-            "size": stat.st_size,
-            "modified": stat.st_mtime
-        })
-    return items
-
-
-# ----------------------
-# BASIC ROUTES
-# ----------------------
+# ---------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------
 @app.route("/")
 def home():
-    return "<h1>RAG Chat / Explorer</h1><p>Go to <a href='/chat'>/chat</a> or <a href='/cms'>/cms</a></p>"
+    return "<h1>RAG Chat + CMS</h1><p><a href='/chat'>Chat UI</a> | <a href='/cms'>CMS Explorer</a></p>"
 
 
-@app.route("/chat")
+@app.route("/chat", methods=["GET"])
 def chat():
-    """
-    Chat UI Page
-    """
+    # Stateless: no server-side session; simply serve the UI
     return render_template("chat.html")
 
 
 @app.route("/cms")
 def cms():
-    """
-    File Explorer UI Page
-    """
     return render_template("explorer.html")
 
 
-# ----------------------
-# CHAT API  (THIS WAS MISSING)
-# ----------------------
-@app.route("/api/chat", methods=["POST"])
-def api_chat():
-    """
-    Handles chat messages and returns RAG response.
-    """
-    data = request.json or {}
-    query = data.get("query", "").strip()
-
-    if not query:
-        return jsonify({"error": "Empty query"}), 400
-
-    # Ensure session has a history
-    if "history" not in session:
-        session["history"] = []
-
-    session["history"].append({"role": "user", "content": query})
-
-    # If RAG engine is missing, return dummy text
-    if rag is None:
-        answer = "(RAG engine not initialized)"
-    else:
-        try:
-            answer = rag.ask(query)
-        except Exception as e:
-            answer = f"RAG error: {e}"
-
-    session["history"].append({"role": "assistant", "content": answer})
-
-    session.modified = True
-
-    return jsonify({"response": answer, "history": session["history"]})
+# ---------------------------------------------------------
+# FILE EXPLORER API (unchanged behavior)
+# ---------------------------------------------------------
+@app.route("/api/explorer/files")
+def list_files():
+    items = []
+    for p in sorted(FILES_DIR.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+        stat = p.stat()
+        items.append({
+            "name": p.name,
+            "is_dir": p.is_dir(),
+            "size": stat.st_size,
+            "modified": stat.st_mtime,
+            "path": str(p.relative_to(FILES_DIR))
+        })
+    return jsonify({"files": items})
 
 
-# ----------------------
-# FILE EXPLORER API (YOU ALREADY HAD THIS — KEEPING SAME)
-# ----------------------
-@app.route("/api/explorer/list", methods=["GET"])
-def api_list():
-    rel = request.args.get("path", "").strip()
-    try:
-        target = safe_path_join(FILES_DIR, rel) if rel else FILES_DIR
-        if not target.exists():
-            return jsonify({"error": "Path not found", "files": []}), 404
-        items = list_dir_tree(target)
-        return jsonify({"files": items, "path": str(target.relative_to(FILES_DIR))})
-    except ValueError:
+@app.route("/api/explorer/files/view")
+def view_file():
+    rel = request.args.get("path", "")
+    path = (FILES_DIR / rel).resolve()
+    if not str(path).startswith(str(FILES_DIR)):
         return jsonify({"error": "Invalid path"}), 400
-
-
-@app.route("/api/explorer/view", methods=["GET"])
-def api_view():
-    rel = request.args.get("path", "").strip()
-    max_bytes = int(request.args.get("max_bytes", "200000"))
-    if not rel:
-        return jsonify({"content": "", "error": "No path provided"}), 400
+    if not path.exists():
+        return jsonify({"error": "File not found"}), 404
+    if path.is_dir():
+        return jsonify({"content": "(Directory)"}), 200
     try:
-        path = safe_path_join(FILES_DIR, rel)
-        if not path.exists() or path.is_dir():
-            return jsonify({"content": "", "error": "Not found or directory"}), 404
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read(max_bytes)
-        return jsonify({"content": text, "name": path.name, "size": path.stat().st_size})
-    except ValueError:
-        return jsonify({"error": "Invalid path"}), 400
+        text = open(path, "r", encoding="utf-8", errors="ignore").read()
+    except:
+        text = "(Unable to read file)"
+    return jsonify({"content": text, "name": path.name, "size": path.stat().st_size})
 
 
-@app.route("/api/explorer/save", methods=["POST"])
-def api_save():
+@app.route("/api/explorer/files/save", methods=["POST"])
+def save_file():
     data = request.json or {}
-    rel = data.get("path", "").strip()
+    rel = data.get("path")
     content = data.get("content", "")
     if not rel:
-        return jsonify({"error": "No path"}), 400
-    try:
-        path = safe_path_join(FILES_DIR, rel)
-        if path.is_dir():
-            return jsonify({"error": "Is directory"}), 400
-        with open(path, "w", encoding="utf-8", errors="replace") as f:
-            f.write(content)
-        return jsonify({"ok": True, "message": "Saved"})
-    except ValueError:
+        return jsonify({"error": "Missing path"}), 400
+    path = (FILES_DIR / rel).resolve()
+    if not str(path).startswith(str(FILES_DIR)):
         return jsonify({"error": "Invalid path"}), 400
+    open(path, "w", encoding="utf-8").write(content)
+    return jsonify({"ok": True})
 
 
-@app.route("/api/explorer/delete", methods=["POST"])
-def api_delete():
-    data = request.json or {}
-    rel = data.get("path", "").strip()
-    if not rel:
-        return jsonify({"error": "No path"}), 400
-    try:
-        path = safe_path_join(FILES_DIR, rel)
-        if path.is_dir():
-            try:
-                path.rmdir()
-                return jsonify({"ok": True, "msg": "Dir removed"})
-            except OSError:
-                return jsonify({"error": "Dir not empty"}), 400
-        else:
-            path.unlink()
-            return jsonify({"ok": True, "msg": "File removed"})
-    except ValueError:
+@app.route("/api/explorer/files/delete", methods=["POST"])
+def delete_file():
+    rel = request.json.get("path", "")
+    path = (FILES_DIR / rel).resolve()
+    if not str(path).startswith(str(FILES_DIR)):
         return jsonify({"error": "Invalid path"}), 400
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
+    return jsonify({"ok": True})
 
 
-@app.route("/api/explorer/rename", methods=["POST"])
-def api_rename():
-    data = request.json or {}
-    rel = data.get("path", "")
-    new_name = data.get("new_name", "")
-    if not rel or not new_name:
-        return jsonify({"error": "Missing params"}), 400
-    try:
-        path = safe_path_join(FILES_DIR, rel)
-        new_path = path.parent / new_name
-        if new_path.exists():
-            return jsonify({"error": "Name exists"}), 400
-        path.rename(new_path)
-        return jsonify({"ok": True})
-    except ValueError:
+@app.route("/api/explorer/files/rename", methods=["POST"])
+def rename_file():
+    data = request.json
+    old = (FILES_DIR / data["old"]).resolve()
+    new = (FILES_DIR / data["new"]).resolve()
+    if not str(old).startswith(str(FILES_DIR)) or not str(new).startswith(str(FILES_DIR)):
         return jsonify({"error": "Invalid path"}), 400
+    old.rename(new)
+    return jsonify({"ok": True})
 
 
-@app.route("/api/explorer/mkdir", methods=["POST"])
-def api_mkdir():
-    data = request.json or {}
-    rel = data.get("path", "")
-    name = data.get("name", "").strip()
+@app.route("/api/explorer/files/mkdir", methods=["POST"])
+def mkdir():
+    rel = request.json.get("path")
+    name = request.json.get("name")
     if not name:
-        return jsonify({"error": "Missing name"}), 400
-    try:
-        parent = safe_path_join(FILES_DIR, rel) if rel else FILES_DIR
-        new_dir = parent / name
-        if new_dir.exists():
-            return jsonify({"error": "Exists"}), 400
-        new_dir.mkdir()
-        return jsonify({"ok": True})
-    except ValueError:
-        return jsonify({"error": "Invalid path"})
+        return jsonify({"error": "Missing folder name"}), 400
+    path = (FILES_DIR / rel / name if rel else FILES_DIR / name).resolve()
+    if not str(path).startswith(str(FILES_DIR)):
+        return jsonify({"error": "Invalid path"}), 400
+    path.mkdir(parents=True, exist_ok=True)
+    return jsonify({"ok": True})
 
 
-@app.route("/api/explorer/upload", methods=["POST"])
-def api_upload():
-    rel = request.form.get("path", "")
+@app.route("/api/explorer/files/upload", methods=["POST"])
+def upload_file():
+    folder = request.form.get("path", "")
     upload = request.files.get("file")
     if not upload:
-        return jsonify({"error": "No file"}), 400
-    try:
-        parent = safe_path_join(FILES_DIR, rel) if rel else FILES_DIR
-        dest = parent / upload.filename
-        if dest.exists():
-            stem, suf = dest.stem, dest.suffix
-            dest = parent / f"{stem}_{uuid.uuid4().hex[:6]}{suf}"
-        upload.save(str(dest))
-        return jsonify({"ok": True, "filename": dest.name})
-    except ValueError:
-        return jsonify({"error": "Invalid path"})
+        return jsonify({"error": "No file uploaded"}), 400
+    parent = (FILES_DIR / folder).resolve()
+    if not str(parent).startswith(str(FILES_DIR)):
+        return jsonify({"error": "Invalid path"}), 400
+    dest = parent / upload.filename
+    upload.save(dest)
+    return jsonify({"ok": True, "filename": upload.filename})
 
 
-@app.route("/api/explorer/download")
-def api_download():
-    rel = request.args.get("path", "")
-    if not rel:
-        return jsonify({"error": "No path"}), 400
-    try:
-        path = safe_path_join(FILES_DIR, rel)
-        if path.is_dir():
-            return jsonify({"error": "Is directory"}), 400
-        return send_file(str(path), as_attachment=True)
-    except ValueError:
-        return jsonify({"error": "Invalid path"})
+@app.route("/api/explorer/files/download")
+def download():
+    rel = request.args.get("path")
+    path = (FILES_DIR / rel).resolve()
+    if not path.exists() or not str(path).startswith(str(FILES_DIR)):
+        return "File not found", 404
+    return send_file(path, as_attachment=True)
 
 
-@app.route("/api/explorer/search")
-def api_search():
-    q = request.args.get("q", "").lower().strip()
-    rel = request.args.get("path", "").strip()
-    try:
-        base = safe_path_join(FILES_DIR, rel) if rel else FILES_DIR
-        results = []
-        for entry in base.rglob("*"):
-            if entry.is_file() and q in entry.name.lower():
-                results.append(str(entry.relative_to(FILES_DIR)))
-        return jsonify({"results": results})
-    except ValueError:
-        return jsonify({"error": "Invalid path"})
+# ---------------------------------------------------------
+# RAG CHAT API - STREAMING (stateless)
+# ---------------------------------------------------------
+@app.route("/api/stream_chat", methods=["POST"])
+def api_stream_chat():
+    """Streaming chat endpoint; stateless and client-driven history."""
+    data = request.json or {}
+    q = (data.get("query") or "").strip()
+    client_history = data.get("history", [])
+
+    if not q:
+        return jsonify({"error": "Empty query"}), 400
+
+    rag_history = convert_client_history_to_rag_history(client_history)
+
+    def generate():
+        # typing event
+        yield "event: typing\ndata: {}\n\n"
+
+        if rag:
+            try:
+                ans = rag.ask(q, chat_history=rag_history, stream=False)
+            except Exception as e:
+                ans = f"RAG error: {e}"
+        else:
+            ans = "(RAG not initialized)"
+
+        # Stream response in chunks to client
+        for c in chunks(ans):
+            yield f"data: {c}\n\n"
+            time.sleep(0.02)
+
+        # done event
+        yield "event: done\ndata: {}\n\n"
+
+    return Response(stream_with_context(generate()), mimetype="text/event-stream")
 
 
-# ----------------------
-# Run
-# ----------------------
+# ---------------------------------------------------------
+# RAG CHAT API - Non-streaming (stateless)
+# ---------------------------------------------------------
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """Non-streaming chat endpoint; stateless and client-driven history."""
+    data = request.json or {}
+    q = (data.get("query") or "").strip()
+    client_history = data.get("history", [])
+
+    if not q:
+        return jsonify({"error": "Empty query"}), 400
+
+    rag_history = convert_client_history_to_rag_history(client_history)
+
+    if rag:
+        try:
+            ans = rag.ask(q, chat_history=rag_history, stream=False)
+        except Exception as e:
+            ans = f"RAG error: {e}"
+    else:
+        ans = "(RAG not initialized)"
+
+    # Return response; client will update its own history
+    return jsonify({"response": ans})
+
+
+# ---------------------------------------------------------
+# Run App
+# ---------------------------------------------------------
 if __name__ == "__main__":
+    # Ensure this is set to False in a production environment
     app.run(debug=True, threaded=True)

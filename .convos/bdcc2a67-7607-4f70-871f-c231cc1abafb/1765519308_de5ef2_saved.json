@@ -1,0 +1,26 @@
+[
+  {
+    "content": "hi",
+    "role": "user"
+  },
+  {
+    "content": "Hello! How can I assist you today?",
+    "role": "assistant"
+  },
+  {
+    "content": "who are you?",
+    "role": "user"
+  },
+  {
+    "content": "I am Lora, a Private AI Assistant created by Kaiser Konok. It's nice to meet you! How can I assist you today?",
+    "role": "assistant"
+  },
+  {
+    "content": "hi",
+    "role": "user"
+  },
+  {
+    "content": "who are you?",
+    "role": "user"
+  }
+]
