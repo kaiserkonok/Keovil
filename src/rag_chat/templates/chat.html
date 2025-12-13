@@ -89,8 +89,7 @@ function removeTyping(el){
 }
 
 async function streamQuery(query){
-  // Immediately add user message to local history and UI
-  history.push({role: 'user', content: query});
+  // Show user bubble in UI only (do not push to history yet)
   appendUser(query);
 
   // placeholder assistant bubble
@@ -107,7 +106,6 @@ async function streamQuery(query){
   if (!res.ok){
     if (placeholder.querySelector('.typing')) removeTyping(placeholder);
     placeholder.textContent = '(stream error)';
-    // Do not push assistant message into history on error
     return;
   }
 
@@ -122,23 +120,15 @@ async function streamQuery(query){
     if (readerDone) { done = true; break; }
     buffer += dec.decode(value, {stream: true});
 
-    // frames separated by double newline
     let parts = buffer.split('\n\n');
-    buffer = parts.pop(); // remainder
+    buffer = parts.pop();
 
     for (const part of parts){
       if (!part.trim()) continue;
 
-      if (part.includes('event: typing')) {
-        // keep typing animation (already shown)
-        continue;
-      }
-      if (part.includes('event: done')) {
-        // finished; will finalize after loop
-        continue;
-      }
+      if (part.includes('event: typing')) continue;
+      if (part.includes('event: done')) continue;
 
-      // Data lines
       const lines = part.split('\n').filter(Boolean);
       for (const ln of lines){
         const chunk = ln.replace(/^data:\s?/, '');
@@ -153,7 +143,6 @@ async function streamQuery(query){
     }
   }
 
-  // flush leftover buffer (if any)
   if (buffer.trim()){
     const leftover = buffer.split('\n').map(l=>l.replace(/^data:\s?/,'')).join('\n');
     if (placeholder.querySelector('.typing')) removeTyping(placeholder);
@@ -161,10 +150,10 @@ async function streamQuery(query){
     assistantAccum += leftover;
   }
 
-  // Now that full assistant response is known, append to local history
+  // ✅ Now push both user and assistant together
+  history.push({role: 'user', content: query});
   history.push({role: 'assistant', content: assistantAccum});
 
-  // final scroll
   messages.scrollTop = messages.scrollHeight;
 }
 
