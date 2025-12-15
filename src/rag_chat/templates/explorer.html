@@ -7,6 +7,13 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/themes/default/style.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/jstree.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- PDF.js library for PDF rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"></script>
+    <!-- Office file viewer libraries -->
+    <script src="https://unpkg.com/mammoth@1.5.1/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
     <style>
         * {margin:0; padding:0; box-sizing:border-box;}
@@ -25,7 +32,7 @@
         .file-info h2 {font-size:16px; margin-bottom:5px;}
         .file-info .path {font-size:13px; color:#888; font-family:monospace;}
         .editor-actions {display:flex; gap:8px;}
-        #editor {flex:1; background:#1e1e1e; border:none; color:#e0e0e0; padding:20px; font-family:'Consolas','Monaco',monospace; font-size:14px; line-height:1.5; resize:none; outline:none; tab-size:4;}
+        #editor {flex:1; background:#1e1e1e; border:none; color:#e0e0e0; padding:20px; font-family:'Consolas','Monaco',monospace; font-size:14px; line-height:1.5; resize:none; outline:none; tab-size:4; display:none;}
         .editor-placeholder {flex:1; display:flex; align-items:center; justify-content:center; color:#666; font-size:16px; background:#1e1e1e;}
         .status-bar {padding:10px 20px; background:#252525; border-top:1px solid #404040; font-size:13px; color:#888; display:flex; justify-content:space-between; align-items:center;}
         .jstree-default .jstree-node, .jstree-default .jstree-icon {color:#e0e0e0;}
@@ -38,6 +45,37 @@
         .context-menu-item {padding:10px 16px; cursor:pointer; display:flex; align-items:center; gap:10px; color:#e0e0e0;}
         .context-menu-item:hover {background:#404040;}
         .context-menu-divider {height:1px; background:#404040; margin:4px 0;}
+
+        /* Viewer containers */
+        #pdf-viewer {flex:1; display:none; background:#525659; overflow:auto; position:relative;}
+        #pdf-canvas-container {padding:20px; display:flex; flex-direction:column; align-items:center;}
+        .pdf-page {margin-bottom:20px; box-shadow:0 4px 12px rgba(0,0,0,0.3); background:#fff;}
+        .pdf-page canvas {display:block;}
+        .pdf-controls {position:sticky; top:0; background:#252525; padding:10px 20px; display:flex; gap:10px; align-items:center; z-index:100; border-bottom:1px solid #404040;}
+        .pdf-controls select, .pdf-controls input {background:#404040; border:1px solid #505050; color:#fff; padding:6px 10px; border-radius:4px;}
+        .pdf-controls button {background:#4dabf7; border:none; color:#000; padding:6px 12px; border-radius:4px; cursor:pointer;}
+        .pdf-controls button:hover {background:#6abfff;}
+
+        #doc-viewer {flex:1; display:none; overflow:auto; padding:20px; background:#1e1e1e;}
+        .doc-content {max-width:8.5in; margin:0 auto; padding:1in; background:#fff; color:#000; box-shadow:0 4px 12px rgba(0,0,0,0.3); line-height:1.5;}
+        .doc-content h1, .doc-content h2, .doc-content h3 {margin-top:1.5em; margin-bottom:0.5em;}
+        .doc-content p {margin-bottom:1em;}
+        .doc-content table {border-collapse:collapse; width:100%; margin:1em 0;}
+        .doc-content table, .doc-content th, .doc-content td {border:1px solid #ddd;}
+        .doc-content th, .doc-content td {padding:8px; text-align:left;}
+
+        #spreadsheet-viewer {flex:1; display:none; overflow:auto; padding:20px; background:#1e1e1e;}
+        .sheet-table {border-collapse:collapse; background:#fff; color:#000;}
+        .sheet-table th, .sheet-table td {border:1px solid #ddd; padding:8px 12px; min-width:100px; max-width:300px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+        .sheet-table th {background:#f5f5f5; font-weight:bold; text-align:center;}
+        .sheet-table td {background:#fff;}
+        .sheet-controls {background:#252525; padding:10px; margin-bottom:10px; display:flex; gap:10px;}
+
+        .loading {display:flex; align-items:center; justify-content:center; height:100%; font-size:18px; color:#888;}
+        .loading i {margin-right:10px;}
+
+        .unsupported-message {display:flex; flex-direction:column; align-items:center; justify-content:center; height:100%; text-align:center; padding:40px;}
+        .unsupported-message i {font-size:64px; margin-bottom:20px; color:#ff6b6b;}
     </style>
 </head>
 <body>
@@ -64,13 +102,49 @@
                 <button class="btn primary" id="saveBtn" title="Save (Ctrl+S)" style="display:none;"><i class="fas fa-save"></i> Save</button>
             </div>
         </div>
-        <textarea id="editor" style="display:none;"></textarea>
+
+        <!-- Text Editor -->
+        <textarea id="editor"></textarea>
+
+        <!-- PDF Viewer -->
+        <div id="pdf-viewer">
+            <div class="pdf-controls">
+                <button id="pdf-prev"><i class="fas fa-chevron-left"></i> Previous</button>
+                <span id="pdf-page-info">Page: <span id="pdf-current-page">1</span> / <span id="pdf-total-pages">1</span></span>
+                <button id="pdf-next">Next <i class="fas fa-chevron-right"></i></button>
+                <select id="pdf-zoom">
+                    <option value="0.5">50%</option>
+                    <option value="0.75">75%</option>
+                    <option value="1" selected>100%</option>
+                    <option value="1.25">125%</option>
+                    <option value="1.5">150%</option>
+                    <option value="2">200%</option>
+                </select>
+                <button id="pdf-download"><i class="fas fa-download"></i> Download</button>
+            </div>
+            <div id="pdf-canvas-container"></div>
+        </div>
+
+        <!-- Document Viewer (for .docx, .doc, .ppt, .pptx) -->
+        <div id="doc-viewer"></div>
+
+        <!-- Spreadsheet Viewer (for .xlsx, .xls, .csv) -->
+        <div id="spreadsheet-viewer">
+            <div class="sheet-controls">
+                <select id="sheet-selector"></select>
+                <button id="sheet-download"><i class="fas fa-download"></i> Download</button>
+            </div>
+            <div id="sheet-table-container"></div>
+        </div>
+
+        <!-- Placeholder -->
         <div class="editor-placeholder" id="editorPlaceholder">
             <div style="text-align:center;">
                 <div style="font-size:48px; margin-bottom:20px;"><i class="fas fa-file-alt"></i></div>
-                <div>Select a file from the tree to edit</div>
+                <div>Select a file from the tree to view</div>
             </div>
         </div>
+
         <div class="status-bar">
             <span id="fileStats">--</span>
             <span id="charCount">Chars: 0</span>
@@ -90,9 +164,39 @@
     </div>
 
     <script>
-        let selectedPath = null; // Store the full path of the selected file/folder
-        let currentFolder = ''; // Path of the folder currently active for New/Upload operations
+        let selectedPath = null;
+        let currentFolder = '';
         let contextMenuTarget = null;
+        let currentPdf = null;
+        let currentPage = 1;
+        let pdfScale = 1;
+        let currentSpreadsheet = null;
+
+        // File type detection
+        const textExtensions = ['txt', 'js', 'html', 'css', 'json', 'xml', 'py', 'java', 'c', 'cpp', 'md', 'yml', 'yaml'];
+        const pdfExtensions = ['pdf'];
+        const docExtensions = ['docx', 'doc', 'ppt', 'pptx'];
+        const spreadsheetExtensions = ['xlsx', 'xls', 'csv'];
+
+        function getFileExtension(filename) {
+            return filename.split('.').pop().toLowerCase();
+        }
+
+        function isTextFile(filename) {
+            return textExtensions.includes(getFileExtension(filename));
+        }
+
+        function isPdfFile(filename) {
+            return pdfExtensions.includes(getFileExtension(filename));
+        }
+
+        function isDocFile(filename) {
+            return docExtensions.includes(getFileExtension(filename));
+        }
+
+        function isSpreadsheetFile(filename) {
+            return spreadsheetExtensions.includes(getFileExtension(filename));
+        }
 
         $(document).ready(function() {
             $('#file-tree').jstree({
@@ -108,33 +212,29 @@
 
             $('#file-tree').on('select_node.jstree', function(e,data){
                 const node = data.node;
-
-                selectedPath = node.id; // Always store the full path of the selected node
+                selectedPath = node.id;
 
                 if (node.id === '#') {
-                    currentFolder = ''; // Root context
+                    currentFolder = '';
                     showPlaceholder();
                     updateFileInfo('File Explorer', 'Root', true);
                     hideFileActions();
                     return;
                 }
 
-                // HEURISTIC FIX: Check if the original data marks it as a directory,
-                // OR if the node text ends with a '/' (fallback for root directories).
                 const isDirectory = (node.original && node.original.is_dir) || node.text.endsWith('/');
 
-                if(!isDirectory){ // It's a file
-                    currentFolder = getParentPath(node.id); // Context is the parent folder
+                if(!isDirectory){
+                    currentFolder = getParentPath(node.id);
                     loadFileContent(node.id);
                     showFileActions();
-                    updateFileInfo(node.id.split('/').pop(), node.id, false);
-                }else{ // It's a folder/directory
-                    currentFolder = node.id; // Context is the folder itself
+                    updateFileInfo(node.text.replace(/\/$/,''), node.id, false);
+                } else {
+                    currentFolder = node.id;
                     showPlaceholder();
                     updateFileInfo(node.text.replace(/\/$/,''), node.id, true);
                     hideFileActions();
                 }
-
             });
 
             $('#file-tree').on('contextmenu.jstree', function(e){
@@ -149,7 +249,324 @@
                     }
                 }
             });
+
+            // PDF Viewer Controls
+            $('#pdf-prev').click(() => renderPdfPage(currentPage - 1));
+            $('#pdf-next').click(() => renderPdfPage(currentPage + 1));
+            $('#pdf-zoom').change((e) => {
+                pdfScale = parseFloat(e.target.value);
+                renderPdfPage(currentPage);
+            });
+            $('#pdf-download').click(() => {
+                if (selectedPath) downloadFile(selectedPath);
+            });
+
+            // Spreadsheet Controls
+            $('#sheet-download').click(() => {
+                if (selectedPath) downloadFile(selectedPath);
+            });
         });
+
+        async function loadFileContent(path) {
+            const filename = path.split('/').pop();
+
+            // Hide all viewers first
+            hideAllViewers();
+            showPlaceholder();
+
+            document.getElementById('fileName').textContent = filename;
+            document.getElementById('filePath').textContent = path;
+
+            // Show loading state
+            document.getElementById('editorPlaceholder').innerHTML = `
+                <div class="loading">
+                    <i class="fas fa-spinner fa-spin"></i> Loading file...
+                </div>
+            `;
+
+            try {
+                if (isTextFile(filename)) {
+                    await loadTextFile(path);
+                } else if (isPdfFile(filename)) {
+                    await loadPdfFile(path);
+                } else if (isDocFile(filename)) {
+                    await loadDocFile(path);
+                } else if (isSpreadsheetFile(filename)) {
+                    await loadSpreadsheetFile(path);
+                } else {
+                    showUnsupportedFile();
+                }
+            } catch (error) {
+                console.error('Error loading file:', error);
+                showUnsupportedFile();
+            }
+        }
+
+        async function loadTextFile(path) {
+            try {
+                const resp = await fetch(`/api/explorer/files/view?path=${encodeURIComponent(path)}`);
+                const data = await resp.json();
+
+                if (data.error) throw new Error(data.error);
+
+                document.getElementById('editor').value = data.content || '';
+                document.getElementById('editor').style.display = 'block';
+                document.getElementById('editorPlaceholder').style.display = 'none';
+                showFileActions();
+                updateFileStats(data);
+                document.getElementById('editor').focus();
+
+                // Update save button visibility based on file type
+                document.getElementById('saveBtn').style.display = 'inline-flex';
+            } catch (err) {
+                console.error(err);
+                document.getElementById('fileStats').textContent = 'Error loading file';
+                document.getElementById('editorPlaceholder').innerHTML = `
+                    <div class="unsupported-message">
+                        <i class="fas fa-exclamation-triangle"></i>
+                        <h3>Error loading file</h3>
+                        <p>${err.message}</p>
+                    </div>
+                `;
+            }
+        }
+
+        async function loadPdfFile(path) {
+            try {
+                const pdfUrl = `/api/explorer/files/download?path=${encodeURIComponent(path)}`;
+
+                // Load PDF using PDF.js
+                const loadingTask = pdfjsLib.getDocument(pdfUrl);
+                currentPdf = await loadingTask.promise;
+
+                // Show PDF viewer
+                document.getElementById('pdf-viewer').style.display = 'block';
+                document.getElementById('editorPlaceholder').style.display = 'none';
+
+                // Update page info
+                document.getElementById('pdf-total-pages').textContent = currentPdf.numPages;
+                currentPage = 1;
+
+                // Render first page
+                await renderPdfPage(1);
+
+                // Hide save button for PDFs
+                hideSaveButton();
+            } catch (err) {
+                console.error('Error loading PDF:', err);
+                showUnsupportedFile('Error loading PDF file');
+            }
+        }
+
+        async function renderPdfPage(pageNum) {
+            if (!currentPdf || pageNum < 1 || pageNum > currentPdf.numPages) return;
+
+            currentPage = pageNum;
+            document.getElementById('pdf-current-page').textContent = currentPage;
+
+            const page = await currentPdf.getPage(currentPage);
+            const viewport = page.getViewport({ scale: pdfScale });
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            const renderContext = {
+                canvasContext: context,
+                viewport: viewport
+            };
+
+            await page.render(renderContext).promise;
+
+            const container = document.getElementById('pdf-canvas-container');
+            container.innerHTML = '';
+
+            const canvasContainer = document.createElement('div');
+            canvasContainer.className = 'pdf-page';
+            canvasContainer.appendChild(canvas);
+            container.appendChild(canvasContainer);
+
+            // Enable/disable navigation buttons
+            document.getElementById('pdf-prev').disabled = currentPage <= 1;
+            document.getElementById('pdf-next').disabled = currentPage >= currentPdf.numPages;
+        }
+
+        async function loadDocFile(path) {
+            try {
+                // For DOCX files, we'll use Mammoth.js
+                if (path.toLowerCase().endsWith('.docx')) {
+                    const response = await fetch(`/api/explorer/files/download?path=${encodeURIComponent(path)}`);
+                    const arrayBuffer = await response.arrayBuffer();
+
+                    const result = await mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
+
+                    document.getElementById('doc-viewer').innerHTML = `
+                        <div class="doc-content">${result.value}</div>
+                    `;
+                    document.getElementById('doc-viewer').style.display = 'block';
+                    document.getElementById('editorPlaceholder').style.display = 'none';
+
+                } else {
+                    // For other document formats, show download option
+                    showDownloadOnly();
+                }
+
+                hideSaveButton();
+            } catch (err) {
+                console.error('Error loading document:', err);
+                showUnsupportedFile('Error loading document');
+            }
+        }
+
+        async function loadSpreadsheetFile(path) {
+            try {
+                const response = await fetch(`/api/explorer/files/download?path=${encodeURIComponent(path)}`);
+                const arrayBuffer = await response.arrayBuffer();
+                const extension = getFileExtension(path);
+
+                if (extension === 'csv') {
+                    const text = new TextDecoder().decode(arrayBuffer);
+                    const results = Papa.parse(text, { header: true });
+                    displaySpreadsheet(results.data, results.meta.fields);
+                } else {
+                    // For Excel files
+                    const data = new Uint8Array(arrayBuffer);
+                    const workbook = XLSX.read(data, { type: 'array' });
+
+                    // Populate sheet selector
+                    const selector = document.getElementById('sheet-selector');
+                    selector.innerHTML = '';
+                    workbook.SheetNames.forEach((sheetName, index) => {
+                        const option = document.createElement('option');
+                        option.value = index;
+                        option.textContent = sheetName;
+                        selector.appendChild(option);
+                    });
+
+                    // Display first sheet
+                    displayExcelSheet(workbook, 0);
+
+                    // Add change listener
+                    selector.onchange = () => {
+                        displayExcelSheet(workbook, parseInt(selector.value));
+                    };
+                }
+
+                document.getElementById('spreadsheet-viewer').style.display = 'block';
+                document.getElementById('editorPlaceholder').style.display = 'none';
+                hideSaveButton();
+
+            } catch (err) {
+                console.error('Error loading spreadsheet:', err);
+                showUnsupportedFile('Error loading spreadsheet');
+            }
+        }
+
+        function displaySpreadsheet(data, headers) {
+            const container = document.getElementById('sheet-table-container');
+
+            if (!headers || headers.length === 0) {
+                headers = data.length > 0 ? Object.keys(data[0]) : ['No Data'];
+            }
+
+            let html = '<table class="sheet-table"><thead><tr>';
+
+            // Add headers
+            headers.forEach(header => {
+                html += `<th>${header}</th>`;
+            });
+            html += '</tr></thead><tbody>';
+
+            // Add data rows
+            data.forEach((row, index) => {
+                if (index < 100) { // Limit to 100 rows for performance
+                    html += '<tr>';
+                    headers.forEach(header => {
+                        const value = row[header] !== undefined ? row[header] : '';
+                        html += `<td>${value}</td>`;
+                    });
+                    html += '</tr>';
+                }
+            });
+
+            if (data.length >= 100) {
+                html += '<tr><td colspan="' + headers.length + '">... and ' + (data.length - 100) + ' more rows</td></tr>';
+            }
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        function displayExcelSheet(workbook, sheetIndex) {
+            const sheetName = workbook.SheetNames[sheetIndex];
+            const worksheet = workbook.Sheets[sheetName];
+            const html = XLSX.utils.sheet_to_html(worksheet, {
+                editable: false,
+                header: '',
+                raw: true
+            });
+
+            document.getElementById('sheet-table-container').innerHTML = html;
+
+            // Add sheet-table class to the generated table
+            const table = document.querySelector('#sheet-table-container table');
+            if (table) {
+                table.className = 'sheet-table';
+            }
+        }
+
+        function showUnsupportedFile(message = 'This file type cannot be previewed') {
+            document.getElementById('editorPlaceholder').innerHTML = `
+                <div class="unsupported-message">
+                    <i class="fas fa-file"></i>
+                    <h3>File Preview Not Available</h3>
+                    <p>${message}</p>
+                    ${selectedPath ? `<button class="btn primary" onclick="downloadFile('${selectedPath}')" style="margin-top:20px;">
+                        <i class="fas fa-download"></i> Download File
+                    </button>` : ''}
+                </div>
+            `;
+            hideSaveButton();
+        }
+
+        function showDownloadOnly() {
+            document.getElementById('editorPlaceholder').innerHTML = `
+                <div class="unsupported-message">
+                    <i class="fas fa-download"></i>
+                    <h3>File Download Required</h3>
+                    <p>This file type requires download to view</p>
+                    ${selectedPath ? `<button class="btn primary" onclick="downloadFile('${selectedPath}')" style="margin-top:20px;">
+                        <i class="fas fa-download"></i> Download File
+                    </button>` : ''}
+                </div>
+            `;
+            hideSaveButton();
+        }
+
+        function hideAllViewers() {
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('pdf-viewer').style.display = 'none';
+            document.getElementById('doc-viewer').style.display = 'none';
+            document.getElementById('spreadsheet-viewer').style.display = 'none';
+            document.getElementById('editorPlaceholder').style.display = 'none';
+        }
+
+        function hideSaveButton() {
+            document.getElementById('saveBtn').style.display = 'none';
+            document.getElementById('renameBtn').style.display = 'inline-flex';
+            document.getElementById('deleteBtn').style.display = 'inline-flex';
+        }
+
+        function showFileActions() {
+            document.getElementById('renameBtn').style.display = 'inline-flex';
+            document.getElementById('deleteBtn').style.display = 'inline-flex';
+            // Save button will be shown/hidden based on file type in individual load functions
+        }
+
+        // Keep all other existing functions (getParentPath, showContextMenu, loadTreeData, etc.) the same as before
+        // ... [rest of your existing functions remain unchanged] ...
 
         function getParentPath(path){if(!path) return ''; const parts=path.split('/'); parts.pop(); return parts.join('/');}
 
@@ -157,10 +574,8 @@
             const menu=document.getElementById('contextMenu'); contextMenuTarget=node;
             menu.style.left=x+'px'; menu.style.top=y+'px'; menu.style.display='block';
 
-            // HEURISTIC FIX: Use the same logic here to determine directory status
             const isDirectory = (node.original && node.original.is_dir) || node.text.endsWith('/');
 
-            // Determine the context path for new operations
             let contextPath;
             if (node.id === '#') {
                 contextPath = '';
@@ -187,7 +602,6 @@
             if(!action || !contextMenuTarget) return;
             const menu=this; menu.style.display='none';
 
-            // Use the calculated contextPath from showContextMenu
             const parentPath = contextMenuTarget.contextPath;
 
             switch(action){
@@ -211,21 +625,6 @@
             }catch(err){console.error(err); callback([]);}
         }
 
-        async function loadFileContent(path){
-            try{
-                const resp=await fetch(`/api/explorer/files/view?path=${encodeURIComponent(path)}`);
-                const data=await resp.json(); if(data.error) throw new Error(data.error);
-                document.getElementById('fileName').textContent=data.name||path.split('/').pop();
-                document.getElementById('filePath').textContent=path;
-                document.getElementById('editor').value=data.content||'';
-                document.getElementById('editor').style.display='block';
-                document.getElementById('editorPlaceholder').style.display='none';
-                showFileActions();
-                updateFileStats(data);
-                document.getElementById('editor').focus();
-            }catch(err){console.error(err); document.getElementById('fileStats').textContent='Error loading file';}
-        }
-
         async function createNewFolder(parentPath=currentFolder){
             const name=prompt('Enter folder name:'); if(!name) return;
             try{
@@ -245,6 +644,9 @@
 
         async function saveFile(){
             if(!selectedPath) return alert('No file selected');
+            if (!isTextFile(selectedPath.split('/').pop())) {
+                return alert('Only text files can be edited');
+            }
 
             const filePath = selectedPath;
             const content=document.getElementById('editor').value;
@@ -287,7 +689,6 @@
             }
         }
 
-
         async function deleteItem(path){
             if(!confirm(`Are you sure you want to delete "${path}"?`)) return;
             try{
@@ -322,15 +723,14 @@
                 }else{
                     alert('Rename failed: '+(data.error||'Unknown error'));
                 }
-            }catch(err){console.error(err); alert('Rename failed');}
+           }catch(err){console.error(err); alert('Rename failed');}
         }
 
         function downloadFile(path){window.location.href=`/api/explorer/files/download?path=${encodeURIComponent(path)}`;}
         function updateFileInfo(name,path,isFolder){document.getElementById('fileName').textContent=name; document.getElementById('filePath').textContent=path;}
         function updateFileStats(fileData){if(!fileData){document.getElementById('fileStats').textContent='--'; document.getElementById('charCount').textContent='Chars: 0'; return;} const size=formatSize(fileData.size); const modified=fileData.modified?new Date(fileData.modified*1000).toLocaleString():'Unknown'; const chars=fileData.content?fileData.content.length:0; document.getElementById('fileStats').textContent=`${size} • Modified: ${modified}`; document.getElementById('charCount').textContent=`Chars: ${chars}`;}
         function formatSize(bytes){if(!bytes) return '0 B'; const k=1024; const sizes=['B','KB','MB','GB']; const i=Math.floor(Math.log(bytes)/Math.log(k)); return parseFloat((bytes/Math.pow(k,i)).toFixed(2))+' '+sizes[i];}
-        function showPlaceholder(){document.getElementById('editor').style.display='none'; document.getElementById('editorPlaceholder').style.display='flex'; document.getElementById('fileStats').textContent='--'; document.getElementById('charCount').textContent='Chars: 0';}
-        function showFileActions(){document.getElementById('saveBtn').style.display='inline-flex'; document.getElementById('renameBtn').style.display='inline-flex'; document.getElementById('deleteBtn').style.display='inline-flex';}
+        function showPlaceholder(){hideAllViewers(); document.getElementById('editorPlaceholder').style.display='flex'; document.getElementById('editorPlaceholder').innerHTML=`<div style="text-align:center;"><div style="font-size:48px; margin-bottom:20px;"><i class="fas fa-file-alt"></i></div><div>Select a file from the tree to view</div></div>`; document.getElementById('fileStats').textContent='--'; document.getElementById('charCount').textContent='Chars: 0';}
         function hideFileActions(){document.getElementById('saveBtn').style.display='none'; document.getElementById('renameBtn').style.display='none'; document.getElementById('deleteBtn').style.display='none';}
 
         document.getElementById('refreshBtn').addEventListener('click',()=>refreshTree());
