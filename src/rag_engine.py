@@ -96,6 +96,13 @@ class NewFileHandler(FileSystemEventHandler):
         print(f"{Colors.OKCYAN}[Watcher]{Colors.ENDC} File modified: {event.src_path}")
         self.rag.ingest(new_files=[event.src_path])
 
+    def on_deleted(self, event):
+        if event.is_directory:
+            return
+        print(f"{Colors.WARNING}[Watcher]{Colors.ENDC} File deleted: {event.src_path}")
+        self.rag.remove_file(event.src_path)
+
+
 
 # ----------------------
 # College RAG System
@@ -313,6 +320,36 @@ class CollegeRAG:
 
             self.vectorestore.save_local(self.store_dir)
             print(f"{Colors.OKGREEN}[Ingest] Ingestion completed for {len(new_files)} file(s)!{Colors.ENDC}")
+
+
+    def remove_file(self, fpath):
+        """
+        Remove all chunks of a deleted file from the vectorstore and BM25 index.
+        """
+        with self.lock:
+            if not self.vectorestore:
+                return
+
+            ids_to_delete = [
+                doc_id for doc_id, doc in self.vectorestore.docstore._dict.items()
+                if doc.metadata.get("source") == fpath
+            ]
+
+            if not ids_to_delete:
+                print(f"{Colors.WARNING}[Remove] No chunks found for deleted file: {fpath}{Colors.ENDC}")
+                return
+
+            self.vectorestore.delete(ids_to_delete)
+            print(f"{Colors.OKBLUE}[Remove] Deleted {len(ids_to_delete)} chunks from: {fpath}{Colors.ENDC}")
+
+            # Update docs and rebuild BM25
+            self.docs = list(self.vectorestore.docstore._dict.values())
+            self._build_bm25_index()
+            self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
+
+            # Save updated FAISS store
+            self.vectorestore.save_local(self.store_dir)
+            print(f"{Colors.OKGREEN}[Remove] Vectorstore updated after deletion.{Colors.ENDC}")
 
     # ----------------------
     # Rewrite query (Unchanged)

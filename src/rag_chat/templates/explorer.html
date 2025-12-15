@@ -1,351 +1,791 @@
-<!-- src/rag_chat/templates/explorer.html -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8" />
-    <title>RAG Explorer — Beast Mode</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta charset="UTF-8">
+    <title>File Explorer - Complete</title>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- jsTree -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/themes/default/style.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/jstree.min.js"></script>
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
     <style>
-        :root{
-            --bg:#0f1115; --panel:#0b0c0f; --muted:#9aa3b2; --accent:#6cc0ff; --accent-2:#7b61ff;
-            --card:#121317; --danger:#ff6b6b; --success:#5ee8a1;
-        }
-        *{box-sizing:border-box}
-        body{
-            margin:0; font-family:'Inter',sans-serif; background:linear-gradient(180deg,#0b0c0f 0%, #0f1115 100%); color:#e6eef6;
-            height:100vh; display:flex; overflow:hidden;
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
 
-        /* left column - explorer */
-        .left{
-            width:340px; border-right:1px solid rgba(255,255,255,0.03); background:var(--panel); padding:14px; display:flex; flex-direction:column;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1e1e1e;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
         }
-        .topbar{
-            display:flex; gap:8px; align-items:center; margin-bottom:12px;
-        }
-        .logo{ font-weight:700; font-size:16px; color:var(--accent-2); }
-        .search{
-            flex:1; display:flex; gap:8px;
-        }
-        input.search-input{
-            width:100%; padding:8px 12px; border-radius:8px; border:none; background:#0b0b0d; color:#fff;
-            outline: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.02);
-        }
-        .btn{
-            background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#041025; padding:8px 10px; border-radius:8px; border:none; cursor:pointer; font-weight:600;
-        }
-        .small{ padding:6px 8px; font-size:13px }
 
-        .controls{ display:flex; gap:8px; margin-bottom:12px; }
-        .file-list{ flex:1; overflow:auto; padding-right:6px; }
-        .folder, .file-item{
-            display:flex; align-items:center; justify-content:space-between; padding:10px; border-radius:8px; margin-bottom:6px;
-            transition:background .12s, transform .06s;
-            background:transparent; cursor:pointer;
+        #sidebar {
+            width: 350px;
+            background: #252525;
+            border-right: 1px solid #404040;
+            display: flex;
+            flex-direction: column;
         }
-        .folder:hover, .file-item:hover{ background: rgba(255,255,255,0.02); transform:translateY(-1px); }
-        .file-item .meta{ color:var(--muted); font-size:13px; }
 
-        /* right column - preview/editor */
-        .right{ flex:1; display:flex; flex-direction:column; gap:12px; padding:18px; }
-        .header{ display:flex; justify-content:space-between; align-items:center; gap:12px; }
-        .file-name{ font-size:18px; font-weight:600; color:#fff; }
-        .actions{ display:flex; gap:8px; }
-        .action-btn{ background:#0e1012; color:var(--muted); border:1px solid rgba(255,255,255,0.03); padding:8px 10px; border-radius:8px; cursor:pointer; }
-        .action-btn.primary{ background:linear-gradient(90deg,var(--accent),var(--accent-2)); color:#041025; font-weight:700; border:none; }
-        .pane{ background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00)); border-radius:10px; padding:12px; height:calc(100% - 70px); overflow:auto; border:1px solid rgba(255,255,255,0.02); }
-        textarea.editor{ width:100%; height:100%; background:transparent; color:#e6eef6; border:none; outline:none; resize:none; font-family: 'Inter', monospace; font-size:14px; line-height:1.5; }
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #404040;
+        }
 
-        .muted{ color:var(--muted); font-size:13px; }
+        .sidebar-header h1 {
+            font-size: 18px;
+            color: #4dabf7;
+        }
 
-        /* confirm dialog */
-        .confirm{
-            position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); background:#060609; padding:20px; border-radius:12px; z-index:40;
-            box-shadow: 0 8px 40px rgba(0,0,0,0.6); display:none;
+        .controls {
+            padding: 15px;
+            display: flex;
+            gap: 8px;
+            border-bottom: 1px solid #404040;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 8px 12px;
+            background: #404040;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:hover {
+            background: #505050;
+        }
+
+        .btn.primary {
+            background: #4dabf7;
+            color: #000;
+        }
+
+        .btn.danger {
+            background: #ff6b6b;
+            color: #fff;
+        }
+
+        #tree-container {
+            flex: 1;
+            overflow: auto;
+            padding: 10px;
+        }
+
+        #editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .editor-header {
+            padding: 20px;
+            border-bottom: 1px solid #404040;
+            background: #252525;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .file-info h2 {
+            font-size: 16px;
+            margin-bottom: 5px;
+        }
+
+        .file-info .path {
+            font-size: 13px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .editor-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        #editor {
+            flex: 1;
+            background: #1e1e1e;
+            border: none;
+            color: #e0e0e0;
+            padding: 20px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+            tab-size: 4;
+        }
+
+        .editor-placeholder {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 16px;
+            background: #1e1e1e;
+        }
+
+        .status-bar {
+            padding: 10px 20px;
+            background: #252525;
+            border-top: 1px solid #404040;
+            font-size: 13px;
+            color: #888;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* jsTree custom theme */
+        .jstree-default .jstree-node,
+        .jstree-default .jstree-icon {
+            color: #e0e0e0;
+        }
+
+        .jstree-default .jstree-anchor {
+            color: #e0e0e0;
+        }
+
+        .jstree-default .jstree-anchor:hover {
+            background: #404040;
+        }
+
+        .jstree-default .jstree-clicked {
+            background: #2a2d2e;
+            color: #4dabf7;
+        }
+
+        .jstree-default .jstree-wholerow-clicked {
+            background: #2a2d2e;
+        }
+
+        .jstree-default .jstree-wholerow-hovered {
+            background: #404040;
+        }
+
+        /* Context menu */
+        .context-menu {
+            position: absolute;
+            background: #252525;
+            border: 1px solid #404040;
+            border-radius: 6px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            z-index: 1000;
+            min-width: 180px;
+            display: none;
+        }
+
+        .context-menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #e0e0e0;
+        }
+
+        .context-menu-item:hover {
+            background: #404040;
+        }
+
+        .context-menu-item i {
+            width: 16px;
+        }
+
+        .context-menu-divider {
+            height: 1px;
+            background: #404040;
+            margin: 4px 0;
         }
     </style>
 </head>
 <body>
-<div class="left">
-    <div class="topbar">
-        <div class="logo">RAG Explorer</div>
-        <div style="flex:1"></div>
-        <button id="refreshBtn" class="btn small">Refresh</button>
-    </div>
-
-    <div class="controls">
-        <div style="flex:1" class="search">
-            <input id="searchInput" class="search-input" placeholder="Search file names..." />
+    <!-- Sidebar with tree -->
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h1><i class="fas fa-folder"></i> File Explorer</h1>
         </div>
-        <button id="newFolderBtn" class="action-btn small">New Folder</button>
-        <label class="btn small" style="display:inline-block">
-            Upload
-            <input id="uploadInput" type="file" style="display:none" />
-        </label>
-    </div>
 
-    <div id="fileList" class="file-list"></div>
-
-    <div style="margin-top:8px" class="muted">Path: <span id="currentPath">/</span></div>
-</div>
-
-<div class="right">
-    <div class="header">
-        <div>
-            <div class="file-name" id="selectedName">Select a file</div>
-            <div class="muted" id="selectedMeta">No file selected</div>
+        <div class="controls">
+            <button class="btn" id="refreshBtn" title="Refresh">
+                <i class="fas fa-sync-alt"></i>
+            </button>
+            <button class="btn" id="newFolderBtn" title="New Folder">
+                <i class="fas fa-folder-plus"></i>
+            </button>
+            <button class="btn" id="newFileBtn" title="New File">
+                <i class="fas fa-file-plus"></i>
+            </button>
+            <button class="btn primary" id="uploadBtn" title="Upload File">
+                <i class="fas fa-upload"></i>
+            </button>
         </div>
-        <div class="actions">
-            <button id="downloadBtn" class="action-btn">Download</button>
-            <button id="renameBtn" class="action-btn">Rename</button>
-            <button id="deleteBtn" class="action-btn" style="color:var(--danger); border-color:rgba(255,107,107,0.12)">Delete</button>
-            <button id="saveBtn" class="action-btn primary">Save</button>
+
+        <div id="tree-container">
+            <div id="file-tree"></div>
         </div>
     </div>
 
-    <div class="pane">
-        <textarea id="editor" class="editor" placeholder="File content will appear here..." disabled></textarea>
+    <!-- Editor panel -->
+    <div id="editor-panel">
+        <div class="editor-header">
+            <div class="file-info">
+                <h2 id="fileName">No file selected</h2>
+                <div class="path" id="filePath">Select a file to view and edit</div>
+            </div>
+            <div class="editor-actions">
+                <button class="btn" id="renameBtn" title="Rename" style="display: none;">
+                    <i class="fas fa-edit"></i>
+                </button>
+                <button class="btn danger" id="deleteBtn" title="Delete" style="display: none;">
+                    <i class="fas fa-trash"></i>
+                </button>
+                <button class="btn primary" id="saveBtn" title="Save (Ctrl+S)" style="display: none;">
+                    <i class="fas fa-save"></i> Save
+                </button>
+            </div>
+        </div>
+
+        <textarea id="editor" style="display: none;"></textarea>
+        <div class="editor-placeholder" id="editorPlaceholder">
+            <div style="text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 20px;">
+                    <i class="fas fa-file-alt"></i>
+                </div>
+                <div>Select a file from the tree to edit</div>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <span id="fileStats">--</span>
+            <span id="charCount">Chars: 0</span>
+        </div>
     </div>
 
-    <div style="display:flex; justify-content:space-between; align-items:center">
-        <div class="muted" id="footerStatus">Ready</div>
-        <div class="muted">Files: <span id="fileCount">0</span></div>
+    <!-- Hidden file input -->
+    <input type="file" id="fileInput" style="display: none;">
+
+    <!-- Context Menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" data-action="open">
+            <i class="fas fa-folder-open"></i>
+            Open
+        </div>
+        <div class="context-menu-item" data-action="rename">
+            <i class="fas fa-edit"></i>
+            Rename
+        </div>
+        <div class="context-menu-item" data-action="delete">
+            <i class="fas fa-trash"></i>
+            Delete
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" data-action="newFile">
+            <i class="fas fa-file"></i>
+            New File Here
+        </div>
+        <div class="context-menu-item" data-action="newFolder">
+            <i class="fas fa-folder-plus"></i>
+            New Folder Here
+        </div>
+        <div class="context-menu-divider"></div>
+        <div class="context-menu-item" data-action="download">
+            <i class="fas fa-download"></i>
+            Download
+        </div>
     </div>
-</div>
 
-<!-- confirm -->
-<div id="confirm" class="confirm">
-    <div id="confirmText">Confirm?</div>
-    <div style="margin-top:12px; display:flex; gap:8px; justify-content:flex-end">
-        <button id="confirmNo" class="action-btn">No</button>
-        <button id="confirmYes" class="action-btn primary">Yes</button>
-    </div>
-</div>
+    <script>
+        // Global state
+        let selectedFile = null;
+        let selectedNode = null;
+        let contextMenuTarget = null;
+        let currentFolder = '';
 
-<script>
-    const fileListEl = document.getElementById('fileList');
-    const editorEl = document.getElementById('editor');
-    const selectedNameEl = document.getElementById('selectedName');
-    const selectedMetaEl = document.getElementById('selectedMeta');
-    const footerStatus = document.getElementById('footerStatus');
-    const fileCountEl = document.getElementById('fileCount');
-    const currentPathEl = document.getElementById('currentPath');
+        // Initialize jsTree
+        $(document).ready(function() {
+            $('#file-tree').jstree({
+                'core': {
+                    'data': function (node, callback) {
+                        const path = node.id === '#' ? '' : node.id;
+                        loadTreeData(path, callback);
+                    },
+                    'themes': {
+                        'name': 'default',
+                        'dots': true,
+                        'icons': true
+                    },
+                    'check_callback': true
+                },
+                'plugins': ['wholerow', 'contextmenu'],
+                'contextmenu': {
+                    'items': function(node) {
+                        return {
+                            'open': {
+                                'label': '<i class="fas fa-folder-open"></i> Open',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    if (obj.original && !obj.original.is_dir) {
+                                        loadFileContent(obj.id);
+                                    }
+                                }
+                            },
+                            'rename': {
+                                'label': '<i class="fas fa-edit"></i> Rename',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    renameItem(obj.id, obj.text.replace(/\/$/, ''));
+                                }
+                            },
+                            'delete': {
+                                'label': '<i class="fas fa-trash"></i> Delete',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    deleteItem(obj.id);
+                                }
+                            },
+                            'sep1': { 'type': 'separator' },
+                            'newFile': {
+                                'label': '<i class="fas fa-file"></i> New File',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    const path = obj.original && obj.original.is_dir ? obj.id : '';
+                                    createNewFile(path);
+                                }
+                            },
+                            'newFolder': {
+                                'label': '<i class="fas fa-folder-plus"></i> New Folder',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    const path = obj.original && obj.original.is_dir ? obj.id : '';
+                                    createNewFolder(path);
+                                }
+                            },
+                            'sep2': { 'type': 'separator' },
+                            'download': {
+                                'label': '<i class="fas fa-download"></i> Download',
+                                'action': function(data) {
+                                    const inst = $.jstree.reference(data.reference);
+                                    const obj = inst.get_node(data.reference);
+                                    if (obj.original && !obj.original.is_dir) {
+                                        downloadFile(obj.id);
+                                    }
+                                }
+                            }
+                        };
+                    }
+                }
+            });
 
-    let currentPath = "";
-    let selectedPath = null;
-    let filesCache = [];
+            // Handle tree node selection
+            $('#file-tree').on('select_node.jstree', function(e, data) {
+                const node = data.node;
+                selectedNode = node;
 
-    // Updated API calls
-    async function apiList(path="") {
-        const url = '/api/explorer/files' + (path ? ('?path=' + encodeURIComponent(path)) : '');
-        const res = await fetch(url);
-        return res.json();
-    }
+                if (node.original && !node.original.is_dir) {
+                    // It's a file - load it
+                    selectedFile = node.id;
+                    loadFileContent(node.id);
+                    showFileActions();
+                } else {
+                    // It's a folder
+                    selectedFile = null;
+                    currentFolder = node.id;
+                    showPlaceholder();
+                    updateFileInfo(node.text.replace(/\/$/, '') + '/', node.id, true);
+                    hideFileActions();
+                }
+            });
 
-    async function apiView(path) {
-        const res = await fetch('/api/explorer/files/view?path=' + encodeURIComponent(path));
-        return res.json();
-    }
-
-    async function apiSave(path, content) {
-        const res = await fetch('/api/explorer/files/save', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({path, content})
+            // Handle right-click for custom context menu
+            $('#file-tree').on('contextmenu.jstree', function(e, data) {
+                // jsTree's context menu will handle this
+            });
         });
-        return res.json();
-    }
 
-    async function apiDelete(path) {
-        const res = await fetch('/api/explorer/files/delete', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({path})
-        });
-        return res.json();
-    }
+        // Function to load tree data from API
+        async function loadTreeData(path = '', callback) {
+            try {
+                const url = `/api/explorer/files${path ? `?path=${encodeURIComponent(path)}` : ''}`;
+                const response = await fetch(url);
+                const data = await response.json();
 
-    async function apiRename(path, newName) {
-        const res = await fetch('/api/explorer/files/rename', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({old: path, new: newName})
-        });
-        return res.json();
-    }
+                if (data.error) {
+                    console.error('API Error:', data.error);
+                    callback([]);
+                    return;
+                }
 
-    async function apiMkdir(path, name) {
-        const res = await fetch('/api/explorer/files/mkdir', {
-            method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({path: name})
-        });
-        return res.json();
-    }
+                // Convert API data to jsTree format
+                const treeData = data.files.map(item => ({
+                    id: item.path,
+                    text: item.name + (item.is_dir ? '/' : ''),
+                    icon: item.is_dir ? 'jstree-folder' : 'jstree-file',
+                    children: item.is_dir,
+                    li_attr: {
+                        'data-type': item.is_dir ? 'directory' : 'file',
+                        'data-path': item.path
+                    },
+                    a_attr: {
+                        'title': item.name + (item.is_dir ? ' (Folder)' : ` (${formatSize(item.size)})`)
+                    },
+                    original: item
+                }));
 
-    async function apiUpload(path, file) {
-        const form = new FormData();
-        form.append('path', path || '');
-        form.append('file', file);
-        const res = await fetch('/api/explorer/files/upload', { method:'POST', body: form });
-        return res.json();
-    }
+                callback(treeData);
 
-    async function apiDownload(path) {
-        window.location.href = '/api/explorer/files/download?path=' + encodeURIComponent(path);
-    }
-
-    function setStatus(t) { footerStatus.textContent = t; }
-
-    function renderFiles(items) {
-        filesCache = items;
-        fileListEl.innerHTML = '';
-        if (!items || items.length === 0) {
-            fileListEl.innerHTML = '<div class="muted">Folder empty</div>';
-            fileCountEl.textContent = 0;
-            return;
-        }
-        let count = 0;
-        items.forEach(it => {
-            const div = document.createElement('div');
-            if (it.is_dir) {
-                div.className = 'folder';
-                div.innerHTML = `<div style="display:flex;flex-direction:column"><strong>${it.name}/</strong><div class="muted">${new Date(it.modified*1000).toLocaleString()}</div></div>
-                                 <div class="muted">Folder</div>`;
-                div.onclick = () => {
-                    currentPath = (currentPath ? (currentPath + '/' + it.name) : it.name);
-                    loadCurrent();
-                };
-            } else {
-                div.className = 'file-item';
-                div.innerHTML = `<div><strong>${it.name}</strong><div class="muted">${(it.size/1024).toFixed(1)} KB • ${new Date(it.modified*1000).toLocaleString()}</div></div>
-                                 <div class="meta">file</div>`;
-                div.onclick = () => selectFile(it.name);
+            } catch (error) {
+                console.error('Error loading tree:', error);
+                callback([]);
             }
-            fileListEl.appendChild(div);
-            count++;
-        });
-        fileCountEl.textContent = count;
-    }
-
-    async function loadCurrent() {
-        setStatus('Loading files...');
-        currentPathEl.textContent = currentPath ? ('/' + currentPath) : '/';
-        const j = await apiList(currentPath);
-        if (j.error) {
-            setStatus('Error listing: ' + j.error);
-            renderFiles([]);
-            return;
         }
-        renderFiles(j.files || []);
-        setStatus('Files loaded');
-        clearSelection();
-    }
 
-    async function selectFile(name) {
-        const rel = currentPath ? (currentPath + '/' + name) : name;
-        setStatus('Loading file...');
-        selectedPath = rel;
-        const j = await apiView(rel);
-        if (j.error) {
-            setStatus('Error: ' + j.error);
-            return;
+        // Function to load file content
+        async function loadFileContent(path) {
+            try {
+                showLoading();
+
+                const response = await fetch(`/api/explorer/files/view?path=${encodeURIComponent(path)}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                // Update UI
+                updateFileInfo(data.name || path.split('/').pop(), path, false);
+                document.getElementById('editor').value = data.content || '';
+
+                // Show editor, hide placeholder
+                document.getElementById('editor').style.display = 'block';
+                document.getElementById('editorPlaceholder').style.display = 'none';
+                showFileActions();
+
+                // Update stats
+                updateFileStats(data);
+
+                // Focus editor
+                document.getElementById('editor').focus();
+
+            } catch (error) {
+                console.error('Error loading file:', error);
+                document.getElementById('fileStats').textContent = 'Error loading file';
+            }
         }
-        selectedNameEl.textContent = j.name;
-        selectedMetaEl.textContent = `${(j.size/1024).toFixed(1)} KB`;
-        editorEl.disabled = false;
-        editorEl.value = j.content || '';
-        setStatus('File loaded');
-    }
 
-    function clearSelection() {
-        selectedPath = null;
-        selectedNameEl.textContent = 'Select a file';
-        selectedMetaEl.textContent = 'No file selected';
-        editorEl.value = '';
-        editorEl.disabled = true;
-    }
+        // Function to save file
+        async function saveFile() {
+            if (!selectedFile) {
+                alert('No file selected');
+                return;
+            }
 
-    // Buttons
-    document.getElementById('saveBtn').addEventListener('click', async () => {
-        if (!selectedPath) { setStatus('No file selected'); return; }
-        setStatus('Saving...');
-        const j = await apiSave(selectedPath, editorEl.value);
-        setStatus(j.ok ? 'Saved' : ('Save failed: ' + (j.error || 'unknown')));
-        loadCurrent();
-    });
+            try {
+                const content = document.getElementById('editor').value;
+                const response = await fetch('/api/explorer/files/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        path: selectedFile,
+                        content: content
+                    })
+                });
 
-    document.getElementById('deleteBtn').addEventListener('click', () => {
-        if (!selectedPath) { setStatus('No file selected'); return; }
-        confirmDialog(`Delete "${selectedPath}"?`, async () => {
-            const j = await apiDelete(selectedPath);
-            if (j.ok) {
-                setStatus('Deleted');
-                clearSelection();
-                loadCurrent();
-            } else setStatus('Delete failed: ' + (j.error || 'unknown'));
+                const data = await response.json();
+                if (data.ok) {
+                    document.getElementById('fileStats').textContent = 'Saved at ' + new Date().toLocaleTimeString();
+                    // Update char count
+                    document.getElementById('charCount').textContent = `Chars: ${content.length}`;
+                } else {
+                    alert('Save failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Save error:', error);
+                alert('Save failed');
+            }
+        }
+
+        // Function to delete item
+        async function deleteItem(path) {
+            if (!confirm(`Are you sure you want to delete "${path}"?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/explorer/files/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: path })
+                });
+
+                const data = await response.json();
+                if (data.ok) {
+                    refreshTree();
+                    if (selectedFile === path) {
+                        showPlaceholder();
+                        hideFileActions();
+                    }
+                } else {
+                    alert('Delete failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Delete error:', error);
+                alert('Delete failed');
+            }
+        }
+
+        // Function to rename item
+        async function renameItem(oldPath, oldName) {
+            const newName = prompt('Enter new name:', oldName);
+            if (!newName || newName === oldName) return;
+
+            // Determine new path
+            const pathParts = oldPath.split('/');
+            pathParts[pathParts.length - 1] = newName;
+            const newPath = pathParts.join('/');
+
+            try {
+                const response = await fetch('/api/explorer/files/rename', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        old: oldPath,
+                        new: newPath
+                    })
+                });
+
+                const data = await response.json();
+                if (data.ok) {
+                    refreshTree();
+                    if (selectedFile === oldPath) {
+                        selectedFile = newPath;
+                        updateFileInfo(newName, newPath, false);
+                    }
+                } else {
+                    alert('Rename failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Rename error:', error);
+                alert('Rename failed');
+            }
+        }
+
+        // Function to create new folder
+        async function createNewFolder(parentPath = '') {
+            const name = prompt('Enter folder name:');
+            if (!name) return;
+
+            try {
+                const response = await fetch('/api/explorer/files/mkdir', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        path: parentPath,
+                        name: name
+                    })
+                });
+
+                const data = await response.json();
+                if (data.ok) {
+                    refreshTree();
+                } else {
+                    alert('Failed to create folder: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating folder:', error);
+                alert('Failed to create folder');
+            }
+        }
+
+        // Function to create new file
+        async function createNewFile(parentPath = '') {
+            const name = prompt('Enter file name:');
+            if (!name) return;
+
+            const filePath = parentPath ? `${parentPath}/${name}` : name;
+
+            try {
+                const response = await fetch('/api/explorer/files/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        path: filePath,
+                        content: ''
+                    })
+                });
+
+                const data = await response.json();
+                if (data.ok) {
+                    refreshTree();
+                } else {
+                    alert('Failed to create file: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Error creating file:', error);
+                alert('Failed to create file');
+            }
+        }
+
+        // Function to download file
+        function downloadFile(path) {
+            window.location.href = `/api/explorer/files/download?path=${encodeURIComponent(path)}`;
+        }
+
+        // Function to handle file upload
+        async function uploadFile(file, parentPath = '') {
+            const formData = new FormData();
+            formData.append('path', parentPath);
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/explorer/files/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+                if (data.ok) {
+                    refreshTree();
+                } else {
+                    alert('Upload failed: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('Upload error:', error);
+                alert('Upload failed');
+            }
+        }
+
+        // Utility functions
+        function formatSize(bytes) {
+            if (!bytes) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function updateFileInfo(name, path, isFolder) {
+            document.getElementById('fileName').textContent = isFolder ? name : name;
+            document.getElementById('filePath').textContent = path;
+        }
+
+        function updateFileStats(fileData) {
+            if (!fileData) {
+                document.getElementById('fileStats').textContent = '--';
+                document.getElementById('charCount').textContent = 'Chars: 0';
+                return;
+            }
+
+            const size = formatSize(fileData.size);
+            const modified = fileData.modified ? new Date(fileData.modified * 1000).toLocaleString() : 'Unknown';
+            const chars = fileData.content ? fileData.content.length : 0;
+
+            document.getElementById('fileStats').textContent = `${size} • Modified: ${modified}`;
+            document.getElementById('charCount').textContent = `Chars: ${chars}`;
+        }
+
+        function showPlaceholder() {
+            document.getElementById('editor').style.display = 'none';
+            document.getElementById('editorPlaceholder').style.display = 'flex';
+            document.getElementById('fileStats').textContent = '--';
+            document.getElementById('charCount').textContent = 'Chars: 0';
+        }
+
+        function showFileActions() {
+            document.getElementById('renameBtn').style.display = 'inline-block';
+            document.getElementById('deleteBtn').style.display = 'inline-block';
+            document.getElementById('saveBtn').style.display = 'inline-block';
+        }
+
+        function hideFileActions() {
+            document.getElementById('renameBtn').style.display = 'none';
+            document.getElementById('deleteBtn').style.display = 'none';
+            document.getElementById('saveBtn').style.display = 'none';
+        }
+
+        function showLoading() {
+            document.getElementById('fileStats').textContent = 'Loading...';
+        }
+
+        function refreshTree() {
+            $('#file-tree').jstree('refresh');
+        }
+
+        // Event listeners
+        document.getElementById('refreshBtn').addEventListener('click', refreshTree);
+
+        document.getElementById('newFolderBtn').addEventListener('click', () => {
+            createNewFolder(currentFolder);
         });
-    });
 
-    document.getElementById('renameBtn').addEventListener('click', async () => {
-        if (!selectedPath) { setStatus('No file selected'); return; }
-        const newName = prompt('New name (filename only):', selectedPath.split('/').pop());
-        if (!newName) return;
-        setStatus('Renaming...');
-        const j = await apiRename(selectedPath, newName);
-        if (j.ok) {
-            setStatus('Renamed');
-            const parts = selectedPath.split('/');
-            parts[parts.length-1] = newName;
-            selectedPath = parts.join('/');
-            loadCurrent();
-        } else setStatus('Rename failed: ' + (j.error || 'unknown'));
-    });
+        document.getElementById('newFileBtn').addEventListener('click', () => {
+            createNewFile(currentFolder);
+        });
 
-    document.getElementById('downloadBtn').addEventListener('click', () => {
-        if (!selectedPath) { setStatus('No file selected'); return; }
-        apiDownload(selectedPath);
-    });
+        document.getElementById('uploadBtn').addEventListener('click', () => {
+            document.getElementById('fileInput').click();
+        });
 
-    document.getElementById('newFolderBtn').addEventListener('click', async () => {
-        const name = prompt('Folder name:');
-        if (!name) return;
-        setStatus('Creating folder...');
-        const j = await apiMkdir(currentPath, name);
-        setStatus(j.ok ? 'Folder created' : ('Create failed: ' + (j.error || 'unknown')));
-        loadCurrent();
-    });
+        document.getElementById('saveBtn').addEventListener('click', saveFile);
 
-    document.getElementById('uploadInput').addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        setStatus('Uploading...');
-        const j = await apiUpload(currentPath, file);
-        setStatus(j.ok ? 'Uploaded' : ('Upload failed: ' + (j.error || 'unknown')));
-        loadCurrent();
-        e.target.value = '';
-    });
+        document.getElementById('renameBtn').addEventListener('click', () => {
+            if (selectedFile) {
+                renameItem(selectedFile, selectedFile.split('/').pop());
+            }
+        });
 
-    document.getElementById('searchInput').addEventListener('input', (e) => {
-        const q = e.target.value.toLowerCase().trim();
-        renderFiles(q ? filesCache.filter(it => it.name.toLowerCase().includes(q)) : filesCache);
-    });
+        document.getElementById('deleteBtn').addEventListener('click', () => {
+            if (selectedFile) {
+                deleteItem(selectedFile);
+            }
+        });
 
-    document.getElementById('refreshBtn').addEventListener('click', loadCurrent);
+        document.getElementById('fileInput').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                uploadFile(file, currentFolder);
+                e.target.value = '';
+            }
+        });
 
-    // Confirm dialog helpers
-    const confirmEl = document.getElementById('confirm');
-    const confirmText = document.getElementById('confirmText');
-    const confirmYes = document.getElementById('confirmYes');
-    const confirmNo = document.getElementById('confirmNo');
-    let confirmCallback = null;
-    function confirmDialog(text, cb) {
-        confirmText.textContent = text;
-        confirmEl.style.display = 'block';
-        confirmCallback = cb;
-    }
-    confirmYes.addEventListener('click', () => { confirmEl.style.display='none'; if(confirmCallback) confirmCallback(); confirmCallback=null; });
-    confirmNo.addEventListener('click', () => { confirmEl.style.display='none'; confirmCallback=null; });
+        // Update char count as user types
+        document.getElementById('editor').addEventListener('input', function() {
+            const chars = this.value.length;
+            document.getElementById('charCount').textContent = `Chars: ${chars}`;
+        });
 
-    // Load initial
-    loadCurrent();
-</script>
+        // Save on Ctrl+S
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                e.preventDefault();
+                saveFile();
+            }
+        });
+
+        // Initialize
+        showPlaceholder();
+        hideFileActions();
+    </script>
 </body>
 </html>
