@@ -515,8 +515,6 @@ class CollegeRAG:
             ANSWER:
         """.strip()
 
-        print(prompt)
-
         if stream:
             response = ""
             print(f"{Colors.BOLD}AI:{Colors.ENDC} ", end="", flush=True)
