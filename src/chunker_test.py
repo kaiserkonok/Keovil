@@ -1,7 +1,7 @@
 from src import intelligent_rag_chunker
 import json
 
-sample = open('/test_data/test.txt', 'r').read()
+sample = open('/home/kaiserkonok/computer_programming/K_RAG/src/test_data/test.txt', 'r').read()
 
 ch = intelligent_rag_chunker.IntelligentChunker()
 res = ch.chunk_document(sample)
