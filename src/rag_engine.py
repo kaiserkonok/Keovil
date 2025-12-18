@@ -277,7 +277,6 @@ class CollegeRAG:
                     self.vectorestore.delete(ids_to_delete)
                     print(f"{Colors.OKBLUE}[Ingest] Removed {len(ids_to_delete)} old chunks.{Colors.ENDC}")
 
-                text = ""
                 ext = file_path.suffix.lower()[1:]
                 try:
                     if ext == "txt":
