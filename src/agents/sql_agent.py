@@ -2,7 +2,6 @@ import os
 import pandas as pd
 import sqlite3
 import threading
-import time
 from sqlalchemy import create_engine
 from langchain_community.agent_toolkits import create_sql_agent, SQLDatabaseToolkit
 from langchain_ollama import ChatOllama
@@ -67,7 +66,7 @@ class IngestionHandler(FileSystemEventHandler):
 
 # --- The Manager: Everything Orchestrator ---
 
-class KRAGSystem:
+class StructuredDataAgent:
     def __init__(self, db_path: str, watch_dir: str):
         self.db_uri = f"sqlite:///{db_path}"
         self.watch_dir = watch_dir
@@ -144,7 +143,7 @@ if __name__ == "__main__":
     DATA_DIR = '/home/kaiserkonok/computer_programming/K_RAG/test_data/'
 
     # 1. Initialize the system
-    system = KRAGSystem(DB_FILE, DATA_DIR)
+    system = StructuredDataAgent(DB_FILE, DATA_DIR)
 
     # 2. Start the automated background tasks
     system.start_monitoring()
