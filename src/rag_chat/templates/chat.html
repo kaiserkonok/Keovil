@@ -198,58 +198,50 @@ function appendAssistantPlaceholder(){
   el.className = 'bubble ai';
   el.innerHTML = `<span style="color:var(--accent); font-family:'Fira Code'; font-size:12px;">Analysing...</span>`;
   messages.appendChild(el);
+  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
   return el;
 }
 
-async function streamQuery(query){
+async function handleQuery(query){
   appendUser(query);
   const placeholder = appendAssistantPlaceholder();
-  let fullText = '';
 
   try {
-    const res = await fetch('/api/stream_chat', {
+    const res = await fetch('/api/chat', {
       method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({query, history})
     });
 
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
+    const data = await res.json();
 
-    while(true){
-      const {value, done} = await reader.read();
-      if(done) break;
+    if (data.error) {
+        placeholder.textContent = "Error: " + data.error;
+    } else {
+        const fullText = data.response;
 
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n\n');
+        // Render Markdown and highlight code
+        placeholder.innerHTML = md.render(fullText);
+        placeholder.querySelectorAll('pre code').forEach((block) => {
+            hljs.highlightElement(block);
+        });
 
-      for(const line of lines) {
-          if(line.startsWith('data: ')) {
-              const content = line.replace('data: ', '');
-              fullText += content;
-
-              // Render Markdown and highlight code
-              placeholder.innerHTML = md.render(fullText);
-              placeholder.querySelectorAll('pre code').forEach((block) => {
-                  hljs.highlightElement(block);
-              });
-
-              messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
-          }
-      }
+        // Update session history
+        history.push({role:'user', content:query});
+        history.push({role:'assistant', content:fullText});
     }
-    history.push({role:'user', content:query});
-    history.push({role:'assistant', content:fullText});
   } catch (err) {
-    placeholder.textContent = "Error: " + err.message;
+    placeholder.textContent = "Error connecting to server: " + err.message;
   }
+
+  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
 sendBtn.onclick=()=>{
   const q=inputBox.value.trim();
   if(!q) return;
   inputBox.value='';
-  streamQuery(q);
+  handleQuery(q);
 };
 
 inputBox.addEventListener('keydown',e=>{
