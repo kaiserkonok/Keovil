@@ -44,7 +44,7 @@
     .main-container {
       flex: 1;
       overflow-y: auto;
-      padding: 20px 40px 180px 40px; /* Space for fixed bar */
+      padding: 20px 40px 180px 40px;
       display: flex;
       flex-direction: column;
     }
@@ -65,20 +65,17 @@
       line-height: 1.6;
       border-radius: 12px;
       animation: fadeIn 0.3s ease;
-      position: relative;
     }
 
-    /* User: Chatting on the right */
     .user {
       align-self: flex-end;
       background: var(--user-bg);
       border: 1px solid var(--border);
-      color: #d2a8ff; /* Purple accent for query */
+      color: #d2a8ff;
       font-family: 'Fira Code', monospace;
       border-bottom-right-radius: 2px;
     }
 
-    /* AI: Chatting on the left */
     .ai {
       align-self: flex-start;
       background: var(--ai-bg);
@@ -88,7 +85,14 @@
       box-shadow: 0 4px 15px rgba(0,0,0,0.2);
     }
 
-    /* Query Bar */
+    /* Markdown Specific Styling */
+    .ai p { margin: 0 0 10px 0; }
+    .ai p:last-child { margin-bottom: 0; }
+    .ai code { font-family: 'Fira Code', monospace; background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+    .ai pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); }
+    .ai pre code { background: none; padding: 0; }
+    .ai ul, .ai ol { padding-left: 20px; margin: 10px 0; }
+
     .query-bar {
       position: fixed;
       bottom: 0; left: 0; width: 100%;
@@ -115,18 +119,13 @@
       border-radius: 10px;
       outline: none;
       font-size: 15px;
-      transition: 0.3s;
-    }
-
-    .query-input:focus {
-      box-shadow: 0 0 15px rgba(88, 166, 255, 0.2);
     }
 
     .run-btn {
       background: none;
       border: 1px solid var(--border);
       color: var(--muted);
-      padding: 0 20px;
+      padding: 0 25px;
       border-radius: 10px;
       cursor: pointer;
       font-family: 'Fira Code', monospace;
@@ -138,10 +137,6 @@
       color: var(--accent);
     }
 
-    /* Markdown Styling */
-    .ai pre { background: #000; padding: 10px; border-radius: 6px; overflow-x: auto; }
-    .ai code { font-family: 'Fira Code', monospace; font-size: 13px; }
-
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
     ::-webkit-scrollbar { width: 8px; }
@@ -152,7 +147,7 @@
 <body>
   <div class="header-area">
     <h1 style="color: var(--accent); font-weight: 300; margin: 0; font-size: 20px; font-family: 'Fira Code';">&lt;Lora Lab /&gt;</h1>
-    <div style="color: var(--muted); font-size: 12px; font-family: 'Fira Code';">Session: Active</div>
+    <div style="color: var(--muted); font-size: 12px; font-family: 'Fira Code';">Session: Chat</div>
   </div>
 
   <div class="main-container">
@@ -161,19 +156,26 @@
 
   <div class="query-bar">
     <div class="query-container">
-      <input id="inputBox" class="query-input" placeholder="Type a message..." autocomplete="off" />
+      <input id="inputBox" class="query-input" placeholder="Ask a question..." autocomplete="off" autofocus />
       <button id="sendBtn" class="run-btn">Run</button>
     </div>
   </div>
 
 <script>
+// Initialize Markdown Parser
 const md = window.markdownit({
     html: true,
+    linkify: true,
+    typographer: true,
     highlight: function (str, lang) {
         if (lang && hljs.getLanguage(lang)) {
-            return '<pre class="hljs"><code>' + hljs.highlight(str, { language: lang }).value + '</code></pre>';
+            try {
+                return '<pre class="hljs"><code>' +
+                       hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+                       '</code></pre>';
+            } catch (__) {}
         }
-        return '';
+        return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
     }
 });
 
@@ -188,7 +190,7 @@ function appendUser(text){
   el.className = 'bubble user';
   el.textContent = text;
   messages.appendChild(el);
-  el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
 function appendAssistantPlaceholder(){
@@ -202,39 +204,45 @@ function appendAssistantPlaceholder(){
 async function streamQuery(query){
   appendUser(query);
   const placeholder = appendAssistantPlaceholder();
+  let fullText = '';
 
-  const res = await fetch('/api/stream_chat', {
-    method:'POST',
-    headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({query, history})
-  });
+  try {
+    const res = await fetch('/api/stream_chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query, history})
+    });
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let text = '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
 
-  while(true){
-    const {value, done} = await reader.read();
-    if(done) break;
+    while(true){
+      const {value, done} = await reader.read();
+      if(done) break;
 
-    const chunk = decoder.decode(value);
-    const lines = chunk.split('\n\n');
+      const chunk = decoder.decode(value);
+      const lines = chunk.split('\n\n');
 
-    for(const line of lines) {
-        if(line.startsWith('data: ')) {
-            const content = line.replace('data: ', '');
-            text += content;
-            // Render markdown in real-time
-            placeholder.innerHTML = md.render(text);
-            // Highlight any code blocks that appear
-            placeholder.querySelectorAll('pre code').forEach(el => hljs.highlightElement(el));
-            messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
-        }
+      for(const line of lines) {
+          if(line.startsWith('data: ')) {
+              const content = line.replace('data: ', '');
+              fullText += content;
+
+              // Render Markdown and highlight code
+              placeholder.innerHTML = md.render(fullText);
+              placeholder.querySelectorAll('pre code').forEach((block) => {
+                  hljs.highlightElement(block);
+              });
+
+              messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
+          }
+      }
     }
+    history.push({role:'user', content:query});
+    history.push({role:'assistant', content:fullText});
+  } catch (err) {
+    placeholder.textContent = "Error: " + err.message;
   }
-
-  history.push({role:'user', content:query});
-  history.push({role:'assistant', content:text});
 }
 
 sendBtn.onclick=()=>{
