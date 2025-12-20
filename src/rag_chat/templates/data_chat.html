@@ -30,7 +30,6 @@
         .notebook-container {
             max-width: 1100px;
             margin: 0 auto;
-            /* FIX: Bottom padding ensures the last cell isn't hidden by the query bar */
             padding-bottom: 200px;
         }
 
@@ -40,7 +39,30 @@
             align-items: center;
             border-bottom: 1px solid var(--border);
             margin-bottom: 30px;
-            padding-bottom: 10px;
+            padding-bottom: 15px;
+        }
+
+        /* Integrated Logo/Home Button */
+        .brand-link {
+            color: var(--accent);
+            font-weight: 300;
+            font-size: 22px;
+            font-family: 'Fira Code', monospace;
+            text-decoration: none;
+            transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+            letter-spacing: -0.5px;
+            cursor: pointer;
+            outline: none;
+        }
+
+        .brand-link:hover {
+            letter-spacing: 1.5px;
+            text-shadow: 0 0 15px rgba(88, 166, 255, 0.7);
+            color: #fff;
+        }
+
+        .brand-link:active {
+            transform: scale(0.96);
         }
 
         /* Jupyter Cell Structure */
@@ -79,7 +101,7 @@
             margin-top: 15px;
             font-size: 15px;
             line-height: 1.6;
-            overflow-x: auto; /* Handles wide tables */
+            overflow-x: auto;
         }
 
         /* Dataframe Tables Style */
@@ -122,19 +144,18 @@
             width: 85%; max-width: 900px;
             display: block; margin: 0 auto;
             background: #010409;
-            border: 1px solid var(--accent);
+            border: 1px solid var(--border);
             color: white;
             padding: 16px 24px;
             border-radius: 12px;
             outline: none;
             font-size: 16px;
-            box-shadow: 0 0 20px rgba(88, 166, 255, 0.1);
             transition: all 0.3s ease;
         }
 
         .query-input:focus {
-            box-shadow: 0 0 25px rgba(88, 166, 255, 0.25);
-            border-color: #79c0ff;
+            border-color: var(--accent);
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.1);
         }
 
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -143,15 +164,18 @@
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-deep); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: var(--input-num); }
     </style>
 </head>
 <body>
 
 <div class="notebook-container" id="notebook">
     <div class="header-area">
-        <h1 style="color: var(--accent); font-weight: 300; margin: 0;">&lt;Structured Data Lab /&gt;</h1>
-        <button onclick="location.reload()" style="background:none; border: 1px solid var(--border); color: var(--input-num); padding: 5px 15px; border-radius: 5px; cursor: pointer;">Clear Session</button>
+        <a href="/" class="brand-link" title="Return to Dashboard">
+            &lt;Structured Data Lab /&gt;
+        </a>
+        <button onclick="location.reload()" style="background:none; border: 1px solid var(--border); color: var(--input-num); padding: 5px 15px; border-radius: 5px; cursor: pointer; font-family: 'Fira Code'; font-size: 12px; transition: 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
+            Clear Session
+        </button>
     </div>
 </div>
 
@@ -187,21 +211,19 @@
         const container = document.getElementById('notebook');
         const currentId = cellCount++;
 
-        // Create Cell Structure
         const cellHtml = `
             <div class="cell" id="cell-${currentId}">
                 <div class="cell-label">In [${currentId}]:</div>
                 <div class="cell-content">
                     <div class="input-area">${query}</div>
                     <div class="output-area" id="out-${currentId}">
-                        <span style="color: var(--accent); opacity: 0.8;" class="thinking">Analyzing database...</span>
+                        <span style="color: var(--accent); opacity: 0.8; font-family: 'Fira Code'; font-size: 13px;" class="thinking">Executing SQL Logic...</span>
                     </div>
                 </div>
             </div>
         `;
         container.insertAdjacentHTML('beforeend', cellHtml);
 
-        // Immediate scroll to the new input cell
         document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         try {
@@ -212,26 +234,23 @@
             });
             const data = await response.json();
 
-            // Render Output
             const outputDiv = document.getElementById(`out-${currentId}`);
             outputDiv.innerHTML = `
                 <div style="color: var(--input-num); font-family: 'Fira Code'; font-size: 13px; margin-bottom:10px;">Out [${currentId}]:</div>
                 <div class="markdown-body">${md.render(data.output)}</div>
             `;
 
-            // Re-apply syntax highlighting for SQL/Code blocks
             outputDiv.querySelectorAll('pre code').forEach((el) => {
                 hljs.highlightElement(el);
             });
 
-            // Second scroll: after table renders, ensure we can see it
             setTimeout(() => {
                 outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 150);
 
         } catch (err) {
             document.getElementById(`out-${currentId}`).innerHTML = `
-                <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px;">
+                <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px; font-family: 'Fira Code'; font-size: 13px;">
                     <strong>Execution Error:</strong> ${err}
                 </div>
             `;
