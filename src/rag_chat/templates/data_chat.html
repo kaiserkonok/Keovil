@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Structured Data Lab</title>
+    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+    <style>
+        :root {
+            --bg-deep: #0a0c10;
+            --cell-bg: #161b22;
+            --border: #30363d;
+            --accent: #58a6ff;
+            --text-main: #e6edf3;
+            --input-num: #8b949e;
+        }
+
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            margin: 0; padding: 20px;
+            scroll-behavior: smooth;
+        }
+
+        .notebook-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            /* FIX: Bottom padding ensures the last cell isn't hidden by the query bar */
+            padding-bottom: 200px;
+        }
+
+        .header-area {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+            padding-bottom: 10px;
+        }
+
+        /* Jupyter Cell Structure */
+        .cell {
+            display: flex;
+            margin-bottom: 30px;
+            animation: fadeIn 0.4s ease;
+        }
+
+        .cell-label {
+            min-width: 80px;
+            font-family: 'Fira Code', monospace;
+            font-size: 14px;
+            color: var(--input-num);
+            padding-top: 10px;
+            text-align: right;
+            padding-right: 15px;
+        }
+
+        .cell-content { flex-grow: 1; position: relative; max-width: calc(100% - 95px); }
+
+        /* Input Area */
+        .input-area {
+            background: #0d1117;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px;
+            font-family: 'Fira Code', monospace;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            font-size: 14px;
+            color: #d2a8ff;
+        }
+
+        /* Output Area */
+        .output-area {
+            margin-top: 15px;
+            font-size: 15px;
+            line-height: 1.6;
+            overflow-x: auto; /* Handles wide tables */
+        }
+
+        /* Dataframe Tables Style */
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            background: #0d1117;
+            border: 1px solid var(--border);
+            margin: 15px 0;
+        }
+        th {
+            background: #21262d;
+            color: var(--accent);
+            padding: 12px;
+            font-size: 13px;
+            text-align: left;
+            border: 1px solid var(--border);
+        }
+        td {
+            padding: 10px 12px;
+            border: 1px solid var(--border);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+        }
+        tr:nth-child(even) { background: #161b22; }
+        tr:hover { background: #1f242c; }
+
+        /* Chat Input Bar */
+        .query-bar {
+            position: fixed;
+            bottom: 0; left: 0; width: 100%;
+            background: rgba(10, 12, 16, 0.9);
+            padding: 25px 0;
+            border-top: 1px solid var(--border);
+            backdrop-filter: blur(12px);
+            z-index: 1000;
+        }
+
+        .query-input {
+            width: 85%; max-width: 900px;
+            display: block; margin: 0 auto;
+            background: #010409;
+            border: 1px solid var(--accent);
+            color: white;
+            padding: 16px 24px;
+            border-radius: 12px;
+            outline: none;
+            font-size: 16px;
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .query-input:focus {
+            box-shadow: 0 0 25px rgba(88, 166, 255, 0.25);
+            border-color: #79c0ff;
+        }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: var(--bg-deep); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--input-num); }
+    </style>
+</head>
+<body>
+
+<div class="notebook-container" id="notebook">
+    <div class="header-area">
+        <h1 style="color: var(--accent); font-weight: 300; margin: 0;">&lt;Structured Data Lab /&gt;</h1>
+        <button onclick="location.reload()" style="background:none; border: 1px solid var(--border); color: var(--input-num); padding: 5px 15px; border-radius: 5px; cursor: pointer;">Clear Session</button>
+    </div>
+</div>
+
+<div class="query-bar">
+    <input type="text" class="query-input" id="userInput" placeholder="Ask your data: 'What is the average age in family_age.csv?'" onkeypress="handleKey(event)">
+</div>
+
+<script>
+    const md = window.markdownit({
+        html: true,
+        highlight: function (str, lang) {
+            if (lang && hljs.getLanguage(lang)) {
+                return '<pre class="hljs"><code>' + hljs.highlight(str, { language: lang }).value + '</code></pre>';
+            }
+            return '';
+        }
+    });
+
+    let cellCount = 1;
+
+    async function handleKey(e) {
+        if (e.key === 'Enter') {
+            const input = document.getElementById('userInput');
+            const query = input.value;
+            if (!query.trim()) return;
+
+            addCell(query);
+            input.value = '';
+        }
+    }
+
+    async function addCell(query) {
+        const container = document.getElementById('notebook');
+        const currentId = cellCount++;
+
+        // Create Cell Structure
+        const cellHtml = `
+            <div class="cell" id="cell-${currentId}">
+                <div class="cell-label">In [${currentId}]:</div>
+                <div class="cell-content">
+                    <div class="input-area">${query}</div>
+                    <div class="output-area" id="out-${currentId}">
+                        <span style="color: var(--accent); opacity: 0.8;" class="thinking">Analyzing database...</span>
+                    </div>
+                </div>
+            </div>
+        `;
+        container.insertAdjacentHTML('beforeend', cellHtml);
+
+        // Immediate scroll to the new input cell
+        document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        try {
+            const response = await fetch('/api/sql_query', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ query: query })
+            });
+            const data = await response.json();
+
+            // Render Output
+            const outputDiv = document.getElementById(`out-${currentId}`);
+            outputDiv.innerHTML = `
+                <div style="color: var(--input-num); font-family: 'Fira Code'; font-size: 13px; margin-bottom:10px;">Out [${currentId}]:</div>
+                <div class="markdown-body">${md.render(data.output)}</div>
+            `;
+
+            // Re-apply syntax highlighting for SQL/Code blocks
+            outputDiv.querySelectorAll('pre code').forEach((el) => {
+                hljs.highlightElement(el);
+            });
+
+            // Second scroll: after table renders, ensure we can see it
+            setTimeout(() => {
+                outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }, 150);
+
+        } catch (err) {
+            document.getElementById(`out-${currentId}`).innerHTML = `
+                <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px;">
+                    <strong>Execution Error:</strong> ${err}
+                </div>
+            `;
+        }
+    }
+</script>
+
+</body>
+</html>

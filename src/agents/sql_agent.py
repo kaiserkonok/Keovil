@@ -29,7 +29,7 @@ class SQLQueryAgent:
         with self._lock:
             try:
                 db = SQLDatabase(self.engine)
-                llm = ChatOllama(model=self.model_name, temperature=0.7)
+                llm = ChatOllama(model=self.model_name, temperature=0.1)
                 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
                 self.agent_executor = create_sql_agent(
                     toolkit=toolkit,

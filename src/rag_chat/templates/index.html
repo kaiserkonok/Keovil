@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KRAG Agent | Home</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
+
+        :root {
+            --bg-color: #050505;
+            --card-bg: #0c0c0c;
+        }
+
+        body {
+            font-family: 'Plus+Jakarta+Sans', sans-serif;
+            background-color: var(--bg-color);
+            color: #ececec;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+        }
+
+        /* Subtle Grid Background */
+        .bg-grid {
+            background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
+                              linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
+            background-size: 45px 45px;
+            mask-image: radial-gradient(circle at center, black, transparent 90%);
+        }
+
+        /* Glass Cards with Sharp Borders */
+        .glass-card {
+            background: var(--card-bg);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.4s cubic-bezier(0.23, 1, 0.32, 1);
+        }
+
+        .glass-card:hover {
+            border-color: rgba(59, 130, 246, 0.4);
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px -15px rgba(0, 0, 0, 0.7);
+        }
+
+        .shimmer-text {
+            background: linear-gradient(90deg, #60a5fa, #a855f7, #60a5fa);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            animation: shimmer 4s linear infinite;
+        }
+
+        @keyframes shimmer {
+            to { background-position: 200% center; }
+        }
+
+        .icon-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+    </style>
+</head>
+<body class="relative overflow-hidden">
+    <div class="absolute inset-0 bg-grid pointer-events-none"></div>
+    <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/10 blur-[120px] rounded-full"></div>
+    <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-600/10 blur-[120px] rounded-full"></div>
+
+    <div class="container mx-auto max-w-6xl px-6 py-12 relative z-10">
+        <header class="text-center mb-20">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-zinc-800 bg-zinc-900/50 text-zinc-400 text-xs font-bold tracking-widest uppercase mb-6">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                System v2.4 Active
+            </div>
+            <h1 class="text-7xl font-extrabold tracking-tighter mb-6">
+                <span class="shimmer-text">KRAG</span> Agent
+            </h1>
+            <p class="text-zinc-500 text-lg max-w-xl mx-auto font-light">
+                A high-performance interface for document RAG, structured SQL analysis, and real-time file engineering.
+            </p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+
+            <a href="/chat" class="glass-card p-10 rounded-[2.5rem] group">
+                <div class="icon-box w-14 h-14 rounded-2xl flex items-center justify-center mb-8 group-hover:border-blue-500/50 transition-colors">
+                    <i data-lucide="message-circle" class="text-blue-400 w-7 h-7"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">Knowledge Lab</h3>
+                <p class="text-zinc-500 text-sm leading-relaxed mb-8">
+                    Query your documents using a neural RAG pipeline. Optimized for PDF and text comprehension.
+                </p>
+                <div class="flex items-center gap-2 text-blue-400 text-xs font-bold uppercase tracking-widest group-hover:gap-4 transition-all">
+                    Initialize Chat <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </div>
+            </a>
+
+            <a href="/data-lab" class="glass-card p-10 rounded-[2.5rem] group">
+                <div class="icon-box w-14 h-14 rounded-2xl flex items-center justify-center mb-8 group-hover:border-purple-500/50 transition-colors">
+                    <i data-lucide="database" class="text-purple-400 w-7 h-7"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">Data Agent</h3>
+                <p class="text-zinc-500 text-sm leading-relaxed mb-8">
+                    Interact with structured databases through natural language. Automatic SQL generation and execution.
+                </p>
+                <div class="flex items-center gap-2 text-purple-400 text-xs font-bold uppercase tracking-widest group-hover:gap-4 transition-all">
+                    Query Data <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </div>
+            </a>
+
+            <a href="/cms" class="glass-card p-10 rounded-[2.5rem] group">
+                <div class="icon-box w-14 h-14 rounded-2xl flex items-center justify-center mb-8 group-hover:border-emerald-500/50 transition-colors">
+                    <i data-lucide="folder-kanban" class="text-emerald-400 w-7 h-7"></i>
+                </div>
+                <h3 class="text-2xl font-bold mb-3">CMS Explorer</h3>
+                <p class="text-zinc-500 text-sm leading-relaxed mb-8">
+                    Direct access to the underlying file system. Upload, rename, and edit files in a secure sandbox.
+                </p>
+                <div class="flex items-center gap-2 text-emerald-400 text-xs font-bold uppercase tracking-widest group-hover:gap-4 transition-all">
+                    Open Files <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                </div>
+            </a>
+
+        </div>
+
+        <div class="mt-20 flex flex-col md:flex-row justify-between items-center px-10 py-6 border-t border-zinc-900 text-[10px] text-zinc-600 font-bold tracking-[0.3em] uppercase">
+            <div class="flex gap-10">
+                <div class="flex items-center gap-2 italic">
+                    <span class="text-blue-500">Node:</span> 127.0.0.1
+                </div>
+                <div class="flex items-center gap-2 italic">
+                    <span class="text-purple-500">Latency:</span> 14ms
+                </div>
+            </div>
+            <div class="mt-4 md:mt-0">
+                kaiserkonok &copy; 2025
+            </div>
+        </div>
+    </div>
+
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

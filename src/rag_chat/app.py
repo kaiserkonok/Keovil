@@ -21,6 +21,8 @@ try:
 except Exception:
     CollegeRAG = None
 
+from agents.sql_agent import StructuredDataAgent
+
 # ---------------------------------------------------------
 # Flask Init
 # ---------------------------------------------------------
@@ -48,9 +50,13 @@ if CollegeRAG:
     except Exception as e:
         print("RAG init failed:", e)
 
-# ---------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------
+
+# Initialize the SQL Agent
+DB_FILE = str(PROJECT_ROOT / "database" / "main.db")
+SQL_DATA_DIR = str(PROJECT_ROOT / "test_data")
+sql_system = StructuredDataAgent(DB_FILE, SQL_DATA_DIR)
+sql_system.start_monitoring()
+
 
 def safe_rel_path(p: str | None) -> str:
     """
@@ -81,7 +87,7 @@ def convert_client_history_to_rag_history(client_history: List[Dict[str, str]]):
 
 @app.route("/")
 def home():
-    return "<h1>RAG Chat + CMS</h1><p><a href='/chat'>Chat UI</a> | <a href='/cms'>CMS Explorer</a></p>"
+    return render_template("index.html")
 
 
 @app.route("/chat", methods=["GET"])
@@ -354,6 +360,23 @@ def api_chat():
         ans = "(RAG not initialized)"
 
     return jsonify({"response": ans})
+
+
+@app.route("/data-lab")
+def data_lab():
+    return render_template("data_chat.html")
+
+
+@app.route("/api/sql_query", methods=["POST"])
+def api_sql_query():
+    data = request.json or {}
+    query = data.get("query", "")
+    if not query:
+        return jsonify({"output": "Please enter a query."}), 400
+
+    # This calls your StructuredDataAgent instance
+    response = sql_system.query(query)
+    return jsonify({"output": response})
 
 
 # ---------------------------------------------------------
