@@ -2,6 +2,7 @@ import os
 import pandas as pd
 import sqlite3
 import threading
+from pathlib import Path
 from sqlalchemy import create_engine
 from langchain_community.agent_toolkits import create_sql_agent, SQLDatabaseToolkit
 from langchain_ollama import ChatOllama
@@ -17,7 +18,7 @@ init(autoreset=True)
 # --- The Brain: Agent Logic ---
 
 class SQLQueryAgent:
-    def __init__(self, db_uri: str, model_name: str = 'qwen2.5:7b'):
+    def __init__(self, db_uri: str, model_name: str = 'qwen2.5:7b-instruct'):
         self.db_uri = db_uri
         self.model_name = model_name
         self.engine = create_engine(db_uri)
@@ -28,6 +29,7 @@ class SQLQueryAgent:
     def refresh_agent(self):
         with self._lock:
             try:
+                # Re-initializing SQLDatabase ensures new tables are detected
                 db = SQLDatabase(self.engine)
                 llm = ChatOllama(model=self.model_name, temperature=0.1)
                 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -45,7 +47,8 @@ class SQLQueryAgent:
         with self._lock:
             if not self.agent_executor: return "Agent not ready."
             try:
-                response = self.agent_executor.invoke(query)
+                # LangChain SQL agents usually expect a dictionary input
+                response = self.agent_executor.invoke({"input": query})
                 return response["output"] if isinstance(response, dict) else str(response)
             except Exception as e:
                 return f"Error: {str(e)}"
@@ -67,9 +70,25 @@ class IngestionHandler(FileSystemEventHandler):
 # --- The Manager: Everything Orchestrator ---
 
 class StructuredDataAgent:
-    def __init__(self, db_path: str, watch_dir: str):
-        self.db_uri = f"sqlite:///{db_path}"
-        self.watch_dir = watch_dir
+    def __init__(self, db_path=None, watch_dir=None):
+        # --- CENTRALIZED STORAGE LOGIC ---
+        home = str(Path.home())
+        base_storage = os.path.join(home, ".k_rag_storage")
+
+        # Default to ~/.k_rag_storage/database/main.db
+        if db_path is None:
+            db_path = os.path.join(base_storage, "database", "main.db")
+
+        # Default to ~/.k_rag_storage/data (Same as RAG)
+        if watch_dir is None:
+            watch_dir = os.path.join(base_storage, "data")
+
+        # Ensure directories exist
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(watch_dir, exist_ok=True)
+
+        self.db_uri = f"sqlite:///{os.path.abspath(db_path)}"
+        self.watch_dir = os.path.abspath(watch_dir)
         self.agent = SQLQueryAgent(self.db_uri)
         self.observer = Observer()
 
@@ -138,17 +157,14 @@ class StructuredDataAgent:
 # --- Clean Execution ---
 
 if __name__ == "__main__":
-    # Define paths
-    DB_FILE = '/home/kaiserkonok/computer_programming/K_RAG/database/main.db'
-    DATA_DIR = '/home/kaiserkonok/computer_programming/K_RAG/test_data/'
+    # If you leave these as None, it uses the fixed Project Storage paths
+    # Or you can override them here:
+    DB_FILE = None
+    DATA_DIR = None
 
-    # 1. Initialize the system
     system = StructuredDataAgent(DB_FILE, DATA_DIR)
-
-    # 2. Start the automated background tasks
     system.start_monitoring()
 
-    # 3. Simple CLI Interface
     try:
         while True:
             user_input = input(f"\n{Fore.YELLOW}❓ Query: {Style.RESET_ALL}")

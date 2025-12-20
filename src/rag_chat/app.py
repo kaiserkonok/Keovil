@@ -1,40 +1,70 @@
+import os
+import sys
+import shutil
+import json  # Added for settings
+from pathlib import Path
+from typing import List, Dict
 from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
-import sys
-from pathlib import Path
-import os
-import shutil
-from typing import List, Dict
 
 # ---------------------------------------------------------
-# Fix Python path so rag_engine can be imported
+# Fix Python path so rag_engine and agents can be imported
 # ---------------------------------------------------------
 ROOT = Path(__file__).parent.parent  # /src
 sys.path.append(str(ROOT))
 sys.path.append(str(ROOT.parent))  # project root
 
+# Define the central storage directory (matching RAG and SQL agents)
+HOME_STORAGE = Path.home() / ".k_rag_storage"
+DATA_DIR = HOME_STORAGE / "data"
+DB_DIR = HOME_STORAGE / "database"
+SETTINGS_FILE = HOME_STORAGE / "settings.json"  # Added settings path
+
+# Ensure directories exist
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# --- Settings Management Functions ---
+def load_settings():
+    defaults = {"llm_model": "qwen2.5:7b-instruct", "temperature": 0.8}
+    if SETTINGS_FILE.exists():
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                return {**defaults, **json.load(f)}
+        except:
+            return defaults
+    return defaults
+
+
+def save_settings(data):
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(data, f)
+
+
+current_cfg = load_settings()
+
 try:
     from rag_engine import CollegeRAG
-except Exception:
+except Exception as e:
+    print(f"Import error for CollegeRAG: {e}")
     CollegeRAG = None
 
-from agents.sql_agent import StructuredDataAgent
+try:
+    from agents.sql_agent import StructuredDataAgent
+except Exception as e:
+    print(f"Import error for StructuredDataAgent: {e}")
+    StructuredDataAgent = None
 
 # ---------------------------------------------------------
 # Flask Init
 # ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
-# ---------------------------------------------------------
-# Project directories
-# ---------------------------------------------------------
-PROJECT_ROOT = ROOT.parent
-DATA_DIR = PROJECT_ROOT / "test_data"
+# Use the standardized data directory for the file explorer
 FILES_DIR = DATA_DIR
-
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # ---------------------------------------------------------
 # Init RAG engine
@@ -42,19 +72,37 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 rag = None
 if CollegeRAG:
     try:
-        rag = CollegeRAG(str(DATA_DIR))
-        print("RAG initialized OK")
+        # Initialized with saved settings
+        rag = CollegeRAG(
+            str(DATA_DIR),
+            llm_model=current_cfg["llm_model"],
+            temperature=current_cfg["temperature"],
+        )
+        print(f"✅ RAG initialized at {DATA_DIR}")
     except Exception as e:
-        print("RAG init failed:", e)
+        print("❌ RAG init failed:", e)
 
-# Initialize the SQL Agent
-DB_FILE = str(PROJECT_ROOT / "database" / "main.db")
-SQL_DATA_DIR = str(PROJECT_ROOT / "test_data")
-sql_system = StructuredDataAgent(DB_FILE, SQL_DATA_DIR)
-sql_system.start_monitoring()
+# ---------------------------------------------------------
+# Init SQL Agent
+# ---------------------------------------------------------
+sql_system = None
+if StructuredDataAgent:
+    try:
+        DB_FILE = str(DB_DIR / "main.db")
+        sql_system = StructuredDataAgent()
+        # Ensure SQL agent uses the saved model
+        sql_system.start_monitoring()
+        print(f"✅ SQL Agent initialized with DB at {DB_FILE}")
+    except Exception as e:
+        print("❌ SQL Agent init failed:", e)
 
+
+# ---------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------
 def safe_rel_path(p: str | None) -> str:
     return (p or "").strip("/\\")
+
 
 def convert_client_history_to_rag_history(client_history: List[Dict[str, str]]):
     rag_history = []
@@ -67,6 +115,7 @@ def convert_client_history_to_rag_history(client_history: List[Dict[str, str]]):
             rag_history.append(("AI", content))
     return rag_history
 
+
 # ---------------------------------------------------------
 # ROUTES
 # ---------------------------------------------------------
@@ -75,13 +124,41 @@ def convert_client_history_to_rag_history(client_history: List[Dict[str, str]]):
 def home():
     return render_template("index.html")
 
-@app.route("/chat", methods=["GET"])
+
+@app.route("/chat")
 def chat():
     return render_template("chat.html")
+
 
 @app.route("/cms")
 def cms():
     return render_template("explorer.html")
+
+
+@app.route("/settings")  # Added settings route
+def settings():
+    return render_template("settings.html")
+
+
+# ---------------------------------------------------------
+# SETTINGS API (New)
+# ---------------------------------------------------------
+@app.route("/api/settings", methods=["GET", "POST"])
+def manage_settings():
+    global rag
+    if request.method == "GET":
+        return jsonify(load_settings())
+
+    data = request.json
+    save_settings(data)
+
+    # Update engines live without restart
+    if rag:
+        from langchain_ollama import OllamaLLM
+        rag.llm = OllamaLLM(model=data["llm_model"], temperature=float(data["temperature"]))
+
+    return jsonify({"ok": True})
+
 
 # ---------------------------------------------------------
 # FILE EXPLORER API
@@ -91,7 +168,9 @@ def cms():
 def list_files():
     rel_path = safe_rel_path(request.args.get("path"))
     target_dir = (FILES_DIR / rel_path).resolve()
-    if not str(target_dir).startswith(str(FILES_DIR)):
+
+    # Security check: Ensure we stay inside FILES_DIR
+    if not str(target_dir).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
     if not target_dir.exists() or not target_dir.is_dir():
         return jsonify({"error": "Directory not found"}), 404
@@ -108,11 +187,12 @@ def list_files():
         })
     return jsonify({"files": items})
 
+
 @app.route("/api/explorer/files/view")
 def view_file():
     rel = safe_rel_path(request.args.get("path"))
     path = (FILES_DIR / rel).resolve()
-    if not str(path).startswith(str(FILES_DIR)) or not path.exists():
+    if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
         return jsonify({"error": "Not found"}), 404
     if path.is_dir():
         return jsonify({"content": "(Directory)"}), 200
@@ -122,64 +202,77 @@ def view_file():
         text = "(Unable to read file)"
     return jsonify({"content": text, "name": path.name})
 
+
 @app.route("/api/explorer/files/save", methods=["POST"])
 def save_file():
     data = request.json or {}
     rel = data.get("path")
     path = (FILES_DIR / rel).resolve()
-    if not str(path).startswith(str(FILES_DIR)):
+    if not str(path).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
     open(path, "w", encoding="utf-8").write(data.get("content", ""))
     return jsonify({"ok": True})
+
 
 @app.route("/api/explorer/files/delete", methods=["POST"])
 def delete_file():
     rel = safe_rel_path(request.json.get("path"))
     path = (FILES_DIR / rel).resolve()
-    if not str(path).startswith(str(FILES_DIR)) or not path.exists():
+    if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
         return jsonify({"error": "Not found"}), 404
-    if path.is_dir(): shutil.rmtree(path)
-    else: path.unlink()
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink()
     return jsonify({"ok": True})
+
 
 @app.route("/api/explorer/files/rename", methods=["POST"])
 def rename_file():
     data = request.json or {}
     old = (FILES_DIR / safe_rel_path(data.get("old"))).resolve()
     new = (FILES_DIR / safe_rel_path(data.get("new"))).resolve()
-    if not str(old).startswith(str(FILES_DIR)) or not str(new).startswith(str(FILES_DIR)):
+    if not str(old).startswith(str(FILES_DIR.resolve())) or not str(new).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
     new.parent.mkdir(parents=True, exist_ok=True)
     old.rename(new)
     return jsonify({"ok": True})
 
+
 @app.route("/api/explorer/files/mkdir", methods=["POST"])
 def mkdir():
-    rel = request.json.get("path")
+    rel = request.json.get("path", "")
     name = request.json.get("name")
-    path = (FILES_DIR / rel / name if rel else FILES_DIR / name).resolve()
-    if not str(path).startswith(str(FILES_DIR)):
+    path = (FILES_DIR / rel / name).resolve()
+    if not str(path).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
     path.mkdir(parents=True, exist_ok=True)
     return jsonify({"ok": True})
+
 
 @app.route("/api/explorer/files/upload", methods=["POST"])
 def upload_file():
     folder_path = request.form.get("path", "")
     upload = request.files.get("file")
+    if not upload:
+        return jsonify({"error": "No file uploaded"}), 400
+
     parent = (FILES_DIR / folder_path).resolve()
-    if not str(parent).startswith(str(FILES_DIR)):
+    if not str(parent).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
+
     upload.save(parent / upload.filename)
     return jsonify({"ok": True})
+
 
 @app.route("/api/explorer/files/download")
 def download():
     rel = safe_rel_path(request.args.get("path"))
     path = (FILES_DIR / rel).resolve()
-    if not path.exists() or not str(path).startswith(str(FILES_DIR)):
+    if not path.exists() or not str(path).startswith(str(FILES_DIR.resolve())):
         return "File not found", 404
     return send_file(path, as_attachment=True)
+
 
 @app.route("/api/explorer/files/tree")
 def list_files_tree():
@@ -193,9 +286,12 @@ def list_files_tree():
                 }
                 if p.is_dir(): item["children"] = get_tree_items(p)
                 items.append(item)
-        except: pass
+        except:
+            pass
         return items
+
     return jsonify({"tree": get_tree_items(FILES_DIR)})
+
 
 # ---------------------------------------------------------
 # RAG CHAT API (NON-STREAMING)
@@ -214,7 +310,6 @@ def api_chat():
 
     if rag:
         try:
-            # Always non-streaming
             ans = rag.ask(q, chat_history=rag_history, stream=False)
         except Exception as e:
             ans = f"RAG error: {e}"
@@ -222,6 +317,7 @@ def api_chat():
         ans = "(RAG not initialized)"
 
     return jsonify({"response": ans})
+
 
 # ---------------------------------------------------------
 # DATA LAB / SQL AGENT
@@ -231,14 +327,21 @@ def api_chat():
 def data_lab():
     return render_template("data_chat.html")
 
+
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
     data = request.json or {}
     query = data.get("query", "")
     if not query:
         return jsonify({"output": "Please enter a query."}), 400
-    response = sql_system.query(query)
+
+    if sql_system:
+        response = sql_system.query(query)
+    else:
+        response = "SQL system not initialized."
+
     return jsonify({"output": response})
 
+
 if __name__ == "__main__":
-    app.run(debug=True, threaded=True)
+    app.run(debug=True, threaded=True, port=5000)

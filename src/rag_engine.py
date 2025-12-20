@@ -103,13 +103,29 @@ class NewFileHandler(FileSystemEventHandler):
         self.rag.remove_file(event.src_path)
 
 
-
 # ----------------------
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir, top_k=7, rerank_top_k=15, store_dir=None):
-        self.data_dir = data_dir
+    def __init__(self, data_dir=None, top_k=7, rerank_top_k=15, store_dir=None, llm_model='qwen2.5:7b-instruct',
+                 temperature=0.8):
+
+        # --- PATH CONFIGURATION (Home Directory Defaults) ---
+        home = str(Path.home())
+        base_storage = os.path.join(home, ".k_rag_storage")
+
+        if data_dir is None:
+            data_dir = os.path.join(base_storage, "data")
+        if store_dir is None:
+            store_dir = os.path.join(base_storage, "faiss_store")
+
+        self.data_dir = os.path.abspath(data_dir)
+        self.store_dir = os.path.abspath(store_dir)
+
+        # Ensure directories exist
+        os.makedirs(self.data_dir, exist_ok=True)
+        os.makedirs(self.store_dir, exist_ok=True)
+
         self.top_k = top_k
         self.rerank_top_k = rerank_top_k
         self.docs = []
@@ -120,12 +136,9 @@ class CollegeRAG:
         self.doc_map = {}
         self.lock = threading.Lock()
 
-        if store_dir is None:
-            store_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "faiss_store")
-        self.store_dir = os.path.abspath(store_dir)
-
-        # LLM + reranker
-        self.llm = OllamaLLM(model='qwen2.5:7b-instruct', streaming=True, temperature=1)
+        # LLM + reranker (MODIFIED: Now accepts model and temperature dynamically)
+        self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
+        self.embedding_model = OllamaEmbeddings(model='bge-m3:latest')
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"{Colors.HEADER}Reranker is initializing on device: {Colors.BOLD}{device}{Colors.ENDC}")
@@ -187,6 +200,11 @@ class CollegeRAG:
         if docs is None:
             docs = []
 
+        # FIX: Check if directory exists before listing
+        if not os.path.exists(data_dir):
+            os.makedirs(data_dir, exist_ok=True)
+            return docs
+
         for fname in os.listdir(data_dir):
             fpath = os.path.join(data_dir, fname)
             if os.path.isdir(fpath):
@@ -233,22 +251,37 @@ class CollegeRAG:
     # ----------------------
     def create_vectorestore(self, force_create=False):
         with self.lock:
-            embedding_model = OllamaEmbeddings(model='bge-m3:latest')
+            # FIX: Use store_dir for loading, data_dir for document building
             store_path = self.store_dir
 
-            if os.path.exists(store_path) and not force_create:
-                print(f'{Colors.OKGREEN}Loading FAISS vectorstore...{Colors.ENDC}')
-                self.vectorestore = FAISS.load_local(store_path, embedding_model,
-                                                     allow_dangerous_deserialization=True)
-            else:
-                print(f'{Colors.WARNING}Creating new vectorestores...{Colors.ENDC}')
+            # Better check for folder existence and content
+            store_exists = os.path.exists(store_path) and len(os.listdir(store_path)) > 0
+
+            if store_exists and not force_create:
+                try:
+                    print(f'{Colors.OKGREEN}Loading FAISS vectorstore from {store_path}...{Colors.ENDC}')
+                    self.vectorestore = FAISS.load_local(store_path, self.embedding_model,
+                                                         allow_dangerous_deserialization=True)
+                except Exception as e:
+                    print(f"{Colors.WARNING}Failed to load store (corrupted or missing files): {e}{Colors.ENDC}")
+                    self.vectorestore = None  # Signal to recreate
+
+            if self.vectorestore is None:
+                print(f'{Colors.WARNING}Creating new vectorestores from {self.data_dir}...{Colors.ENDC}')
                 self._load_docs()
                 print(f"Total documents loaded: {len(self.docs)}")
-                self.vectorestore = FAISS.from_documents(self.docs, embedding_model)
-                self.vectorestore.save_local(store_path)
-                self._build_bm25_index()
 
-            self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
+                # FIX: Only create if there are actually documents
+                if self.docs:
+                    self.vectorestore = FAISS.from_documents(self.docs, self.embedding_model)
+                    self.vectorestore.save_local(store_path)
+                    self._build_bm25_index()
+                else:
+                    print(f"{Colors.WARNING}No documents to index. Vectorstore remains empty.{Colors.ENDC}")
+                    self.vectorestore = None
+
+            if self.vectorestore:
+                self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
 
     # ----------------------
     # Incremental ingestion
@@ -261,6 +294,8 @@ class CollegeRAG:
             if not new_files:
                 return
 
+            all_new_docs = []  # Collect all new chunks
+
             for fpath in new_files:
                 file_path = Path(fpath)
 
@@ -270,12 +305,14 @@ class CollegeRAG:
 
                 print(f"{Colors.BOLD}[Ingest] Updating file: {fpath}{Colors.ENDC}")
 
-                ids_to_delete = [k for k, doc in self.vectorestore.docstore._dict.items()
-                                 if doc.metadata.get("source") == fpath]
+                # Remove old chunks only if vectorestore exists
+                if self.vectorestore:
+                    ids_to_delete = [k for k, doc in self.vectorestore.docstore._dict.items()
+                                     if doc.metadata.get("source") == fpath]
 
-                if ids_to_delete:
-                    self.vectorestore.delete(ids_to_delete)
-                    print(f"{Colors.OKBLUE}[Ingest] Removed {len(ids_to_delete)} old chunks.{Colors.ENDC}")
+                    if ids_to_delete:
+                        self.vectorestore.delete(ids_to_delete)
+                        print(f"{Colors.OKBLUE}[Ingest] Removed {len(ids_to_delete)} old chunks.{Colors.ENDC}")
 
                 ext = file_path.suffix.lower()[1:]
                 try:
@@ -301,25 +338,29 @@ class CollegeRAG:
                     continue
 
                 chunks = self.chunker.chunk_document(text.strip())
-                new_docs = [
+                new_file_docs = [
                     Document(page_content=c.text, metadata={"source": fpath, "chunk_id": c.id, **c.meta})
                     for c in chunks
                 ]
+                all_new_docs.extend(new_file_docs)
 
-                if not new_docs:
-                    print(f"{Colors.WARNING}[Ingest] No chunks to add from {fpath}. Skipping.{Colors.ENDC}")
-                    continue
+            if not all_new_docs:
+                return
 
-                self.vectorestore.add_documents(new_docs)
-                print(f"{Colors.OKGREEN}[Ingest] Added {len(new_docs)} new chunks from {fpath}.{Colors.ENDC}")
+            # FIX: If vectorestore was None (empty start), create it now. Else, add.
+            if self.vectorestore is None:
+                self.vectorestore = FAISS.from_documents(all_new_docs, self.embedding_model)
+            else:
+                self.vectorestore.add_documents(all_new_docs)
+
+            print(f"{Colors.OKGREEN}[Ingest] Added {len(all_new_docs)} new chunks.{Colors.ENDC}")
 
             self.docs = list(self.vectorestore.docstore._dict.values())
             self._build_bm25_index()
             self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
 
             self.vectorestore.save_local(self.store_dir)
-            print(f"{Colors.OKGREEN}[Ingest] Ingestion completed for {len(new_files)} file(s)!{Colors.ENDC}")
-
+            print(f"{Colors.OKGREEN}[Ingest] Ingestion completed!{Colors.ENDC}")
 
     def remove_file(self, fpath):
         """
@@ -343,12 +384,18 @@ class CollegeRAG:
 
             # Update docs and rebuild BM25
             self.docs = list(self.vectorestore.docstore._dict.values())
-            self._build_bm25_index()
-            self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
 
-            # Save updated FAISS store
-            self.vectorestore.save_local(self.store_dir)
-            print(f"{Colors.OKGREEN}[Remove] Vectorstore updated after deletion.{Colors.ENDC}")
+            # FIX: If last file deleted, reset store to None
+            if not self.docs:
+                self.vectorestore = None
+                self.bm25_retriever = None
+                print(f"{Colors.WARNING}[Remove] All documents removed. Store is empty.{Colors.ENDC}")
+            else:
+                self._build_bm25_index()
+                self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
+                self.vectorestore.save_local(self.store_dir)
+
+            print(f"{Colors.OKGREEN}[Remove] Vectorstore updated.{Colors.ENDC}")
 
     # ----------------------
     # Rewrite query (Unchanged)
@@ -396,9 +443,14 @@ class CollegeRAG:
         rewritten_query = self.rewrite_query(query, chat_history)
         print(f"{Colors.OKCYAN}[DEBUG] Rewritten Query: {Colors.BOLD}{rewritten_query}{Colors.ENDC}")
 
+        # FIX: Friendly message instead of failing if index is empty
         if not self.vectorestore or not self.bm25_retriever:
-            print(f"{Colors.FAIL}[DEBUG] RAG system not ready or empty index.{Colors.ENDC}")
-            return "RAG system not fully initialized or empty index."
+            msg = "I haven't learned anything yet! Please upload some documents so I can help you."
+            if stream:
+                # We yield the msg chunk by chunk to simulate streaming if needed
+                print(f"{Colors.BOLD}AI:{Colors.ENDC} {msg}")
+                return msg
+            return msg
 
         k_retrieve = self.rerank_top_k
 
@@ -543,16 +595,17 @@ class CollegeRAG:
 # Run interactively
 # ----------------------
 if __name__ == "__main__":
-    # NOTE: Update this path to your actual data directory
-    data_dir = '/home/kaiserkonok/computer_programming/K_RAG/test_data/'
-    rag = CollegeRAG(data_dir)
-    rag.create_vectorestore(force_create=True)
+    # Updated to use home-based default storage if no data_dir provided
+    rag = CollegeRAG()
 
-    for doc in rag.docs:
-        print(
-            f'{Colors.HEADER}___ Starting of Chunk ({os.path.basename(doc.metadata.get("source", "N/A"))}) ___{Colors.ENDC}\n')
-        print(doc.page_content)
-        print(f'\n{Colors.HEADER}___ Ending of Chunk ___{Colors.ENDC}')
+    if rag.docs:
+        for doc in rag.docs:
+            print(
+                f'{Colors.HEADER}___ Starting of Chunk ({os.path.basename(doc.metadata.get("source", "N/A"))}) ___{Colors.ENDC}\n')
+            print(doc.page_content)
+            print(f'\n{Colors.HEADER}___ Ending of Chunk ___{Colors.ENDC}')
+    else:
+        print(f"{Colors.WARNING}No initial documents found. Waiting for uploads to {rag.data_dir}...{Colors.ENDC}")
 
     try:
         while True:

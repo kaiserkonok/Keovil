@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lora | Settings</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Outfit', sans-serif; background-color: #050505; color: #ffffff; }
+        .glass-panel { background: rgba(20, 20, 25, 0.6); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.05); }
+        .neon-border { position: relative; }
+        .neon-border::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 2px; background: #8b5cf6; transition: width 0.3s ease; }
+        .neon-border:focus-within::after { width: 100%; }
+        input[type="range"] { accent-color: #8b5cf6; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-4">
+
+    <div class="mb-10 text-center">
+        <h1 class="text-4xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-fuchsia-500">SYSTEM PREFERENCES</h1>
+        <p class="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Adjust Lora's Brain & Creativity</p>
+    </div>
+
+    <div class="w-full max-w-lg glass-panel rounded-[2rem] p-10 shadow-2xl shadow-violet-900/10">
+        <div class="space-y-10">
+
+            <div class="neon-border">
+                <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">Neural Model</label>
+                <select id="modelSelect" class="w-full bg-transparent text-xl font-light py-2 focus:outline-none cursor-pointer">
+                    <option class="bg-zinc-900" value="qwen2.5:7b-instruct">Qwen 2.5 (7B)</option>
+                    <option class="bg-zinc-900" value="llama3.2:latest">Llama 3.2:latest (3B)</option>
+                </select>
+            </div>
+
+            <div>
+                <div class="flex justify-between items-end mb-4">
+                    <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Creativity (Temp)</label>
+                    <span id="tempValue" class="text-3xl font-light text-violet-400">0.1</span>
+                </div>
+                <input type="range" id="tempRange" min="0" max="1" step="0.05" value="0.1" class="w-full h-1 bg-zinc-800 rounded-full appearance-none">
+                <div class="flex justify-between text-[10px] font-bold text-zinc-600 mt-3 uppercase tracking-tighter">
+                    <span>Precision</span>
+                    <span>Hallucination</span>
+                </div>
+            </div>
+
+            <div class="pt-6">
+                <button onclick="updateSettings()" id="saveBtn" class="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-violet-500 hover:text-white transition-all active:scale-95 shadow-xl">
+                    INITIALIZE UPDATES
+                </button>
+                <a href="/" class="block text-center mt-6 text-zinc-500 hover:text-white text-sm transition-colors tracking-tight">Return to Dashboard</a>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        const tempRange = document.getElementById('tempRange');
+        const tempValue = document.getElementById('tempValue');
+        const modelSelect = document.getElementById('modelSelect');
+        const saveBtn = document.getElementById('saveBtn');
+
+        // Fetch current settings on load
+        async function fetchSettings() {
+            const res = await fetch('/api/settings');
+            const data = await res.json();
+            modelSelect.value = data.llm_model;
+            tempRange.value = data.temperature;
+            tempValue.innerText = data.temperature;
+        }
+
+        tempRange.addEventListener('input', (e) => {
+            tempValue.innerText = e.target.value;
+        });
+
+        async function updateSettings() {
+            const originalText = saveBtn.innerText;
+            saveBtn.innerText = "PROCESSING...";
+            saveBtn.disabled = true;
+
+            const payload = {
+                llm_model: modelSelect.value,
+                temperature: parseFloat(tempRange.value)
+            };
+
+            try {
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    saveBtn.innerText = "SYSTEM UPDATED";
+                    saveBtn.classList.replace('bg-white', 'bg-emerald-500');
+                    saveBtn.classList.replace('text-black', 'text-white');
+                    setTimeout(() => {
+                        saveBtn.innerText = originalText;
+                        saveBtn.classList.replace('bg-emerald-500', 'bg-white');
+                        saveBtn.classList.replace('text-white', 'text-black');
+                        saveBtn.disabled = false;
+                    }, 2000);
+                }
+            } catch (err) {
+                saveBtn.innerText = "ERROR OCCURRED";
+                saveBtn.disabled = false;
+            }
+        }
+
+        fetchSettings();
+    </script>
+</body>
+</html>
