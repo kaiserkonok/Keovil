@@ -31,7 +31,7 @@
             mask-image: radial-gradient(circle at center, black, transparent 90%);
         }
 
-        /* Glass Cards with Sharp Borders */
+        /* Glass Cards */
         .glass-card {
             background: var(--card-bg);
             border: 1px solid rgba(255, 255, 255, 0.05);
@@ -60,12 +60,31 @@
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
+
+        /* Settings Button Specifics */
+        .settings-fab {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .settings-fab:hover {
+            background: rgba(255, 255, 255, 0.08);
+            border-color: rgba(168, 85, 247, 0.5);
+            transform: rotate(90deg) scale(1.1);
+            box-shadow: 0 0 20px rgba(168, 85, 247, 0.2);
+        }
     </style>
 </head>
 <body class="relative overflow-hidden">
     <div class="absolute inset-0 bg-grid pointer-events-none"></div>
     <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/10 blur-[120px] rounded-full"></div>
     <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-600/10 blur-[120px] rounded-full"></div>
+
+    <a href="/settings" class="settings-fab fixed top-8 right-8 w-12 h-12 rounded-full flex items-center justify-center z-50 group transition-all" title="System Settings">
+        <i data-lucide="settings" class="text-zinc-400 group-hover:text-purple-400 w-5 h-5"></i>
+    </a>
 
     <div class="container mx-auto max-w-6xl px-6 py-12 relative z-10">
         <header class="text-center mb-20">
