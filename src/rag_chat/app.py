@@ -177,14 +177,17 @@ def list_files():
 
     items = []
     for p in sorted(target_dir.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
-        stat = p.stat()
-        items.append({
-            "name": p.name,
-            "is_dir": p.is_dir(),
-            "size": stat.st_size,
-            "modified": stat.st_mtime,
-            "path": str(p.relative_to(FILES_DIR))
-        })
+        try:
+            stat = p.stat()
+            items.append({
+                "name": p.name,
+                "is_dir": p.is_dir(),
+                "size": stat.st_size,
+                "modified": stat.st_mtime,
+                "path": str(p.relative_to(FILES_DIR))
+            })
+        except Exception:
+            continue
     return jsonify({"files": items})
 
 
@@ -252,16 +255,37 @@ def mkdir():
 
 @app.route("/api/explorer/files/upload", methods=["POST"])
 def upload_file():
-    folder_path = request.form.get("path", "")
-    upload = request.files.get("file")
-    if not upload:
-        return jsonify({"error": "No file uploaded"}), 400
+    # Modified to support multiple files and folder structures
+    target_folder_path = request.form.get("path", "")
+    files = request.files.getlist("file")
+    # This list holds the relative paths for folder uploads
+    full_paths = request.form.getlist("full_paths")
 
-    parent = (FILES_DIR / folder_path).resolve()
-    if not str(parent).startswith(str(FILES_DIR.resolve())):
-        return jsonify({"error": "Invalid path"}), 400
+    if not files:
+        return jsonify({"error": "No files uploaded"}), 400
 
-    upload.save(parent / upload.filename)
+    parent_dir = (FILES_DIR / target_folder_path).resolve()
+
+    # Check if target is inside FILES_DIR
+    if not str(parent_dir).startswith(str(FILES_DIR.resolve())):
+        return jsonify({"error": "Invalid target directory"}), 400
+
+    for i, file in enumerate(files):
+        if file.filename == '':
+            continue
+
+        # Use relative path if provided (for folder upload), else use filename
+        rel_path = full_paths[i] if (full_paths and i < len(full_paths)) else file.filename
+        dest_path = (parent_dir / rel_path).resolve()
+
+        # Security check for each file
+        if not str(dest_path).startswith(str(FILES_DIR.resolve())):
+            continue
+
+        # Create necessary subdirectories
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        file.save(dest_path)
+
     return jsonify({"ok": True})
 
 

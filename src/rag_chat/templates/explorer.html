@@ -49,7 +49,6 @@
             border-bottom: 1px solid var(--border);
         }
 
-        /* Integrated Logo/Home Link Style */
         .brand-link {
             color: var(--accent);
             font-size: 18px;
@@ -68,10 +67,6 @@
             color: #fff;
         }
 
-        .brand-link:active {
-            transform: scale(0.96);
-        }
-
         .controls {
             padding: 12px;
             display: flex;
@@ -80,7 +75,34 @@
             border-bottom: 1px solid var(--border);
         }
 
-        /* Buttons matching Data Lab Style */
+        /* Dropdown UI */
+        .upload-dropdown { position: relative; display: inline-block; }
+        .upload-options {
+            display: none;
+            position: absolute;
+            top: 100%;
+            left: 0;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-top: 5px;
+            z-index: 1000;
+            min-width: 140px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+            overflow: hidden;
+        }
+        .upload-item {
+            padding: 10px 14px;
+            font-size: 13px;
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            transition: 0.2s;
+        }
+        .upload-item:hover { background: var(--accent); color: white; }
+
         .btn {
             padding: 6px 10px;
             background: var(--panel);
@@ -101,7 +123,6 @@
         .btn.danger { color: #ff7b72; border-color: #ff7b7222; }
         .btn.danger:hover { background: #ff7b7211; }
 
-        /* Tree View Adjustments */
         #tree-container { flex:1; overflow:auto; padding:10px; }
         .jstree-default .jstree-node { color: var(--text-main); }
         .jstree-default .jstree-anchor { color: var(--text-main) !important; font-size: 14px; }
@@ -110,7 +131,6 @@
         .jstree-default .jstree-clicked { color: var(--accent) !important; }
         .jstree-folder { color: var(--accent) !important; }
 
-        /* Main Panel Styling */
         #editor-panel { flex:1; display:flex; flex-direction:column; background: var(--bg-deep); }
         .editor-header {
             padding: 15px 25px;
@@ -123,7 +143,6 @@
         .file-info h2 { font-size: 16px; font-weight: 500; color: var(--accent); }
         .file-info .path { font-size: 12px; color: var(--muted); font-family: 'Fira Code', monospace; }
 
-        /* Text Editor Style */
         #editor {
             flex:1;
             background: var(--bg-deep);
@@ -144,7 +163,6 @@
             font-family: 'Fira Code', monospace;
         }
 
-        /* Status Bar */
         .status-bar {
             padding: 8px 20px;
             background: var(--sidebar-bg);
@@ -156,11 +174,6 @@
             font-family: 'Fira Code', monospace;
         }
 
-        /* PDF Viewer and others stay themed */
-        #pdf-viewer { background: #1c1e22 !important; }
-        .pdf-controls { background: var(--sidebar-bg) !important; border-bottom: 1px solid var(--border) !important; }
-
-        /* Context Menu Theme */
         .context-menu {
             position:absolute; background: var(--panel); border:1px solid var(--border);
             border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:1000; min-width:180px; display:none;
@@ -181,7 +194,16 @@
             <button class="btn" id="refreshBtn" title="Refresh"><i class="fas fa-sync-alt"></i></button>
             <button class="btn" id="newFolderBtn" title="New Folder"><i class="fas fa-folder-plus"></i></button>
             <button class="btn" id="newFileBtn" title="New File"><i class="fas fa-file-medical"></i></button>
-            <button class="btn primary" id="uploadBtn" title="Upload"><i class="fas fa-upload"></i></button>
+
+            <div class="upload-dropdown">
+                <button class="btn primary" id="uploadMainBtn" title="Upload">
+                    <i class="fas fa-upload"></i>
+                </button>
+                <div class="upload-options" id="uploadOptions">
+                    <div class="upload-item" id="optUploadFiles"><i class="fas fa-file"></i> Files</div>
+                    <div class="upload-item" id="optUploadFolder"><i class="fas fa-folder"></i> Folder</div>
+                </div>
+            </div>
         </div>
         <div id="tree-container"><div id="file-tree"></div></div>
     </div>
@@ -240,6 +262,8 @@
     </div>
 
     <input type="file" id="fileInput" style="display:none;" multiple>
+    <input type="file" id="folderInput" style="display:none;" webkitdirectory directory multiple>
+
     <div class="context-menu" id="contextMenu">
         <div class="context-menu-item" data-action="open"><i class="fas fa-folder-open"></i>Open</div>
         <div class="context-menu-item" data-action="download"><i class="fas fa-download"></i>Download</div>
@@ -251,7 +275,6 @@
     </div>
 
     <script>
-        // LOGIC REPLICATED EXACTLY
         let selectedPath = null;
         let currentFolder = '';
         let contextMenuTarget = null;
@@ -501,10 +524,23 @@
             if((await resp.json()).ok) refreshTree();
         }
 
-        async function uploadFile(file, path=currentFolder){
-            const fd=new FormData(); fd.append('path', path); fd.append('file', file);
-            const resp=await fetch('/api/explorer/files/upload',{method:'POST', body:fd});
-            if((await resp.json()).ok) refreshTree();
+        // Updated for Batch/Folder upload logic
+        async function uploadBatch(files, path=currentFolder){
+            if (files.length === 0) return;
+            const fd = new FormData();
+            fd.append('path', path);
+
+            for (let i = 0; i < files.length; i++) {
+                fd.append('file', files[i]);
+                // Send relative path so backend can recreate folders
+                const relPath = files[i].webkitRelativePath || files[i].name;
+                fd.append('full_paths', relPath);
+            }
+
+            const resp = await fetch('/api/explorer/files/upload', {method:'POST', body:fd});
+            if((await resp.json()).ok) {
+                refreshTree();
+            }
         }
 
         function downloadFile(path){ window.location.href=`/api/explorer/files/download?path=${encodeURIComponent(path)}`; }
@@ -521,8 +557,22 @@
         document.getElementById('newFolderBtn').onclick = () => createNewFolder();
         document.getElementById('newFileBtn').onclick = () => createNewFile();
         document.getElementById('saveBtn').onclick = () => saveFile();
-        document.getElementById('uploadBtn').onclick = () => document.getElementById('fileInput').click();
-        document.getElementById('fileInput').onchange = function(){ for(const f of this.files) uploadFile(f); this.value=''; };
+
+        // Dropdown Controls
+        document.getElementById('uploadMainBtn').onclick = (e) => {
+            e.stopPropagation();
+            const menu = document.getElementById('uploadOptions');
+            menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+        };
+
+        window.onclick = () => { document.getElementById('uploadOptions').style.display = 'none'; };
+
+        document.getElementById('optUploadFiles').onclick = () => document.getElementById('fileInput').click();
+        document.getElementById('optUploadFolder').onclick = () => document.getElementById('folderInput').click();
+
+        document.getElementById('fileInput').onchange = function(){ uploadBatch(this.files); this.value=''; };
+        document.getElementById('folderInput').onchange = function(){ uploadBatch(this.files); this.value=''; };
+
         document.getElementById('renameBtn').onclick = () => selectedPath && renameItem(selectedPath, selectedPath.split('/').pop());
         document.getElementById('deleteBtn').onclick = () => selectedPath && deleteItem(selectedPath);
         document.addEventListener('keydown', e => { if(e.ctrlKey && e.key==='s'){ e.preventDefault(); saveFile(); }});
