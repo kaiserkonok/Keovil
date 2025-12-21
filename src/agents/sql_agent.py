@@ -3,7 +3,7 @@ import pandas as pd
 import sqlite3
 import threading
 from pathlib import Path
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from langchain_community.agent_toolkits import create_sql_agent, SQLDatabaseToolkit
 from langchain_ollama import ChatOllama
 from langchain_community.utilities import SQLDatabase
@@ -27,9 +27,9 @@ class SQLQueryAgent:
         self.refresh_agent()
 
     def refresh_agent(self):
+        """Re-initializes the SQL agent to detect schema changes (new/deleted tables)."""
         with self._lock:
             try:
-                # Re-initializing SQLDatabase ensures new tables are detected
                 db = SQLDatabase(self.engine)
                 llm = ChatOllama(model=self.model_name, temperature=0.1)
                 toolkit = SQLDatabaseToolkit(db=db, llm=llm)
@@ -47,7 +47,6 @@ class SQLQueryAgent:
         with self._lock:
             if not self.agent_executor: return "Agent not ready."
             try:
-                # LangChain SQL agents usually expect a dictionary input
                 response = self.agent_executor.invoke({"input": query})
                 return response["output"] if isinstance(response, dict) else str(response)
             except Exception as e:
@@ -61,25 +60,25 @@ class IngestionHandler(FileSystemEventHandler):
         self.manager = system_manager
 
     def on_modified(self, event):
-        if not event.is_directory: self.manager.ingest_single_file(event.src_path)
+        if not event.is_directory: self.manager.sync_database()
 
     def on_created(self, event):
-        if not event.is_directory: self.manager.ingest_single_file(event.src_path)
+        if not event.is_directory: self.manager.sync_database()
+
+    def on_deleted(self, event):
+        if not event.is_directory: self.manager.sync_database()
 
 
-# --- The Manager: Everything Orchestrator ---
+# --- The Manager: Orchestrator ---
 
 class StructuredDataAgent:
     def __init__(self, db_path=None, watch_dir=None):
-        # --- CENTRALIZED STORAGE LOGIC ---
         home = str(Path.home())
         base_storage = os.path.join(home, ".k_rag_storage")
 
-        # Default to ~/.k_rag_storage/database/main.db
+        # Set default paths
         if db_path is None:
             db_path = os.path.join(base_storage, "database", "main.db")
-
-        # Default to ~/.k_rag_storage/data (Same as RAG)
         if watch_dir is None:
             watch_dir = os.path.join(base_storage, "data")
 
@@ -92,85 +91,92 @@ class StructuredDataAgent:
         self.agent = SQLQueryAgent(self.db_uri)
         self.observer = Observer()
 
-    def ingest_single_file(self, file_path: str):
-        """Internal method to process data and update the agent."""
-        ext = file_path.lower().split(".")[-1]
-        if ext not in ["csv", "xlsx", "xls", "db", "sqlite"]:
-            return
+    def _get_table_name(self, file_path):
+        """Standardizes file names to valid SQL table names."""
+        return os.path.splitext(os.path.basename(file_path))[0].replace(" ", "_").replace("-", "_").lower()
 
-        table_name = os.path.splitext(os.path.basename(file_path))[0].replace(" ", "_").replace("-", "_").lower()
+    def sync_database(self):
+        """Mirrors the database state to the current folder state."""
+        print(f"\n{Fore.YELLOW}⚙️  Syncing database state with folder...")
 
-        try:
-            if ext == "csv":
-                print(f"{Fore.BLUE}📦 Ingesting CSV: {table_name}")
-                first = True
-                for chunk in pd.read_csv(file_path, chunksize=10000):
-                    chunk.to_sql(table_name, self.agent.engine, if_exists="replace" if first else "append", index=False)
-                    first = False
-            elif ext in ["xls", "xlsx"]:
-                print(f"{Fore.BLUE}📊 Ingesting Excel: {table_name}")
-                pd.read_excel(file_path).to_sql(table_name, self.agent.engine, if_exists="replace", index=False)
-            elif ext in ["db", "sqlite"]:
-                self._copy_db_tables(file_path, table_name)
-
-            print(f"{Fore.GREEN}✔ Processed {table_name}")
-            self.agent.refresh_agent()
-        except Exception as e:
-            print(f"{Fore.RED}✖ Ingestion error: {e}")
-
-    def _copy_db_tables(self, src_db_path, prefix):
-        """Helper to merge external SQLite tables."""
-        src_conn = sqlite3.connect(src_db_path)
-        dest_conn = self.agent.engine.raw_connection()
-        try:
-            cursor = src_conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-            for (table,) in cursor.fetchall():
-                new_name = f"{prefix}_{table}"
-                df = pd.read_sql_query(f"SELECT * FROM {table}", src_conn)
-                df.to_sql(new_name, self.agent.engine, if_exists="replace", index=False)
-            dest_conn.commit()
-        finally:
-            src_conn.close()
-            dest_conn.close()
-
-    def start_monitoring(self):
-        """Bootstraps the existing files and starts the watcher."""
-        print(f"{Fore.YELLOW}🚀 Initializing data sync from {self.watch_dir}...")
+        current_files = []
+        valid_extensions = (".csv", ".xlsx", ".xls", ".db", ".sqlite")
         for root, _, files in os.walk(self.watch_dir):
             for f in files:
-                self.ingest_single_file(os.path.join(root, f))
+                if f.lower().endswith(valid_extensions):
+                    current_files.append(os.path.join(root, f))
 
+        expected_tables = set()
+
+        # 1. Ingest existing files (Update/Create)
+        for file_path in current_files:
+            base_t_name = self._get_table_name(file_path)
+            ext = file_path.lower().split(".")[-1]
+
+            try:
+                if ext == "csv":
+                    pd.read_csv(file_path).to_sql(base_t_name, self.agent.engine, if_exists="replace", index=False)
+                    expected_tables.add(base_t_name)
+                elif ext in ["xls", "xlsx"]:
+                    pd.read_excel(file_path).to_sql(base_t_name, self.agent.engine, if_exists="replace", index=False)
+                    expected_tables.add(base_t_name)
+                elif ext in ["db", "sqlite"]:
+                    src_conn = sqlite3.connect(file_path)
+                    cursor = src_conn.cursor()
+                    cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                    for (internal_table,) in cursor.fetchall():
+                        prefixed_name = f"{base_t_name}_{internal_table}"
+                        df = pd.read_sql_query(f'SELECT * FROM "{internal_table}"', src_conn)
+                        df.to_sql(prefixed_name, self.agent.engine, if_exists="replace", index=False)
+                        expected_tables.add(prefixed_name)
+                    src_conn.close()
+
+                print(f"{Fore.BLUE}📦 Synced: {base_t_name}")
+            except Exception as e:
+                print(f"{Fore.RED}✖ Error processing {file_path}: {e}")
+
+        # 2. Drop orphaned tables (Cleanup)
+        inspector = inspect(self.agent.engine)
+        existing_tables = inspector.get_table_names()
+
+        with self.agent.engine.begin() as conn:
+            for table in existing_tables:
+                if table not in expected_tables:
+                    print(f"{Fore.RED}🗑️  Removing orphaned data: {table}")
+                    # Using text() for SQLAlchemy 2.0 compatibility
+                    conn.execute(text(f'DROP TABLE IF EXISTS "{table}"'))
+
+        # 3. Refresh Agent
+        self.agent.refresh_agent()
+
+    def start_monitoring(self):
+        """Bootstrap sync and start the directory watcher."""
+        self.sync_database()
         event_handler = IngestionHandler(self)
         self.observer.schedule(event_handler, self.watch_dir, recursive=True)
         self.observer.start()
-        print(f"{Fore.YELLOW}👀 System is live and watching for changes.{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}👀 Monitoring folder for changes...{Style.RESET_ALL}")
 
     def stop(self):
         self.observer.stop()
         self.observer.join()
 
-    def query(self, text: str):
-        return self.agent.ask(text)
+    def query(self, text_input: str):
+        return self.agent.ask(text_input)
 
 
-# --- Clean Execution ---
+# --- Execution Entry Point ---
 
 if __name__ == "__main__":
-    # If you leave these as None, it uses the fixed Project Storage paths
-    # Or you can override them here:
-    DB_FILE = None
-    DATA_DIR = None
-
-    system = StructuredDataAgent(DB_FILE, DATA_DIR)
+    system = StructuredDataAgent()
     system.start_monitoring()
 
     try:
         while True:
-            user_input = input(f"\n{Fore.YELLOW}❓ Query: {Style.RESET_ALL}")
+            user_input = input(f"\n{Fore.YELLOW}❓ Query (or 'exit'): {Style.RESET_ALL}")
             if user_input.lower() in ['exit', 'quit']: break
 
-            print(f"{Fore.CYAN}🤖 Thinking...{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}🤖 Analyzing data...{Style.RESET_ALL}")
             response = system.query(user_input)
             print(f"{Fore.GREEN}{response}{Style.RESET_ALL}")
     except KeyboardInterrupt:
