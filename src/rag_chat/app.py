@@ -21,7 +21,7 @@ HOME_STORAGE = Path.home() / ".k_rag_storage"
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
 SETTINGS_FILE = HOME_STORAGE / "settings.json"
-CHAT_DB = DB_DIR / "chat_history.db"  # Dedicated DB for Chat History
+CHAT_DB = DB_DIR / "chat_history.db"
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -35,16 +35,17 @@ def init_chat_db():
     conn = sqlite3.connect(CHAT_DB)
     curr = conn.cursor()
 
-    # Sessions table (for the sidebar)
+    # Sessions table (User-Specific)
     curr.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
+            user_id TEXT,
             title TEXT, 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Messages table (the actual content)
+    # Messages table
     curr.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -71,7 +72,7 @@ def load_settings():
         try:
             with open(SETTINGS_FILE, "r") as f:
                 return {**defaults, **json.load(f)}
-        except:
+        except Exception:
             return defaults
     return defaults
 
@@ -88,18 +89,16 @@ current_cfg = load_settings()
 # ---------------------------------------------------------
 try:
     from rag_engine import CollegeRAG
-except Exception as e:
-    print(f"Import error for CollegeRAG: {e}")
+except ImportError:
     CollegeRAG = None
 
 try:
     from agents.sql_agent import StructuredDataAgent
-except Exception as e:
-    print(f"Import error for StructuredDataAgent: {e}")
+except ImportError:
     StructuredDataAgent = None
 
 # ---------------------------------------------------------
-# Flask Init
+# Flask Initialization
 # ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
 FILES_DIR = DATA_DIR
@@ -111,11 +110,11 @@ if CollegeRAG:
         rag = CollegeRAG(
             str(DATA_DIR),
             llm_model=current_cfg["llm_model"],
-            temperature=current_cfg["temperature"],
+            temperature=current_cfg["temperature"]
         )
-        print(f"✅ RAG initialized")
+        print("✅ RAG initialized")
     except Exception as e:
-        print("❌ RAG init failed:", e)
+        print(f"❌ RAG init failed: {e}")
 
 # Init SQL Agent
 sql_system = None
@@ -123,9 +122,9 @@ if StructuredDataAgent:
     try:
         sql_system = StructuredDataAgent()
         sql_system.start_monitoring()
-        print(f"✅ SQL Agent initialized")
+        print("✅ SQL Agent initialized")
     except Exception as e:
-        print("❌ SQL Agent init failed:", e)
+        print(f"❌ SQL Agent init failed: {e}")
 
 
 # ---------------------------------------------------------
@@ -164,20 +163,20 @@ def data_lab():
 
 
 # ---------------------------------------------------------
-# CHAT SESSIONS & HISTORY API
+# CHAT SESSIONS & HISTORY API (User-Specific)
 # ---------------------------------------------------------
-@app.route("/api/chat/sessions", methods=["GET", "POST"])
+@app.route("/api/chat/sessions", methods=["GET"])
 def manage_sessions():
-    conn = sqlite3.connect(CHAT_DB)
-    if request.method == "POST":
-        title = request.json.get("title", "New Chat")
-        cur = conn.execute("INSERT INTO sessions (title) VALUES (?)", (title,))
-        conn.commit()
-        s_id = cur.lastrowid
-        conn.close()
-        return jsonify({"id": s_id, "title": title})
+    uid = request.headers.get("X-User-ID")
+    if not uid:
+        return jsonify([])
 
-    cur = conn.execute("SELECT id, title FROM sessions ORDER BY created_at DESC")
+    conn = sqlite3.connect(CHAT_DB)
+    # Filter by user_id
+    cur = conn.execute(
+        "SELECT id, title FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
+        (uid,)
+    )
     sessions = [{"id": r[0], "title": r[1]} for r in cur.fetchall()]
     conn.close()
     return jsonify(sessions)
@@ -201,42 +200,48 @@ def api_chat():
     data = request.json or {}
     q = (data.get("query") or "").strip()
     session_id = data.get("session_id")
+    uid = request.headers.get("X-User-ID")
 
-    if not q:
-        return jsonify({"error": "Empty query"}), 400
+    if not q or not uid:
+        return jsonify({"error": "Missing query or user ID"}), 400
 
     conn = sqlite3.connect(CHAT_DB)
 
     # 1. Fetch history chronologically (Oldest First)
     rag_history = []
     if session_id:
-        # Get last 10 messages in correct chronological order
         cur = conn.execute(
-            "SELECT role, content FROM (SELECT role, content, timestamp FROM messages WHERE session_id = ? ORDER BY timestamp DESC LIMIT 10) ORDER BY timestamp ASC",
+            """SELECT role, content FROM (
+                SELECT role, content, timestamp FROM messages 
+                WHERE session_id = ? 
+                ORDER BY timestamp DESC LIMIT 10
+            ) ORDER BY timestamp ASC""",
             (session_id,)
         )
         history_rows = cur.fetchall()
-        # Ensure mapping: user -> "You", assistant -> "AI"
         rag_history = [("You" if r[0] == 'user' else "AI", r[1]) for r in history_rows]
 
-    # 2. Generate Response (History is currently Turn 1 to N-1)
+    # 2. Generate Response
     ans = ""
     if rag:
         try:
             ans = rag.ask(q, chat_history=rag_history, stream=False)
         except Exception as e:
             conn.close()
-            return jsonify({"error": f"RAG error: {e}"}), 500
+            return jsonify({"error": str(e)}), 500
     else:
         ans = "(RAG not initialized)"
 
-    # 3. Create session if it doesn't exist
+    # 3. Create session with user_id if new
     if not session_id:
         title = q[:35] + "..." if len(q) > 35 else q
-        cur = conn.execute("INSERT INTO sessions (title) VALUES (?)", (title,))
+        cur = conn.execute(
+            "INSERT INTO sessions (user_id, title) VALUES (?, ?)",
+            (uid, title)
+        )
         session_id = cur.lastrowid
 
-    # 4. Save the current Turn (N) after AI responds
+    # 4. Save current turn
     conn.execute(
         "INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)",
         (session_id, q)
@@ -266,7 +271,10 @@ def manage_settings():
 
     if rag:
         from langchain_ollama import OllamaLLM
-        rag.llm = OllamaLLM(model=data["llm_model"], temperature=float(data["temperature"]))
+        rag.llm = OllamaLLM(
+            model=data["llm_model"],
+            temperature=float(data["temperature"])
+        )
     return jsonify({"ok": True})
 
 
@@ -277,11 +285,15 @@ def list_files():
 
     if not str(target_dir).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
+
     if not target_dir.exists() or not target_dir.is_dir():
-        return jsonify({"error": "Directory not found"}), 404
+        return jsonify({"error": "Not found"}), 404
 
     items = []
-    for p in sorted(target_dir.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+    # Sort: Directories first, then alphabetical
+    sorted_items = sorted(target_dir.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+
+    for p in sorted_items:
         try:
             stat = p.stat()
             items.append({
@@ -291,7 +303,7 @@ def list_files():
                 "modified": stat.st_mtime,
                 "path": str(p.relative_to(FILES_DIR))
             })
-        except:
+        except Exception:
             continue
     return jsonify({"files": items})
 
@@ -303,12 +315,13 @@ def view_file():
 
     if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
         return jsonify({"error": "Not found"}), 404
+
     if path.is_dir():
         return jsonify({"content": "(Directory)"}), 200
 
     try:
         text = open(path, "r", encoding="utf-8", errors="ignore").read()
-    except:
+    except Exception:
         text = "(Unable to read file)"
     return jsonify({"content": text, "name": path.name})
 
@@ -329,6 +342,7 @@ def save_file():
 @app.route("/api/explorer/files/delete", methods=["POST"])
 def delete_file():
     path = (FILES_DIR / safe_rel_path(request.json.get("path"))).resolve()
+
     if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
         return jsonify({"error": "Not found"}), 404
 
@@ -345,7 +359,8 @@ def rename_file():
     old = (FILES_DIR / safe_rel_path(data.get("old"))).resolve()
     new = (FILES_DIR / safe_rel_path(data.get("new"))).resolve()
 
-    if not str(old).startswith(str(FILES_DIR.resolve())) or not str(new).startswith(str(FILES_DIR.resolve())):
+    if not str(old).startswith(str(FILES_DIR.resolve())) or \
+       not str(new).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
 
     new.parent.mkdir(parents=True, exist_ok=True)
@@ -355,7 +370,10 @@ def rename_file():
 
 @app.route("/api/explorer/files/mkdir", methods=["POST"])
 def mkdir():
-    path = (FILES_DIR / safe_rel_path(request.json.get("path")) / request.json.get("name")).resolve()
+    target = safe_rel_path(request.json.get("path"))
+    name = request.json.get("name")
+    path = (FILES_DIR / target / name).resolve()
+
     if not str(path).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
 
@@ -399,7 +417,8 @@ def list_files_tree():
     def get_tree_items(p: Path):
         res = []
         try:
-            for item in sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower())):
+            items = sorted(p.iterdir(), key=lambda x: (not x.is_dir(), x.name.lower()))
+            for item in items:
                 entry = {
                     "name": item.name,
                     "is_dir": item.is_dir(),
@@ -408,7 +427,7 @@ def list_files_tree():
                 if item.is_dir():
                     entry["children"] = get_tree_items(item)
                 res.append(entry)
-        except:
+        except Exception:
             pass
         return res
 

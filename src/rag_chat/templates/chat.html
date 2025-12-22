@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <title>RAG Chat — Lora</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
 
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
@@ -34,7 +35,7 @@
 
     body { display: flex; flex-direction: row; }
 
-    /* --- Sidebar Styling --- */
+    /* --- Sidebar --- */
     .sidebar {
       width: var(--sidebar-width);
       background: var(--bg-sidebar);
@@ -101,7 +102,7 @@
       color: var(--accent);
     }
 
-    /* --- Main Content Area --- */
+    /* --- Content --- */
     .content-wrapper {
       flex: 1;
       display: flex;
@@ -178,12 +179,12 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
 
-    /* Markdown Styling */
     .ai pre { background: #000; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 12px 0; border: 1px solid var(--border); }
     .ai code { font-family: 'Fira Code', monospace; font-size: 0.9em; }
     .ai p { margin: 0 0 12px 0; }
     .ai p:last-child { margin-bottom: 0; }
 
+    /* --- Input Area --- */
     .query-bar {
       position: absolute;
       bottom: 0; left: 0; width: 100%;
@@ -271,6 +272,9 @@
   </div>
 
 <script>
+/**
+ * Initialization & Identity
+ */
 const md = window.markdownit({
     html: true,
     highlight: function (str, lang) {
@@ -289,31 +293,70 @@ const sessionLabel = document.getElementById('sessionLabel');
 
 let currentSessionId = null;
 
+// Handle User Identity via LocalStorage
+let userId = localStorage.getItem('lora_user_id');
+if (!userId) {
+    userId = 'user_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
+    localStorage.setItem('lora_user_id', userId);
+}
+
+/**
+ * API Wrapper
+ * Automatically adds the X-User-ID header to all requests
+ */
+async function apiFetch(url, options = {}) {
+    const defaultHeaders = {
+        'X-User-ID': userId,
+        'Content-Type': 'application/json'
+    };
+
+    options.headers = {
+        ...defaultHeaders,
+        ...options.headers
+    };
+
+    return fetch(url, options);
+}
+
+/**
+ * Session Management
+ */
 async function loadSessions() {
-    const res = await fetch('/api/chat/sessions');
-    const sessions = await res.json();
-    historyList.innerHTML = '';
-    sessions.forEach(s => {
-        const item = document.createElement('div');
-        item.className = `history-item ${currentSessionId == s.id ? 'active' : ''}`;
-        item.textContent = s.title;
-        item.onclick = () => switchSession(s.id);
-        historyList.appendChild(item);
-    });
+    try {
+        const res = await apiFetch('/api/chat/sessions');
+        const sessions = await res.json();
+
+        historyList.innerHTML = '';
+        sessions.forEach(s => {
+            const item = document.createElement('div');
+            item.className = `history-item ${currentSessionId == s.id ? 'active' : ''}`;
+            item.textContent = s.title;
+            item.onclick = () => switchSession(s.id);
+            historyList.appendChild(item);
+        });
+    } catch (err) {
+        console.error("Failed to load sessions:", err);
+    }
 }
 
 async function switchSession(id) {
     currentSessionId = id;
     sessionLabel.textContent = `Session: #${id}`;
     messages.innerHTML = '';
-    const res = await fetch(`/api/chat/history/${id}`);
-    const history = await res.json();
-    history.forEach(m => {
-        if(m.role === 'user') appendUser(m.content);
-        else appendAssistant(m.content);
-    });
-    // Visual update of active class
-    loadSessions();
+
+    try {
+        const res = await apiFetch(`/api/chat/history/${id}`);
+        const history = await res.json();
+
+        history.forEach(m => {
+            if(m.role === 'user') appendUser(m.content);
+            else appendAssistant(m.content);
+        });
+
+        loadSessions();
+    } catch (err) {
+        console.error("Failed to load history:", err);
+    }
 }
 
 function startNewChat() {
@@ -324,6 +367,9 @@ function startNewChat() {
     loadSessions();
 }
 
+/**
+ * UI Rendering
+ */
 function appendUser(text) {
     const el = document.createElement('div');
     el.className = 'bubble user';
@@ -354,15 +400,20 @@ function scrollToBottom() {
     messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
+/**
+ * Core Logic
+ */
 async function handleQuery(query) {
     appendUser(query);
     const placeholder = appendPlaceholder();
 
     try {
-        const res = await fetch('/api/chat', {
+        const res = await apiFetch('/api/chat', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ query, session_id: currentSessionId })
+            body: JSON.stringify({
+                query,
+                session_id: currentSessionId
+            })
         });
 
         const data = await res.json();
@@ -370,18 +421,15 @@ async function handleQuery(query) {
         if (data.error) {
             placeholder.textContent = "Error: " + data.error;
         } else {
-            // Update the session ID for subsequent turns
             const isFirstInSession = !currentSessionId;
             currentSessionId = data.session_id;
 
             placeholder.remove();
             appendAssistant(data.response);
 
-            // Update UI components
             if (isFirstInSession) {
                 sessionLabel.textContent = `Session: #${currentSessionId}`;
-                // Small timeout ensures DB transaction is fully committed before reload
-                setTimeout(() => { loadSessions(); }, 200);
+                setTimeout(() => { loadSessions(); }, 250);
             }
         }
     } catch (err) {
@@ -390,6 +438,9 @@ async function handleQuery(query) {
     }
 }
 
+/**
+ * Event Listeners
+ */
 sendBtn.onclick = () => {
     const q = inputBox.value.trim();
     if (!q) return;
@@ -397,7 +448,9 @@ sendBtn.onclick = () => {
     handleQuery(q);
 };
 
-inputBox.onkeydown = e => { if (e.key === 'Enter') sendBtn.click(); };
+inputBox.onkeydown = e => {
+    if (e.key === 'Enter') sendBtn.click();
+};
 
 // Initial load
 loadSessions();
