@@ -460,8 +460,6 @@ class CollegeRAG:
 
             intel = json.loads(raw_response[start:end])
 
-            print(intel)
-
             # Smart Filtering: Ensure keywords exist in the standalone text
             intel['keywords'] = [w for w in intel['keywords'] if w.lower() in intel['standalone'].lower()]
 
@@ -484,6 +482,7 @@ class CollegeRAG:
 
         # World-Class Upgrade: Get Standalone, HyDE, and Keywords in one call
         intel = self.get_search_intelligence(query, chat_history)
+        print(intel)
         rewritten_query = intel['standalone']
         print(f"{Colors.OKCYAN}[DEBUG] Rewritten Query: {Colors.BOLD}{rewritten_query}{Colors.ENDC}")
 

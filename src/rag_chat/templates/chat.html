@@ -13,12 +13,14 @@
   <style>
     :root {
       --bg-deep: #0a0c10;
+      --bg-sidebar: #0d1117;
       --border: #30363d;
       --accent: #58a6ff;
       --text-main: #e6edf3;
       --muted: #8b949e;
       --user-bg: #161b22;
       --ai-bg: #0d1117;
+      --sidebar-width: 260px;
     }
 
     html, body {
@@ -30,7 +32,83 @@
       overflow: hidden;
     }
 
-    body { display: flex; flex-direction: column; }
+    body { display: flex; flex-direction: row; }
+
+    /* --- Sidebar Styling --- */
+    .sidebar {
+      width: var(--sidebar-width);
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      z-index: 100;
+    }
+
+    .sidebar-header {
+      padding: 25px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .new-chat-btn {
+      width: 100%;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--accent);
+      padding: 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .new-chat-btn:hover {
+      border-color: var(--accent);
+      background: rgba(88, 166, 255, 0.05);
+      letter-spacing: 0.5px;
+    }
+
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 15px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .history-item {
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      cursor: pointer;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      transition: 0.2s;
+      border: 1px solid transparent;
+    }
+
+    .history-item:hover {
+      background: var(--user-bg);
+      color: var(--text-main);
+    }
+
+    .history-item.active {
+      background: rgba(88, 166, 255, 0.08);
+      border-color: rgba(88, 166, 255, 0.3);
+      color: var(--accent);
+    }
+
+    /* --- Main Content Area --- */
+    .content-wrapper {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: var(--bg-deep);
+    }
 
     .header-area {
       display: flex;
@@ -41,7 +119,6 @@
       background: var(--bg-deep);
     }
 
-    /* Integrated Integrated Logo/Home Button */
     .brand-link {
       color: var(--accent);
       font-weight: 300;
@@ -50,19 +127,11 @@
       text-decoration: none;
       transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
       letter-spacing: -0.5px;
-      cursor: pointer;
-      outline: none;
     }
 
     .brand-link:hover {
       letter-spacing: 1.5px;
       text-shadow: 0 0 15px rgba(88, 166, 255, 0.7);
-      color: #fff;
-    }
-
-    .brand-link:active {
-      transform: scale(0.96);
-      opacity: 0.8;
     }
 
     .main-container {
@@ -74,21 +143,21 @@
     }
 
     #messages {
-      max-width: 1000px;
+      max-width: 900px;
       width: 100%;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
-      gap: 20px;
+      gap: 24px;
     }
 
     .bubble {
-      max-width: 75%;
-      padding: 12px 18px;
+      max-width: 85%;
+      padding: 16px 22px;
       font-size: 15px;
       line-height: 1.6;
       border-radius: 12px;
-      animation: fadeIn 0.3s ease;
+      animation: fadeIn 0.3s ease forwards;
     }
 
     .user {
@@ -106,28 +175,25 @@
       border: 1px solid var(--border);
       color: var(--text-main);
       border-bottom-left-radius: 2px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
     }
 
-    /* Markdown Specific Styling */
-    .ai p { margin: 0 0 10px 0; }
+    /* Markdown Styling */
+    .ai pre { background: #000; padding: 16px; border-radius: 8px; overflow-x: auto; margin: 12px 0; border: 1px solid var(--border); }
+    .ai code { font-family: 'Fira Code', monospace; font-size: 0.9em; }
+    .ai p { margin: 0 0 12px 0; }
     .ai p:last-child { margin-bottom: 0; }
-    .ai code { font-family: 'Fira Code', monospace; background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
-    .ai pre { background: #000; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 10px 0; border: 1px solid var(--border); }
-    .ai pre code { background: none; padding: 0; }
-    .ai ul, .ai ol { padding-left: 20px; margin: 10px 0; }
 
     .query-bar {
-      position: fixed;
+      position: absolute;
       bottom: 0; left: 0; width: 100%;
-      background: rgba(10, 12, 16, 0.9);
-      padding: 30px 0;
-      border-top: 1px solid var(--border);
-      backdrop-filter: blur(12px);
+      background: linear-gradient(to top, var(--bg-deep) 60%, transparent);
+      padding: 40px 0;
+      backdrop-filter: blur(10px);
     }
 
     .query-container {
-      max-width: 900px;
+      max-width: 800px;
       margin: 0 auto;
       display: flex;
       gap: 12px;
@@ -139,73 +205,77 @@
       background: #010409;
       border: 1px solid var(--border);
       color: white;
-      padding: 14px 20px;
-      border-radius: 10px;
+      padding: 16px 24px;
+      border-radius: 14px;
       outline: none;
       font-size: 15px;
-      transition: border-color 0.2s;
+      transition: all 0.2s;
     }
 
     .query-input:focus {
-      border-color: var(--accent);
+        border-color: var(--accent);
+        box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
     }
 
     .run-btn {
       background: none;
       border: 1px solid var(--border);
       color: var(--muted);
-      padding: 0 25px;
-      border-radius: 10px;
+      padding: 0 28px;
+      border-radius: 14px;
       cursor: pointer;
       font-family: 'Fira Code', monospace;
-      transition: 0.2s;
+      transition: all 0.2s;
     }
 
     .run-btn:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-      background: rgba(88, 166, 255, 0.05);
+        border-color: var(--accent);
+        color: var(--accent);
+        background: rgba(88, 166, 255, 0.05);
     }
 
-    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(12px); }
+        to { opacity: 1; transform: translateY(0); }
+    }
 
-    ::-webkit-scrollbar { width: 8px; }
-    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
   </style>
 </head>
 
 <body>
-  <div class="header-area">
-    <a href="/" class="brand-link" title="Return to Dashboard">
-        &lt;Lora Lab /&gt;
-    </a>
-    <div style="color: var(--muted); font-size: 12px; font-family: 'Fira Code'; text-transform: uppercase; letter-spacing: 1px;">Session: Chat</div>
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <button class="new-chat-btn" onclick="startNewChat()">+ New Session</button>
+    </div>
+    <div id="historyList" class="history-list"></div>
   </div>
 
-  <div class="main-container">
-    <div id="messages"></div>
-  </div>
+  <div class="content-wrapper">
+    <div class="header-area">
+      <a href="/" class="brand-link">&lt;Lora Lab /&gt;</a>
+      <div id="sessionLabel" style="color: var(--muted); font-size: 11px; font-family: 'Fira Code'; text-transform: uppercase;">Direct Connection</div>
+    </div>
 
-  <div class="query-bar">
-    <div class="query-container">
-      <input id="inputBox" class="query-input" placeholder="Ask a question..." autocomplete="off" autofocus />
-      <button id="sendBtn" class="run-btn">Run</button>
+    <div class="main-container">
+      <div id="messages"></div>
+    </div>
+
+    <div class="query-bar">
+      <div class="query-container">
+        <input id="inputBox" class="query-input" placeholder="Ask Lora anything..." autocomplete="off" autofocus />
+        <button id="sendBtn" class="run-btn">Run</button>
+      </div>
     </div>
   </div>
 
 <script>
-// Initialize Markdown Parser
 const md = window.markdownit({
     html: true,
-    linkify: true,
-    typographer: true,
     highlight: function (str, lang) {
         if (lang && hljs.getLanguage(lang)) {
-            try {
-                return '<pre class="hljs"><code>' +
-                       hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
-                       '</code></pre>';
-            } catch (__) {}
+            try { return '<pre class="hljs"><code>' + hljs.highlight(str, { language: lang }).value + '</code></pre>'; } catch (__) {}
         }
         return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>';
     }
@@ -214,71 +284,123 @@ const md = window.markdownit({
 const messages = document.getElementById('messages');
 const inputBox = document.getElementById('inputBox');
 const sendBtn = document.getElementById('sendBtn');
+const historyList = document.getElementById('historyList');
+const sessionLabel = document.getElementById('sessionLabel');
 
-let history = [];
+let currentSessionId = null;
 
-function appendUser(text){
-  const el = document.createElement('div');
-  el.className = 'bubble user';
-  el.textContent = text;
-  messages.appendChild(el);
-  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
-}
-
-function appendAssistantPlaceholder(){
-  const el = document.createElement('div');
-  el.className = 'bubble ai';
-  el.innerHTML = `<span style="color:var(--accent); font-family:'Fira Code'; font-size:12px;">Analysing...</span>`;
-  messages.appendChild(el);
-  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
-  return el;
-}
-
-async function handleQuery(query){
-  appendUser(query);
-  const placeholder = appendAssistantPlaceholder();
-
-  try {
-    const res = await fetch('/api/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({query, history})
+async function loadSessions() {
+    const res = await fetch('/api/chat/sessions');
+    const sessions = await res.json();
+    historyList.innerHTML = '';
+    sessions.forEach(s => {
+        const item = document.createElement('div');
+        item.className = `history-item ${currentSessionId == s.id ? 'active' : ''}`;
+        item.textContent = s.title;
+        item.onclick = () => switchSession(s.id);
+        historyList.appendChild(item);
     });
+}
 
-    const data = await res.json();
+async function switchSession(id) {
+    currentSessionId = id;
+    sessionLabel.textContent = `Session: #${id}`;
+    messages.innerHTML = '';
+    const res = await fetch(`/api/chat/history/${id}`);
+    const history = await res.json();
+    history.forEach(m => {
+        if(m.role === 'user') appendUser(m.content);
+        else appendAssistant(m.content);
+    });
+    // Visual update of active class
+    loadSessions();
+}
 
-    if (data.error) {
-        placeholder.textContent = "Error: " + data.error;
-    } else {
-        const fullText = data.response;
+function startNewChat() {
+    currentSessionId = null;
+    messages.innerHTML = '';
+    sessionLabel.textContent = "Direct Connection";
+    inputBox.focus();
+    loadSessions();
+}
 
-        // Render Markdown and highlight code
-        placeholder.innerHTML = md.render(fullText);
-        placeholder.querySelectorAll('pre code').forEach((block) => {
-            hljs.highlightElement(block);
+function appendUser(text) {
+    const el = document.createElement('div');
+    el.className = 'bubble user';
+    el.textContent = text;
+    messages.appendChild(el);
+    scrollToBottom();
+}
+
+function appendAssistant(text) {
+    const el = document.createElement('div');
+    el.className = 'bubble ai';
+    el.innerHTML = md.render(text);
+    messages.appendChild(el);
+    el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+    scrollToBottom();
+}
+
+function appendPlaceholder() {
+    const el = document.createElement('div');
+    el.className = 'bubble ai';
+    el.innerHTML = `<span style="color:var(--accent); font-family:'Fira Code'; font-size:12px;">Analysing...</span>`;
+    messages.appendChild(el);
+    scrollToBottom();
+    return el;
+}
+
+function scrollToBottom() {
+    messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
+}
+
+async function handleQuery(query) {
+    appendUser(query);
+    const placeholder = appendPlaceholder();
+
+    try {
+        const res = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ query, session_id: currentSessionId })
         });
 
-        // Update session history
-        history.push({role:'user', content:query});
-        history.push({role:'assistant', content:fullText});
-    }
-  } catch (err) {
-    placeholder.textContent = "Error connecting to server: " + err.message;
-  }
+        const data = await res.json();
 
-  messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
+        if (data.error) {
+            placeholder.textContent = "Error: " + data.error;
+        } else {
+            // Update the session ID for subsequent turns
+            const isFirstInSession = !currentSessionId;
+            currentSessionId = data.session_id;
+
+            placeholder.remove();
+            appendAssistant(data.response);
+
+            // Update UI components
+            if (isFirstInSession) {
+                sessionLabel.textContent = `Session: #${currentSessionId}`;
+                // Small timeout ensures DB transaction is fully committed before reload
+                setTimeout(() => { loadSessions(); }, 200);
+            }
+        }
+    } catch (err) {
+        placeholder.textContent = "Connection lost. Please try again.";
+        console.error(err);
+    }
 }
 
-sendBtn.onclick=()=>{
-  const q=inputBox.value.trim();
-  if(!q) return;
-  inputBox.value='';
-  handleQuery(q);
+sendBtn.onclick = () => {
+    const q = inputBox.value.trim();
+    if (!q) return;
+    inputBox.value = '';
+    handleQuery(q);
 };
 
-inputBox.addEventListener('keydown',e=>{
-  if(e.key==='Enter'){e.preventDefault();sendBtn.click();}
-});
+inputBox.onkeydown = e => { if (e.key === 'Enter') sendBtn.click(); };
+
+// Initial load
+loadSessions();
 </script>
 </body>
 </html>
