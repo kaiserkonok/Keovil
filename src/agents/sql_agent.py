@@ -18,7 +18,7 @@ init(autoreset=True)
 # --- The Brain: Agent Logic ---
 
 class SQLQueryAgent:
-    def __init__(self, db_uri: str, model_name: str = 'qwen2.5:7b-instruct'):
+    def __init__(self, db_uri: str, model_name: str = 'qwen2.5:14b-instruct-q4_K_M'):
         self.db_uri = db_uri
         self.model_name = model_name
         self.engine = create_engine(db_uri)

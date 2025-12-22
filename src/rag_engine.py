@@ -1,4 +1,6 @@
 import os
+import json
+import shutil
 from datetime import datetime
 import threading
 import pdfplumber
@@ -107,9 +109,7 @@ class NewFileHandler(FileSystemEventHandler):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=7, rerank_top_k=15, store_dir=None, llm_model='qwen2.5:7b-instruct',
-                 temperature=0.8):
-
+    def __init__(self, data_dir=None, top_k=7, rerank_top_k=15, store_dir=None, llm_model='qwen2.5:14b-instruct-q4_K_M', temperature=0):
         # --- PATH CONFIGURATION (Home Directory Defaults) ---
         home = str(Path.home())
         base_storage = os.path.join(home, ".k_rag_storage")
@@ -138,14 +138,19 @@ class CollegeRAG:
 
         # LLM + reranker (MODIFIED: Now accepts model and temperature dynamically)
         self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
+
+        # Intelligence LLM (3B) for query strategy
+        self.intel_llm = OllamaLLM(model='qwen2.5:14b-instruct-q4_K_M', temperature=0)
+
         self.embedding_model = OllamaEmbeddings(model='bge-m3:latest')
 
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"{Colors.HEADER}Reranker is initializing on device: {Colors.BOLD}{device}{Colors.ENDC}")
 
         # --- SAFE INITIALIZATION ---
+        # Upgraded to BGE Reranker for better accuracy
         self.reranker = CrossEncoder(
-            model_name='cross-encoder/ms-marco-MiniLM-L-12-v2',
+            model_name='cross-encoder/ms-marco-MiniLM-L-6-v2',
             device=device
         )
 
@@ -251,35 +256,48 @@ class CollegeRAG:
     # ----------------------
     def create_vectorestore(self, force_create=False):
         with self.lock:
-            # FIX: Use store_dir for loading, data_dir for document building
             store_path = self.store_dir
 
-            # Better check for folder existence and content
+            if force_create:
+                print(f"{Colors.WARNING}Force Create active. Wiping old index and clearing memory...{Colors.ENDC}")
+                self.vectorestore = None
+                self.docs = []  # <--- Crucial: Wipes the in-memory list
+                self.bm25_retriever = None
+
+                if os.path.exists(store_path):
+                    # We only delete store_dir (the FAISS cache), NOT data_dir (your PDFs)
+                    shutil.rmtree(store_path)
+                os.makedirs(store_path, exist_ok=True)
+
+            # Check if the folder is empty or non-existent
             store_exists = os.path.exists(store_path) and len(os.listdir(store_path)) > 0
 
             if store_exists and not force_create:
                 try:
-                    print(f'{Colors.OKGREEN}Loading FAISS vectorstore from {store_path}...{Colors.ENDC}')
-                    self.vectorestore = FAISS.load_local(store_path, self.embedding_model,
-                                                         allow_dangerous_deserialization=True)
+                    print(f'{Colors.OKGREEN}Loading existing FAISS vectorstore from {store_path}...{Colors.ENDC}')
+                    self.vectorestore = FAISS.load_local(
+                        store_path,
+                        self.embedding_model,
+                        allow_dangerous_deserialization=True
+                    )
                 except Exception as e:
-                    print(f"{Colors.WARNING}Failed to load store (corrupted or missing files): {e}{Colors.ENDC}")
-                    self.vectorestore = None  # Signal to recreate
+                    print(f"{Colors.WARNING}Failed to load store: {e}. Recreating...{Colors.ENDC}")
+                    self.vectorestore = None
 
+            # Rebuild if forced or if loading failed
             if self.vectorestore is None:
-                print(f'{Colors.WARNING}Creating new vectorestores from {self.data_dir}...{Colors.ENDC}')
+                print(f'{Colors.WARNING}Scanning source files for fresh indexing...{Colors.ENDC}')
+                # Since self.docs was cleared above, get_docs will only find current files
                 self._load_docs()
-                print(f"Total documents loaded: {len(self.docs)}")
 
-                # FIX: Only create if there are actually documents
                 if self.docs:
                     self.vectorestore = FAISS.from_documents(self.docs, self.embedding_model)
                     self.vectorestore.save_local(store_path)
                     self._build_bm25_index()
                 else:
-                    print(f"{Colors.WARNING}No documents to index. Vectorstore remains empty.{Colors.ENDC}")
-                    self.vectorestore = None
+                    print(f"{Colors.FAIL}No documents found in {self.data_dir}.{Colors.ENDC}")
 
+            # Ensure the retriever is updated to use the new index
             if self.vectorestore:
                 self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
 
@@ -398,33 +416,58 @@ class CollegeRAG:
             print(f"{Colors.OKGREEN}[Remove] Vectorstore updated.{Colors.ENDC}")
 
     # ----------------------
-    # Rewrite query (Unchanged)
+    # Get Search Intelligence (World Class Upgrade)
     # ----------------------
-    def rewrite_query(self, query, chat_history=None):
-        # NOTE: chat_history here will be self.chat_history in the terminal or the flask session history
-        if chat_history is None:
-            chat_history = self.chat_history
-
+    def get_search_intelligence(self, query, chat_history):
         prompt = f"""
-            You are a RAG search helper. Rewrite the user’s query so it is independent and self-contained. 
+            You are a Search Intent Architect. Your goal is to prepare a multi-path search strategy.
 
-            Guidelines:
-            1. Keep the query minimal. Do not add extra words, names, or details unless they are strictly required to resolve pronouns or ambiguity.
-            2. If the query is already clear, leave it unchanged.
-            3. Resolve pronouns, fragments, or vague references using the chat history so the query stands alone.
-            4. Do not expand the query with institution names, locations, or other context unless the user explicitly mentioned them.
-            5. Your rewritten query should be as short and focused as possible.
+            ### TASK 1: STANDALONE QUERY
+            Rewrite the "User Query" to be entirely self-contained. 
+            - Use the "Chat History" to resolve all pronouns (he, she, it, they, that) and vague references.
+            - Ensure the subject of the conversation is explicitly named.
+            - Maintain the original intent without adding external knowledge.
+            - Don't try to make it big. 
 
-            Now rewrite:
-            User's Query: {query}
+            ### TASK 2: HYPOTHETICAL DOCUMENT (HyDE)
+            Create a brief snippet of text that would serve as a perfect, direct answer to the standalone query. 
+            - Use professional and factual language.
+            - This is for semantic matching; focus on how a document would logically state the information.
 
-            Chat History:
-            {chat_history}
+            ### TASK 3: KEYWORD EXTRACTION
+            Extract the most significant search terms strictly from the "Standalone Query".
+            - Focus on unique names, technical nouns, and core actions.
+            - Do not include common stop words or words only found in the HyDE section.
 
-            Rewritten Query:
+            ### CONTEXT:
+            Chat History: {chat_history}
+            User Query: {query}
+
+            ### OUTPUT FORMAT:
+            JSON only.
+            {{
+                "standalone": "string",
+                "hyde": "string",
+                "keywords": ["list", "of", "terms"]
+            }}
         """.strip()
 
-        return self.llm.invoke(prompt).strip()
+        try:
+            raw_response = self.intel_llm.invoke(prompt)
+            start = raw_response.find('{')
+            end = raw_response.rfind('}') + 1
+            if start == -1: return {"standalone": query, "hyde": query, "keywords": query.split()}
+
+            intel = json.loads(raw_response[start:end])
+
+            print(intel)
+
+            # Smart Filtering: Ensure keywords exist in the standalone text
+            intel['keywords'] = [w for w in intel['keywords'] if w.lower() in intel['standalone'].lower()]
+
+            return intel
+        except Exception:
+            return {"standalone": query, "hyde": query, "keywords": [w for w in query.split() if len(w) > 3]}
 
     # ----------------------
     # Ask a question (streaming or normal) - MODIFIED FOR HISTORY MANAGEMENT
@@ -437,10 +480,11 @@ class CollegeRAG:
             chat_history = self.chat_history
             use_internal_history = True  # This is true only for the terminal test
 
-        # 1️⃣ Setup and Query Rewriting
+        # 1️⃣ Setup and Query Intelligence Transformation
 
-        # 1️⃣ Rewrite query to be self-contained
-        rewritten_query = self.rewrite_query(query, chat_history)
+        # World-Class Upgrade: Get Standalone, HyDE, and Keywords in one call
+        intel = self.get_search_intelligence(query, chat_history)
+        rewritten_query = intel['standalone']
         print(f"{Colors.OKCYAN}[DEBUG] Rewritten Query: {Colors.BOLD}{rewritten_query}{Colors.ENDC}")
 
         # FIX: Friendly message instead of failing if index is empty
@@ -452,21 +496,28 @@ class CollegeRAG:
                 return msg
             return msg
 
-        k_retrieve = self.rerank_top_k
+        with self.lock:
+            k_retrieve = self.rerank_top_k
 
-        # 2️⃣ Retrieve from FAISS (Vector/Semantic Search)
-        vector_results = self.vectorestore.similarity_search(rewritten_query, k=k_retrieve)
-        print(f"{Colors.OKBLUE}[DEBUG] Vector Search Retrieved: {len(vector_results)} chunks.{Colors.ENDC}")
+            # 2️⃣ Retrieve from FAISS Path 1 (Standalone Semantic Search)
+            vector_results_standalone = self.vectorestore.similarity_search(rewritten_query, k=k_retrieve)
 
-        # 3️⃣ Retrieve from BM25 (Keyword/Lexical Search)
-        tokenized_query = rewritten_query.lower().split(" ")
-        bm25_scores = self.bm25_retriever.get_scores(tokenized_query)
-        bm25_indices = np.argsort(bm25_scores)[::-1][:k_retrieve]
-        bm25_results = [self.doc_map[i] for i in bm25_indices if i in self.doc_map]
-        print(f"{Colors.OKBLUE}[DEBUG] BM25 Search Retrieved: {len(bm25_results)} chunks.{Colors.ENDC}")
+            # World-Class Upgrade: Retrieve from FAISS Path 2 (HyDE Semantic Search)
+            vector_results_hyde = self.vectorestore.similarity_search(intel['hyde'], k=k_retrieve)
 
-        # 4️⃣ Reciprocal Rank Fusion (RRF)
-        fused_candidates = reciprocal_rank_fusion([vector_results, bm25_results])
+            print(
+                f"{Colors.OKBLUE}[DEBUG] Vector Search Retrieved: {len(vector_results_standalone) + len(vector_results_hyde)} chunks.{Colors.ENDC}")
+
+            # 3️⃣ Retrieve from BM25 (Keyword/Lexical Search using specific keywords)
+            kw_string = " ".join(intel['keywords'])
+            tokenized_query = kw_string.lower().split(" ")
+            bm25_scores = self.bm25_retriever.get_scores(tokenized_query)
+            bm25_indices = np.argsort(bm25_scores)[::-1][:k_retrieve]
+            bm25_results = [self.doc_map[i] for i in bm25_indices if i in self.doc_map]
+            print(f"{Colors.OKBLUE}[DEBUG] BM25 Search Retrieved: {len(bm25_results)} chunks.{Colors.ENDC}")
+
+        # 4️⃣ Reciprocal Rank Fusion (RRF) - Now fusing 3 paths
+        fused_candidates = reciprocal_rank_fusion([vector_results_standalone, vector_results_hyde, bm25_results])
         print(f"{Colors.OKGREEN}[DEBUG] RRF Fused Candidates (Unique): {len(fused_candidates)} chunks.{Colors.ENDC}")
 
         if not fused_candidates:
@@ -501,22 +552,19 @@ class CollegeRAG:
             score_drops.append((drop, i))
 
         # 3. Determine the cut-off point
-        MAX_DROP_THRESHOLD = 0.05  # A minimum drop of 5% is needed to count as a major separation
-        cut_index = self.top_k  # Default to the max (7) if no major gap is found
+
+        MAX_DROP_THRESHOLD = 0.02
+        cut_index = self.top_k  # Default to 7
 
         if score_drops:
-            # Find the largest drop that is also greater than the absolute threshold (0.05)
-            best_drop_index = -1
-            max_drop = -1
-
+            # STRATEGY: Find the FIRST drop that exceeds our threshold.
+            # This prevents "drifting" into low-quality chunks further down the list.
             for drop, index in score_drops:
-                if drop > max_drop and drop > MAX_DROP_THRESHOLD:
-                    max_drop = drop
-                    best_drop_index = index
-
-            if best_drop_index != -1:
-                # The cut should happen *at* the index where the drop occurred
-                cut_index = best_drop_index
+                if drop > MAX_DROP_THRESHOLD:
+                    cut_index = index
+                    print(
+                        f"{Colors.WARNING}[DEBUG] Gap Detected! Cutting off at index {index} (Drop: {drop:.4f}){Colors.ENDC}")
+                    break  # Exit the loop at the first significant drop
 
         # 4. Filter the final list (Always includes at least 1, and max self.top_k)
         final_indices = sorted_indices[:max(1, cut_index)]
@@ -546,7 +594,7 @@ class CollegeRAG:
 
         # 8️⃣ Generate answer (Unchanged Prompt)
         prompt = f"""
-            You are Lora. You are a Private AI Assistant created by Kaiser Konok.
+            You are Lora, a private AI Assistant.
 
             Answer the question **only using the given context**. 
             If someone does a typing mistake, like typing the same name with some different spelling, still give the correct answer with correct names. If you get context that is not related to the query, don't get confused with it. You might need to ignore it. 
@@ -565,6 +613,8 @@ class CollegeRAG:
 
             ANSWER:
         """.strip()
+
+        print(prompt)
 
         if stream:
             response = ""
@@ -597,6 +647,7 @@ class CollegeRAG:
 if __name__ == "__main__":
     # Updated to use home-based default storage if no data_dir provided
     rag = CollegeRAG()
+    rag.create_vectorestore(force_create=True)
 
     if rag.docs:
         for doc in rag.docs:
