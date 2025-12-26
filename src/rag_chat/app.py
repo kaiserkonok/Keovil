@@ -257,6 +257,25 @@ def api_chat():
     return jsonify({"response": ans, "session_id": session_id})
 
 
+@app.route("/api/chat/sessions/delete", methods=["POST"])
+def delete_session():
+    data = request.json or {}
+    session_id = data.get("session_id")
+    uid = request.headers.get("X-User-ID")
+
+    if not session_id or not uid:
+        return jsonify({"error": "Missing data"}), 400
+
+    conn = sqlite3.connect(CHAT_DB)
+    # Ensure the session belongs to the user before deleting
+    # Foreign key handles message deletion if configured, but we'll be explicit here
+    conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    conn.execute("DELETE FROM sessions WHERE id = ? AND user_id = ?", (session_id, uid))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
 # ---------------------------------------------------------
 # SETTINGS & FILE EXPLORER API
 # ---------------------------------------------------------
