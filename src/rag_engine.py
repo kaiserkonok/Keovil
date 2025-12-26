@@ -18,6 +18,7 @@ import torch
 import numpy as np
 from rank_bm25 import BM25Okapi
 from typing import List, Dict, Any, Union
+from concurrent.futures import ThreadPoolExecutor
 
 
 # ----------------------
@@ -424,10 +425,12 @@ class CollegeRAG:
 
             ### TASK 1: STANDALONE QUERY
             Rewrite the "User Query" to be entirely self-contained. 
-            - Use the "Chat History" to resolve all pronouns (he, she, it, they, that) and vague references.
-            - Ensure the subject of the conversation is explicitly named.
-            - Maintain the original intent without adding external knowledge.
-            - Don't try to make it big. 
+            
+            - Keep the query minimal. Do not add extra words, names, or details unless they are strictly required to resolve pronouns or ambiguity.
+            - If the query is already clear, leave it unchanged.
+            - Resolve pronouns, fragments, or vague references using the chat history so the query stands alone.
+            - Do not expand the query with institution names, locations, or other context unless the user explicitly mentioned them.
+            - Your rewritten query should be as short and focused as possible.
 
             ### TASK 2: HYPOTHETICAL DOCUMENT (HyDE)
             Create a brief snippet of text that would serve as a perfect, direct answer to the standalone query. 
@@ -453,7 +456,7 @@ class CollegeRAG:
         """.strip()
 
         try:
-            raw_response = self.intel_llm.invoke(prompt)
+            raw_response = self.llm.invoke(prompt)
             start = raw_response.find('{')
             end = raw_response.rfind('}') + 1
             if start == -1: return {"standalone": query, "hyde": query, "keywords": query.split()}
@@ -471,173 +474,102 @@ class CollegeRAG:
     # Ask a question (streaming or normal) - MODIFIED FOR HISTORY MANAGEMENT
     # ----------------------
     def ask(self, query, chat_history: Union[List[tuple], None] = None, stream=False):
-
-        # Determine which history to use and if we should update the internal state.
         use_internal_history = False
         if chat_history is None:
             chat_history = self.chat_history
-            use_internal_history = True  # This is true only for the terminal test
+            use_internal_history = True
 
-        # 1️⃣ Setup and Query Intelligence Transformation
+        print(f"\n{Colors.HEADER}{'=' * 20} RAG PIPELINE START {'=' * 20}{Colors.ENDC}")
 
-        # World-Class Upgrade: Get Standalone, HyDE, and Keywords in one call
+        # 1️⃣ Fast Intent Extraction (Intelligence)
+        print(f"{Colors.OKCYAN}[1/5] Analyzing Intent...{Colors.ENDC}")
         intel = self.get_search_intelligence(query, chat_history)
-        print(intel)
-        rewritten_query = intel['standalone']
-        print(f"{Colors.OKCYAN}[DEBUG] Rewritten Query: {Colors.BOLD}{rewritten_query}{Colors.ENDC}")
+        rewritten_query = intel.get('standalone', query)
+        keywords = intel.get('keywords', [])
 
-        # FIX: Friendly message instead of failing if index is empty
-        if not self.vectorestore or not self.bm25_retriever:
-            msg = "I haven't learned anything yet! Please upload some documents so I can help you."
-            if stream:
-                # We yield the msg chunk by chunk to simulate streaming if needed
-                print(f"{Colors.BOLD}AI:{Colors.ENDC} {msg}")
-                return msg
-            return msg
+        print(f"    {Colors.BOLD}• Rewritten:{Colors.ENDC} {rewritten_query}")
+        print(f"    {Colors.BOLD}• Keywords:{Colors.ENDC} {', '.join(keywords)}")
+        print(f"    {Colors.BOLD}• Hyde:{Colors.ENDC} {intel['hyde']}")
 
-        with self.lock:
-            k_retrieve = self.rerank_top_k
+        if not self.vectorestore:
+            print(f"{Colors.FAIL}[Error] Vectorstore is empty!{Colors.ENDC}")
+            return "I haven't learned anything yet!"
 
-            # 2️⃣ Retrieve from FAISS Path 1 (Standalone Semantic Search)
-            vector_results_standalone = self.vectorestore.similarity_search(rewritten_query, k=k_retrieve)
+        # 2️⃣ Parallel Multi-Path Retrieval
+        print(f"{Colors.OKCYAN}[2/5] Executing Hybrid Retrieval (Vector + BM25)...{Colors.ENDC}")
+        k_initial = 25
 
-            # World-Class Upgrade: Retrieve from FAISS Path 2 (HyDE Semantic Search)
-            vector_results_hyde = self.vectorestore.similarity_search(intel['hyde'], k=k_retrieve)
+        def vector_search(q):
+            return self.vectorestore.similarity_search(q, k=k_initial)
 
-            print(
-                f"{Colors.OKBLUE}[DEBUG] Vector Search Retrieved: {len(vector_results_standalone) + len(vector_results_hyde)} chunks.{Colors.ENDC}")
+        def bm25_search(kw):
+            tokenized_query = " ".join(kw).lower().split()
+            scores = self.bm25_retriever.get_scores(tokenized_query)
+            indices = np.argsort(scores)[::-1][:k_initial]
+            return [self.doc_map[i] for i in indices if i in self.doc_map]
 
-            # 3️⃣ Retrieve from BM25 (Keyword/Lexical Search using specific keywords)
-            kw_string = " ".join(intel['keywords'])
-            tokenized_query = kw_string.lower().split(" ")
-            bm25_scores = self.bm25_retriever.get_scores(tokenized_query)
-            bm25_indices = np.argsort(bm25_scores)[::-1][:k_retrieve]
-            bm25_results = [self.doc_map[i] for i in bm25_indices if i in self.doc_map]
-            print(f"{Colors.OKBLUE}[DEBUG] BM25 Search Retrieved: {len(bm25_results)} chunks.{Colors.ENDC}")
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            f1 = executor.submit(vector_search, rewritten_query)
+            f2 = executor.submit(vector_search, intel.get('hyde', rewritten_query))
+            f3 = executor.submit(bm25_search, keywords)
+            results = [f1.result(), f2.result(), f3.result()]
 
-        # 4️⃣ Reciprocal Rank Fusion (RRF) - Now fusing 3 paths
-        fused_candidates = reciprocal_rank_fusion([vector_results_standalone, vector_results_hyde, bm25_results])
-        print(f"{Colors.OKGREEN}[DEBUG] RRF Fused Candidates (Unique): {len(fused_candidates)} chunks.{Colors.ENDC}")
-
-        if not fused_candidates:
-            print(f"{Colors.FAIL}[DEBUG] No documents retrieved after fusion.{Colors.ENDC}")
-            return "No relevant documents found."
-
-        # 5️⃣ Rerank and Score Normalization
-        rerank_pool = fused_candidates[:k_retrieve]
-        sentences = [doc.page_content for doc in rerank_pool]
-        pairs = [[rewritten_query, s] for s in sentences]
-        scores = self.reranker.predict(pairs)
-
-        # Sigmoid Score Normalization
-        scores_array = np.array(scores)
-        probabilities = 1 / (1 + np.exp(-scores_array))  # Apply Sigmoid function
-
-        # 🟢 NEW: 5.5 Adaptive Top-K Selection (The "Gap" Method)
-
-        if not probabilities.size:
-            print(f"{Colors.FAIL}[DEBUG] No documents found after RRF.{Colors.ENDC}")
-            return "No relevant documents found."
-
-        # 1. Start with the indices sorted by the reranker (descending)
-        sorted_indices = np.argsort(probabilities)[::-1]
-        sorted_probabilities = probabilities[sorted_indices]
-
-        # 2. Check for a significant score drop (We only look at the top self.top_k chunks for the gap)
-        score_drops = []
-        for i in range(1, min(self.top_k, len(sorted_probabilities))):
-            # Calculate the drop from the previous chunk
-            drop = sorted_probabilities[i - 1] - sorted_probabilities[i]
-            score_drops.append((drop, i))
-
-        # 3. Determine the cut-off point
-
-        MAX_DROP_THRESHOLD = 0.02
-        cut_index = self.top_k  # Default to 7
-
-        if score_drops:
-            # STRATEGY: Find the FIRST drop that exceeds our threshold.
-            # This prevents "drifting" into low-quality chunks further down the list.
-            for drop, index in score_drops:
-                if drop > MAX_DROP_THRESHOLD:
-                    cut_index = index
-                    print(
-                        f"{Colors.WARNING}[DEBUG] Gap Detected! Cutting off at index {index} (Drop: {drop:.4f}){Colors.ENDC}")
-                    break  # Exit the loop at the first significant drop
-
-        # 4. Filter the final list (Always includes at least 1, and max self.top_k)
-        final_indices = sorted_indices[:max(1, cut_index)]
-        top_docs_indices = final_indices
-
-        # 5. Re-sort the final selection for the final output (not strictly necessary as it's already sorted)
-        filtered_indices_sorted = top_docs_indices
-
-        # 6️⃣ Collect top documents based on reranker
+        # 3️⃣ Deduplication & RRF
+        fused_candidates = reciprocal_rank_fusion(results)
         print(
-            f"{Colors.HEADER}--- Top {len(filtered_indices_sorted)} Reranked Chunks (Dynamic Filtered) ---{Colors.ENDC}")
-        top_docs = []
-        for i, idx in enumerate(filtered_indices_sorted):
-            doc = rerank_pool[idx]
-            top_docs.append(doc.page_content)
-            source = os.path.basename(doc.metadata.get("source", "N/A"))
-            chunk_id = doc.metadata.get("chunk_id", "N/A")
+            f"    {Colors.OKBLUE}• Retrieved {sum(len(r) for r in results)} raw chunks. Fused into {len(fused_candidates)} unique candidates.{Colors.ENDC}")
 
-            # Print the new Probability Score
-            print(
-                f"{Colors.BOLD}[{i + 1}] Prob Score: {probabilities[idx]:.4f}{Colors.ENDC} | Source: {source} (ID: {chunk_id})")
-            print(f"    Snippet: {doc.page_content.replace(os.linesep, ' ')}...{Colors.ENDC}")
-        print(f"{Colors.HEADER}--------------------------------------{Colors.ENDC}")
+        # 4️⃣ Pruned Reranking (GPU Accelerated)
+        print(f"{Colors.OKCYAN}[3/5] Reranking top 20 candidates on RTX 5060 Ti...{Colors.ENDC}")
+        rerank_pool = fused_candidates[:20]
+        pairs = [[rewritten_query, doc.page_content] for doc in rerank_pool]
 
-        # 7️⃣ Combine top docs into context
-        context = "\n\n".join(top_docs)
+        # Calculate scores
+        scores = self.reranker.predict(pairs, batch_size=20, show_progress_bar=False)
+        ranked_indices = np.argsort(scores)[::-1]
 
-        # 8️⃣ Generate answer (Unchanged Prompt)
-        prompt = f"""
-            You are Lora, a private AI Assistant.
+        # Debug: Show the top 3 match scores
+        top_scores = [round(float(scores[i]), 4) for i in ranked_indices[:3]]
+        print(f"    {Colors.OKGREEN}• Top Relevancy Scores: {top_scores}{Colors.ENDC}")
 
-            Answer the question **only using the given context**. 
-            If someone does a typing mistake, like typing the same name with some different spelling, still give the correct answer with correct names. If you get context that is not related to the query, don't get confused with it. You might need to ignore it. 
-            Be friendly. Current date and time: {datetime.now()}
+        # 5️⃣ Dynamic Selection
+        final_top_k = 6
+        top_docs = [rerank_pool[i] for i in ranked_indices[:final_top_k]]
 
-            Use chat history to understand the conversation better and make your responses more natural and coherent.
+        print(f"{Colors.OKCYAN}[4/5] Context prepared from {len(top_docs)} sources.{Colors.ENDC}")
+        for i, doc in enumerate(top_docs[:2]):  # Show snippet of top 2 for debugging
+            src = os.path.basename(doc.metadata.get('source', 'unknown'))
+            snippet = doc.page_content[:75].replace('\n', ' ')
+            print(f"      {Colors.OKBLUE}[Source {i + 1}]{Colors.ENDC} {src}: \"{snippet}...\"")
 
-            CHAT HISTORY:
-            {chat_history}
+        # 6️⃣ Stream/Generate Response
+        print(f"{Colors.OKCYAN}[5/5] Generating Answer...{Colors.ENDC}")
+        print(f"{Colors.HEADER}{'=' * 56}{Colors.ENDC}\n")
 
-            CONTEXT:
-            {context}
-
-            QUESTION:
-            {query}
-
-            ANSWER:
-        """.strip()
-
-        print(prompt)
+        context_text = "\n\n".join([d.page_content for d in top_docs])
+        prompt = f"""Lora, use context to answer.
+        HISTORY: {chat_history}
+        CONTEXT: {context_text}
+        QUESTION: {query}
+        ANSWER:"""
 
         if stream:
             response = ""
-            print(f"{Colors.BOLD}AI:{Colors.ENDC} ", end="", flush=True)
+            print(f"{Colors.BOLD}Lora:{Colors.ENDC} ", end="", flush=True)
             for chunk in self.llm.stream(prompt):
                 print(chunk, end="", flush=True)
                 response += chunk
-
-            # 🟢 Conditional History Update (for terminal test only)
             if use_internal_history:
                 self.chat_history.append(("You", query))
                 self.chat_history.append(("AI", response))
-
-            print()
+            print(f"\n\n{Colors.HEADER}{'=' * 56}{Colors.ENDC}")
             return response
-        else:
-            response = self.llm.invoke(prompt)
 
-            # 🟢 Conditional History Update (for terminal test only)
-            if use_internal_history:
-                self.chat_history.append(("You", query))
-                self.chat_history.append(("AI", response))
-
-            return response
+        res = self.llm.invoke(prompt)
+        if use_internal_history:
+            self.chat_history.append(("You", query))
+            self.chat_history.append(("AI", res))
+        return res
 
 
 # ----------------------
