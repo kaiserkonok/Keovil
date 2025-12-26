@@ -538,7 +538,7 @@ class CollegeRAG:
             Use chat history to understand the conversation better and make your responses more natural and coherent.
 
             CHAT HISTORY:
-            {chat_history}
+            {chat_history[:-3]}
 
             CONTEXT:
             {context_text}
