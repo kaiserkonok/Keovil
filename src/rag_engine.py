@@ -3,8 +3,9 @@ import json
 import shutil
 from datetime import datetime
 import threading
-import pdfplumber
-import docx
+from docling.document_converter import DocumentConverter, PdfFormatOption
+from docling.datamodel.base_models import ConversionStatus, InputFormat
+from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from langchain_core.documents import Document
@@ -25,15 +26,16 @@ from concurrent.futures import ThreadPoolExecutor
 # ANSI Color Class for Debugging
 # ----------------------
 class Colors:
-    HEADER = '\033[95m'  # Magenta
-    OKBLUE = '\033[94m'  # Blue
-    OKCYAN = '\033[96m'  # Cyan
-    OKGREEN = '\033[92m'  # Green
-    WARNING = '\033[93m'  # Yellow
-    FAIL = '\033[91m'  # Red
-    ENDC = '\033[0m'  # Reset color
+    HEADER = '\033[95m'
+    OKBLUE = '\033[94m'
+    OKCYAN = '\033[96m'
+    OKGREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
+    ITALIC = '\033[3m'  # <--- Added this line
 
 
 # ----------------------
@@ -130,6 +132,24 @@ class CollegeRAG:
         self.top_k = top_k
         self.rerank_top_k = rerank_top_k
         self.docs = []
+
+        accel_options = AcceleratorOptions(
+            num_threads=8,
+            device=AcceleratorDevice.CUDA  # This is the correct way to use your RTX 5060 Ti
+        )
+
+        pipeline_options = PdfPipelineOptions()
+        pipeline_options.accelerator_options = accel_options  # Assign the object here
+        pipeline_options.do_ocr = True
+        pipeline_options.do_table_structure = True
+
+        # 3. Initialize the converter
+        self.docling_converter = DocumentConverter(
+            format_options={
+                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+            }
+        )
+
         # self.chat_history is used only for the interactive terminal test
         self.chat_history = []
         self.vectorestore = None
@@ -202,53 +222,45 @@ class CollegeRAG:
     def _load_docs(self):
         self.docs = self.get_docs(self.data_dir)
 
-    def get_docs(self, data_dir, docs=None):
-        if docs is None:
-            docs = []
+    def get_docs(self, data_dir):
+        docs = []
+        docling_paths = []
+        from docling.datamodel.base_models import ConversionStatus
 
-        # FIX: Check if directory exists before listing
-        if not os.path.exists(data_dir):
-            os.makedirs(data_dir, exist_ok=True)
-            return docs
+        # 1. Separate .txt from complex files
+        for root, _, files in os.walk(data_dir):
+            for fname in files:
+                fpath = Path(root) / fname
+                ext = fpath.suffix.lower()
 
-        for fname in os.listdir(data_dir):
-            fpath = os.path.join(data_dir, fname)
-            if os.path.isdir(fpath):
-                self.get_docs(fpath, docs)
-                continue
+                if ext == '.txt':
+                    try:
+                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                            text = f.read()
+                        if text.strip():
+                            chunks = self.chunker.chunk_document(text)
+                            docs.extend([Document(page_content=c.text,
+                                                  metadata={"source": str(fpath), "chunk_id": c.id, **c.meta}) for c in
+                                         chunks])
+                    except Exception as e:
+                        print(f"Error reading txt {fpath}: {e}")
+                elif ext in {'.pdf', '.docx', '.pptx', '.html', '.png', '.jpg'}:
+                    docling_paths.append(fpath)
 
-            ext = fname.lower().split('.')[-1]
-            try:
-                text = ""
-                if ext == 'txt':
-                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        text = f.read()
-
-                elif ext == 'docx':
-                    doc = docx.Document(fpath)
-                    text = "\n".join([p.text for p in doc.paragraphs])
-
-                elif ext == 'pdf':
-                    with pdfplumber.open(fpath) as pdf:
-                        pages = []
-                        for page in pdf.pages:
-                            page_text = page.extract_text()
-                            if page_text:
-                                pages.append(page_text)
-                        text = "\n".join(pages)
-
-                if text:
-                    # Use your intelligent chunker
+        # 2. Batch process using status check
+        if docling_paths:
+            print(f"[Docling] Batch converting {len(docling_paths)} files...")
+            results = self.docling_converter.convert_all(docling_paths, raises_on_error=False)
+            for result in results:
+                # FIX: Use result.status instead of result.success
+                if result.status == ConversionStatus.SUCCESS:
+                    text = result.document.export_to_markdown()
                     chunk_objs = self.chunker.chunk_document(text)
-                    for c in chunk_objs:
-                        docs.append(Document(
-                            page_content=c.text,
-                            metadata={"source": fpath, "chunk_id": c.id, **c.meta}
-                        ))
-
-            except Exception as e:
-                print(f"{Colors.FAIL}Failed {fpath}: {e}{Colors.ENDC}")
-                continue
+                    docs.extend([Document(page_content=c.text,
+                                          metadata={"source": str(result.input.file), "chunk_id": c.id, **c.meta}) for c
+                                 in chunk_objs])
+                else:
+                    print(f"Docling failed file: {result.input.file} with status {result.status}")
 
         return docs
 
@@ -307,79 +319,106 @@ class CollegeRAG:
     # ----------------------
     def ingest(self, new_files=None):
         """
-        Incrementally ingest files and rebuilds the BM25 index afterwards.
+        Full updated ingest method with Docling status check,
+        .txt file handling, and GPU-accelerated batching.
         """
+        from docling.datamodel.base_models import ConversionStatus
+
         with self.lock:
             if not new_files:
                 return
 
-            all_new_docs = []  # Collect all new chunks
+            txt_files = []
+            docling_files = []
+            # Complex formats for Docling to handle
+            DOCLING_EXTS = {'.pdf', '.docx', '.pptx', '.html', '.png', '.jpg', '.jpeg', '.md'}
 
-            for fpath in new_files:
-                file_path = Path(fpath)
+            print(f"{Colors.BOLD}[Ingest] Processing {len(new_files)} total items...{Colors.ENDC}")
 
-                if file_path.name.endswith("~") or file_path.name.startswith(".#") or file_path.suffix == ".swp":
-                    print(f"{Colors.WARNING}[Ingest] Skipping temporary file: {fpath}{Colors.ENDC}")
+            for f in new_files:
+                fpath = Path(f)
+                # Skip hidden/system files
+                if fpath.name.startswith((".", "~")):
                     continue
 
-                print(f"{Colors.BOLD}[Ingest] Updating file: {fpath}{Colors.ENDC}")
-
-                # Remove old chunks only if vectorestore exists
+                # 1. Clean up: Remove old chunks for this file if it already exists in FAISS
                 if self.vectorestore:
-                    ids_to_delete = [k for k, doc in self.vectorestore.docstore._dict.items()
-                                     if doc.metadata.get("source") == fpath]
+                    try:
+                        # Find and delete existing IDs with the same source metadata
+                        ids_to_delete = [
+                            k for k, doc in self.vectorestore.docstore._dict.items()
+                            if doc.metadata.get("source") == str(fpath)
+                        ]
+                        if ids_to_delete:
+                            self.vectorestore.delete(ids_to_delete)
+                    except Exception as e:
+                        print(f"Cleanup warning for {fpath.name}: {e}")
 
-                    if ids_to_delete:
-                        self.vectorestore.delete(ids_to_delete)
-                        print(f"{Colors.OKBLUE}[Ingest] Removed {len(ids_to_delete)} old chunks.{Colors.ENDC}")
+                # 2. Sort into processing queues
+                ext = fpath.suffix.lower()
+                if ext == '.txt':
+                    txt_files.append(fpath)
+                elif ext in DOCLING_EXTS:
+                    docling_files.append(fpath)
 
-                ext = file_path.suffix.lower()[1:]
+            all_new_docs = []
+
+            # 3. Process Plain Text Files (Python Standard)
+            for fpath in txt_files:
                 try:
-                    if ext == "txt":
-                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                            text = f.read()
-                    elif ext == "docx":
-                        docx_doc = docx.Document(fpath)
-                        text = "\n".join([p.text for p in docx_doc.paragraphs])
-                    elif ext == "pdf":
-                        with pdfplumber.open(fpath) as pdf:
-                            pages = [p.extract_text() for p in pdf.pages if p.extract_text()]
-                            text = "\n".join(pages)
-                    else:
-                        print(f"{Colors.FAIL}[Ingest] Unsupported file type: {fpath}{Colors.ENDC}")
-                        continue
+                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+                        text = f.read()
+                    if text.strip():
+                        chunks = self.chunker.chunk_document(text)
+                        all_new_docs.extend([
+                            Document(
+                                page_content=c.text,
+                                metadata={"source": str(fpath), "chunk_id": c.id, **c.meta}
+                            ) for c in chunks
+                        ])
                 except Exception as e:
-                    print(f"{Colors.FAIL}[Ingest] Failed to read {fpath}: {e}{Colors.ENDC}")
-                    continue
+                    print(f"{Colors.FAIL}Ingest error (txt) for {fpath.name}: {e}{Colors.ENDC}")
 
-                if not text.strip():
-                    print(f"{Colors.WARNING}[Ingest] File {fpath} is empty. Skipping.{Colors.ENDC}")
-                    continue
+            # 4. Process Complex Files (Docling Batch Mode)
+            if docling_files:
+                # results is a generator of ConversionResult objects
+                results = self.docling_converter.convert_all(docling_files, raises_on_error=False)
 
-                chunks = self.chunker.chunk_document(text.strip())
-                new_file_docs = [
-                    Document(page_content=c.text, metadata={"source": fpath, "chunk_id": c.id, **c.meta})
-                    for c in chunks
-                ]
-                all_new_docs.extend(new_file_docs)
+                for res in results:
+                    # FIX: Check result.status against the SUCCESS enum
+                    if res.status == ConversionStatus.SUCCESS:
+                        text = res.document.export_to_markdown()
+                        if text.strip():
+                            chunks = self.chunker.chunk_document(text)
+                            all_new_docs.extend([
+                                Document(
+                                    page_content=c.text,
+                                    metadata={"source": str(res.input.file), "chunk_id": c.id, **c.meta}
+                                ) for c in chunks
+                            ])
+                    else:
+                        print(
+                            f"{Colors.WARNING}Docling could not process {res.input.file}. Status: {res.status}{Colors.ENDC}")
 
+            # 5. Finalize the Vectorstore
             if not all_new_docs:
+                print("[Ingest] No new content found in the updated files.")
                 return
 
-            # FIX: If vectorestore was None (empty start), create it now. Else, add.
             if self.vectorestore is None:
                 self.vectorestore = FAISS.from_documents(all_new_docs, self.embedding_model)
             else:
                 self.vectorestore.add_documents(all_new_docs)
 
-            print(f"{Colors.OKGREEN}[Ingest] Added {len(all_new_docs)} new chunks.{Colors.ENDC}")
-
+            # Rebuild BM25, save to disk, and update retriever
             self.docs = list(self.vectorestore.docstore._dict.values())
             self._build_bm25_index()
             self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
-
             self.vectorestore.save_local(self.store_dir)
-            print(f"{Colors.OKGREEN}[Ingest] Ingestion completed!{Colors.ENDC}")
+
+            print(
+                f"{Colors.OKGREEN}[Ingest] Success: Added {len(all_new_docs)} new chunks to the database.{Colors.ENDC}")
+
 
     def remove_file(self, fpath):
         """
@@ -574,6 +613,32 @@ class CollegeRAG:
             print(f"      {Colors.OKBLUE}[Rank {i + 1}]{Colors.ENDC} Score: {curr_s:.4f} | Words: {doc_words}")
 
         top_docs = reranked_docs[:final_top_k]
+
+        # DEBUG PRINTING
+        # ----------------------
+        print(f"\n{Colors.HEADER}┌{'─' * 78}┐{Colors.ENDC}")
+        print(
+            f"{Colors.HEADER}│ {Colors.BOLD}PROMOTED CONTEXT CHUNKS (Reranked & Filtered){Colors.ENDC}{Colors.HEADER}{' ' * 32}│{Colors.ENDC}")
+        print(f"{Colors.HEADER}├{'─' * 78}┤{Colors.ENDC}")
+
+        for i, doc in enumerate(top_docs):
+            score = reranked_scores[i]
+            source = os.path.basename(doc.metadata.get("source", "Unknown"))
+            chunk_id = doc.metadata.get("chunk_id", "N/A")
+
+            # Header for each chunk
+            print(
+                f"{Colors.OKCYAN}  Rank {i + 1} {Colors.ENDC}| {Colors.OKGREEN}Score: {score:.4f}{Colors.ENDC} | {Colors.BOLD}File:{Colors.ENDC} {source} | {Colors.BOLD}ID:{Colors.ENDC} {chunk_id}")
+
+            # Content Preview (Wrapped for readability)
+            content = doc.page_content.replace("\n", " ").strip()
+            print(f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{content}{Colors.ENDC}")
+
+            # Separator between chunks
+            if i < len(top_docs) - 1:
+                print(f"{Colors.OKBLUE}  " + "┄" * 70 + f"{Colors.ENDC}")
+
+        print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
 
         # 6️⃣ Stream/Generate Response (Original Lora Prompt)
         print(f"\n{Colors.OKCYAN}[5/5] Generating Answer from {len(top_docs)} chunks...{Colors.ENDC}")
