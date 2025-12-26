@@ -537,7 +537,7 @@ class CollegeRAG:
         top_docs = [rerank_pool[i] for i in ranked_indices[:final_top_k]]
 
         print(f"{Colors.OKCYAN}[4/5] Context prepared from {len(top_docs)} sources.{Colors.ENDC}")
-        for i, doc in enumerate(top_docs[:2]):  # Show snippet of top 2 for debugging
+        for i, doc in enumerate(top_docs):
             src = os.path.basename(doc.metadata.get('source', 'unknown'))
             snippet = doc.page_content[:75].replace('\n', ' ')
             print(f"      {Colors.OKBLUE}[Source {i + 1}]{Colors.ENDC} {src}: \"{snippet}...\"")
@@ -547,11 +547,26 @@ class CollegeRAG:
         print(f"{Colors.HEADER}{'=' * 56}{Colors.ENDC}\n")
 
         context_text = "\n\n".join([d.page_content for d in top_docs])
-        prompt = f"""Lora, use context to answer.
-        HISTORY: {chat_history}
-        CONTEXT: {context_text}
-        QUESTION: {query}
-        ANSWER:"""
+        prompt = f"""
+            You are Lora, a private AI Assistant.
+
+            Answer the question **only using the given context**. 
+            If someone does a typing mistake, like typing the same name with some different spelling, still give the correct answer with correct names. If you get context that is not related to the query, don't get confused with it. You might need to ignore it. 
+            Be friendly. Current date and time: {datetime.now()}
+
+            Use chat history to understand the conversation better and make your responses more natural and coherent.
+
+            CHAT HISTORY:
+            {chat_history}
+
+            CONTEXT:
+            {context_text}
+
+            QUESTION:
+            {query}
+
+            ANSWER:
+        """.strip()
 
         if stream:
             response = ""
