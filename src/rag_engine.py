@@ -3,9 +3,6 @@ import json
 import shutil
 from datetime import datetime
 import threading
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import ConversionStatus, InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from langchain_core.documents import Document
@@ -20,6 +17,7 @@ import numpy as np
 from rank_bm25 import BM25Okapi
 from typing import List, Dict, Any, Union
 from concurrent.futures import ThreadPoolExecutor
+from utils.document_processor import DocumentProcessor
 
 
 # ----------------------
@@ -132,23 +130,7 @@ class CollegeRAG:
         self.top_k = top_k
         self.rerank_top_k = rerank_top_k
         self.docs = []
-
-        accel_options = AcceleratorOptions(
-            num_threads=8,
-            device=AcceleratorDevice.CUDA  # This is the correct way to use your RTX 5060 Ti
-        )
-
-        pipeline_options = PdfPipelineOptions()
-        pipeline_options.accelerator_options = accel_options  # Assign the object here
-        pipeline_options.do_ocr = True
-        pipeline_options.do_table_structure = True
-
-        # 3. Initialize the converter
-        self.docling_converter = DocumentConverter(
-            format_options={
-                InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
-            }
-        )
+        self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
 
         # self.chat_history is used only for the interactive terminal test
         self.chat_history = []
@@ -223,46 +205,8 @@ class CollegeRAG:
         self.docs = self.get_docs(self.data_dir)
 
     def get_docs(self, data_dir):
-        docs = []
-        docling_paths = []
-        from docling.datamodel.base_models import ConversionStatus
-
-        # 1. Separate .txt from complex files
-        for root, _, files in os.walk(data_dir):
-            for fname in files:
-                fpath = Path(root) / fname
-                ext = fpath.suffix.lower()
-
-                if ext == '.txt':
-                    try:
-                        with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                            text = f.read()
-                        if text.strip():
-                            chunks = self.chunker.chunk_document(text)
-                            docs.extend([Document(page_content=c.text,
-                                                  metadata={"source": str(fpath), "chunk_id": c.id, **c.meta}) for c in
-                                         chunks])
-                    except Exception as e:
-                        print(f"Error reading txt {fpath}: {e}")
-                elif ext in {'.pdf', '.docx', '.pptx', '.html', '.png', '.jpg'}:
-                    docling_paths.append(fpath)
-
-        # 2. Batch process using status check
-        if docling_paths:
-            print(f"[Docling] Batch converting {len(docling_paths)} files...")
-            results = self.docling_converter.convert_all(docling_paths, raises_on_error=False)
-            for result in results:
-                # FIX: Use result.status instead of result.success
-                if result.status == ConversionStatus.SUCCESS:
-                    text = result.document.export_to_markdown()
-                    chunk_objs = self.chunker.chunk_document(text)
-                    docs.extend([Document(page_content=c.text,
-                                          metadata={"source": str(result.input.file), "chunk_id": c.id, **c.meta}) for c
-                                 in chunk_objs])
-                else:
-                    print(f"Docling failed file: {result.input.file} with status {result.status}")
-
-        return docs
+        all_paths = [Path(os.path.join(root, f)) for root, _, files in os.walk(data_dir) for f in files]
+        return self.doc_processor.convert_to_documents(all_paths, self.chunker)
 
     # ----------------------
     # Create or load FAISS vectorstore
@@ -318,106 +262,44 @@ class CollegeRAG:
     # Incremental ingestion
     # ----------------------
     def ingest(self, new_files=None):
-        """
-        Full updated ingest method with Docling status check,
-        .txt file handling, and GPU-accelerated batching.
-        """
-        from docling.datamodel.base_models import ConversionStatus
-
         with self.lock:
-            if not new_files:
-                return
+            if not new_files: return
 
-            txt_files = []
-            docling_files = []
-            # Complex formats for Docling to handle
-            DOCLING_EXTS = {'.pdf', '.docx', '.pptx', '.html', '.png', '.jpg', '.jpeg', '.md'}
+            paths = [Path(f) for f in new_files]
 
-            print(f"{Colors.BOLD}[Ingest] Processing {len(new_files)} total items...{Colors.ENDC}")
+            # 1. Cleanup vectorstore for these specific paths to prevent duplicates
+            if self.vectorestore:
+                for p in paths:
+                    source_str = str(p)
+                    ids = [k for k, v in self.vectorestore.docstore._dict.items()
+                           if v.metadata.get("source") == source_str]
+                    if ids:
+                        self.vectorestore.delete(ids)
 
-            for f in new_files:
-                fpath = Path(f)
-                # Skip hidden/system files
-                if fpath.name.startswith((".", "~")):
-                    continue
+            # 2. Process via the utility (GPU accelerated via DocumentProcessor)
+            print(f"{Colors.OKCYAN}[Ingest] Processing {len(paths)} files...{Colors.ENDC}")
+            new_docs = self.doc_processor.convert_to_documents(paths, self.chunker)
 
-                # 1. Clean up: Remove old chunks for this file if it already exists in FAISS
-                if self.vectorestore:
-                    try:
-                        # Find and delete existing IDs with the same source metadata
-                        ids_to_delete = [
-                            k for k, doc in self.vectorestore.docstore._dict.items()
-                            if doc.metadata.get("source") == str(fpath)
-                        ]
-                        if ids_to_delete:
-                            self.vectorestore.delete(ids_to_delete)
-                    except Exception as e:
-                        print(f"Cleanup warning for {fpath.name}: {e}")
+            # 3. Finalize
+            if new_docs:
+                if self.vectorestore is None:
+                    self.vectorestore = FAISS.from_documents(new_docs, self.embedding_model)
+                else:
+                    self.vectorestore.add_documents(new_docs)
 
-                # 2. Sort into processing queues
-                ext = fpath.suffix.lower()
-                if ext == '.txt':
-                    txt_files.append(fpath)
-                elif ext in DOCLING_EXTS:
-                    docling_files.append(fpath)
+                # Update the in-memory document list for BM25
+                self.docs = list(self.vectorestore.docstore._dict.values())
 
-            all_new_docs = []
+                # REBUILD indexes to include new data
+                self._build_bm25_index()
 
-            # 3. Process Plain Text Files (Python Standard)
-            for fpath in txt_files:
-                try:
-                    with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
-                        text = f.read()
-                    if text.strip():
-                        chunks = self.chunker.chunk_document(text)
-                        all_new_docs.extend([
-                            Document(
-                                page_content=c.text,
-                                metadata={"source": str(fpath), "chunk_id": c.id, **c.meta}
-                            ) for c in chunks
-                        ])
-                except Exception as e:
-                    print(f"{Colors.FAIL}Ingest error (txt) for {fpath.name}: {e}{Colors.ENDC}")
+                # FIX: Update the retriever so rag.ask() sees the new chunks immediately
+                self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
 
-            # 4. Process Complex Files (Docling Batch Mode)
-            if docling_files:
-                # results is a generator of ConversionResult objects
-                results = self.docling_converter.convert_all(docling_files, raises_on_error=False)
+                # Persist to disk
+                self.vectorestore.save_local(self.store_dir)
 
-                for res in results:
-                    # FIX: Check result.status against the SUCCESS enum
-                    if res.status == ConversionStatus.SUCCESS:
-                        text = res.document.export_to_markdown()
-                        if text.strip():
-                            chunks = self.chunker.chunk_document(text)
-                            all_new_docs.extend([
-                                Document(
-                                    page_content=c.text,
-                                    metadata={"source": str(res.input.file), "chunk_id": c.id, **c.meta}
-                                ) for c in chunks
-                            ])
-                    else:
-                        print(
-                            f"{Colors.WARNING}Docling could not process {res.input.file}. Status: {res.status}{Colors.ENDC}")
-
-            # 5. Finalize the Vectorstore
-            if not all_new_docs:
-                print("[Ingest] No new content found in the updated files.")
-                return
-
-            if self.vectorestore is None:
-                self.vectorestore = FAISS.from_documents(all_new_docs, self.embedding_model)
-            else:
-                self.vectorestore.add_documents(all_new_docs)
-
-            # Rebuild BM25, save to disk, and update retriever
-            self.docs = list(self.vectorestore.docstore._dict.values())
-            self._build_bm25_index()
-            self.retriever = self.vectorestore.as_retriever(search_kwargs={'k': self.rerank_top_k})
-            self.vectorestore.save_local(self.store_dir)
-
-            print(
-                f"{Colors.OKGREEN}[Ingest] Success: Added {len(all_new_docs)} new chunks to the database.{Colors.ENDC}")
+                print(f"{Colors.OKGREEN}[Ingest] Success: {len(new_docs)} new chunks added to index.{Colors.ENDC}")
 
 
     def remove_file(self, fpath):
