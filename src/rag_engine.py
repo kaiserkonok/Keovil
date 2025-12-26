@@ -489,7 +489,7 @@ class CollegeRAG:
 
         print(f"    {Colors.BOLD}• Rewritten:{Colors.ENDC} {rewritten_query}")
         print(f"    {Colors.BOLD}• Keywords:{Colors.ENDC} {', '.join(keywords)}")
-        print(f"    {Colors.BOLD}• Hyde:{Colors.ENDC} {intel['hyde']}")
+        print(f"    {Colors.BOLD}• Hyde:{Colors.ENDC} {intel.get('hyde', 'N/A')}")
 
         if not self.vectorestore:
             print(f"{Colors.FAIL}[Error] Vectorstore is empty!{Colors.ENDC}")
@@ -516,37 +516,71 @@ class CollegeRAG:
 
         # 3️⃣ Deduplication & RRF
         fused_candidates = reciprocal_rank_fusion(results)
-        print(
-            f"    {Colors.OKBLUE}• Retrieved {sum(len(r) for r in results)} raw chunks. Fused into {len(fused_candidates)} unique candidates.{Colors.ENDC}")
+        print(f"    {Colors.OKBLUE}• Fused into {len(fused_candidates)} unique candidates.{Colors.ENDC}")
 
         # 4️⃣ Pruned Reranking (GPU Accelerated)
         print(f"{Colors.OKCYAN}[3/5] Reranking top 20 candidates on RTX 5060 Ti...{Colors.ENDC}")
         rerank_pool = fused_candidates[:20]
         pairs = [[rewritten_query, doc.page_content] for doc in rerank_pool]
 
-        # Calculate scores
-        scores = self.reranker.predict(pairs, batch_size=20, show_progress_bar=False)
-        ranked_indices = np.argsort(scores)[::-1]
+        # Calculate raw logits
+        raw_logits = self.reranker.predict(pairs, batch_size=20, show_progress_bar=False)
+        ranked_indices = np.argsort(raw_logits)[::-1]
 
-        # Debug: Show the top 3 match scores
-        top_scores = [round(float(scores[i]), 4) for i in ranked_indices[:3]]
-        print(f"    {Colors.OKGREEN}• Top Relevancy Scores: {top_scores}{Colors.ENDC}")
+        # 5️⃣ Dynamic Selection (Sigmoid + Gap Method + Token Safety)
+        print(f"{Colors.OKCYAN}[4/5] Applying Adaptive Context Selection...{Colors.ENDC}")
 
-        # 5️⃣ Dynamic Selection
-        final_top_k = 6
-        top_docs = [rerank_pool[i] for i in ranked_indices[:final_top_k]]
+        # Convert Logits to Probabilities
+        reranked_scores = [1 / (1 + np.exp(-float(raw_logits[i]))) for i in ranked_indices]
+        reranked_docs = [rerank_pool[i] for i in ranked_indices]
 
-        print(f"{Colors.OKCYAN}[4/5] Context prepared from {len(top_docs)} sources.{Colors.ENDC}")
-        for i, doc in enumerate(top_docs):
-            src = os.path.basename(doc.metadata.get('source', 'unknown'))
-            snippet = doc.page_content[:75].replace('\n', ' ')
-            print(f"      {Colors.OKBLUE}[Source {i + 1}]{Colors.ENDC} {src}: \"{snippet}...\"")
+        # Configuration
+        absolute_threshold = 0.35  # Confidence Floor
+        relative_drop_limit = 0.4  # 40% Cliff
+        MAX_WORDS = 3500  # Safety Limit
 
-        # 6️⃣ Stream/Generate Response
-        print(f"{Colors.OKCYAN}[5/5] Generating Answer...{Colors.ENDC}")
+        final_top_k = 1
+        current_word_count = len(reranked_docs[0].page_content.split())
+
+        # Log first document
+        print(
+            f"      {Colors.OKGREEN}[Rank 1]{Colors.ENDC} Score: {reranked_scores[0]:.4f} | Words: {current_word_count}")
+
+        for i in range(1, len(reranked_scores)):
+            curr_s = reranked_scores[i]
+            prev_s = reranked_scores[i - 1]
+            doc_words = len(reranked_docs[i].page_content.split())
+
+            # A. Check absolute floor
+            if curr_s < absolute_threshold:
+                print(
+                    f"      {Colors.WARNING}• Stop: Score {curr_s:.4f} below floor ({absolute_threshold}){Colors.ENDC}")
+                break
+
+            # B. Check for the "Cliff" (only if previous was strong)
+            if prev_s > 0.50:
+                drop = (prev_s - curr_s) / (prev_s + 1e-6)
+                if drop > relative_drop_limit:
+                    print(f"      {Colors.WARNING}• Stop: Cliff detected ({drop:.2%} drop){Colors.ENDC}")
+                    break
+
+            # C. Check Token Safety
+            if (current_word_count + doc_words) > MAX_WORDS:
+                print(f"      {Colors.WARNING}• Stop: MAX_WORDS limit reached{Colors.ENDC}")
+                break
+
+            current_word_count += doc_words
+            final_top_k += 1
+            print(f"      {Colors.OKBLUE}[Rank {i + 1}]{Colors.ENDC} Score: {curr_s:.4f} | Words: {doc_words}")
+
+        top_docs = reranked_docs[:final_top_k]
+
+        # 6️⃣ Stream/Generate Response (Original Lora Prompt)
+        print(f"\n{Colors.OKCYAN}[5/5] Generating Answer from {len(top_docs)} chunks...{Colors.ENDC}")
         print(f"{Colors.HEADER}{'=' * 56}{Colors.ENDC}\n")
 
         context_text = "\n\n".join([d.page_content for d in top_docs])
+
         prompt = f"""
             You are Lora, a private AI Assistant.
 
