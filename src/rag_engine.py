@@ -80,7 +80,7 @@ class CollegeRAG:
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
         self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
-        self.query_llm = OllamaLLM(model='llama3.2:latest', temperature=0)
+        self.query_llm = OllamaLLM(model='qwen2.5:3b-instruct', temperature=0)
 
         # 3. Automatic Startup Sync (Atomic & Idempotent)
         self._initial_sync()
@@ -210,24 +210,27 @@ class CollegeRAG:
 
     def rewrite_query(self, query, chat_history):
         prompt = f"""
-        You are a rag search helper. I would give you the user's current query and his chat history. Sometimes, the current query is not ready for search. Because it can be dependent on the chat history. So we need a standalone query which itself is enough for searching and doesn't need to depend on any other thing.
+        Given the conversation history and the user's new query, your task is to reformulate the user's latest query into a single, standalone search query. This new query must be optimized for retrieving relevant information from a knowledge base.
         
-        Rules you must follow - 
-        - If the user's query is already clear and standalone, keep it as it is.
-        - Never try to make the query big, never try to be too creative, Just make a short standalone query. You don't need to make it fancy. You just need to make it standalone.
-        - Sometimes the current query might contain things like "he", "she", "it", "they" or something like that. You need to replace this with the correct person or object based on the chat history to make the query independent.
-        - Don't add anything to make the query big.
+        If the user's query is clear and already standalone, return the original query as is.
+        If the user's query depends on the history, use the context to make the new query explicit and comprehensive.
+        Do NOT answer the question; only return the reformatted search query.
         
-        Output format: Only give me the rewritten query and nothing else. Not a single explanation or word except the rewritten query.
+        ---
+        CONVERSATION HISTORY:
+        {chat_history[-6:]}
         
-        Chat History: \n{chat_history[-6:]} \n
+        ---
+        CURRENT USER QUERY:
+        {query}
         
-        Current Query: {query}
-        
-        Rewritten Query: 
+        ---
+        REFORMULATED STANDALONE QUERY:
         """
 
-        return self.query_llm.invoke(prompt).strip()
+        response = self.query_llm.invoke(prompt)
+
+        return response
 
     def ask(self, query, chat_history=None, stream=False):
         history = chat_history if chat_history is not None else self.chat_history
