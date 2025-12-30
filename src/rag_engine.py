@@ -208,7 +208,18 @@ class CollegeRAG:
             self._save_manifest()
             print(f"{Colors.WARNING}[Remove] Purged: {os.path.basename(fpath)}{Colors.ENDC}")
 
+    def _format_chat_history(self, chat_history):
+        formatted_chat = ""
+
+        for (curr_chatter, curr_chat) in chat_history:
+            chat = f"{"User" if curr_chatter == 'You' else 'AI'}: {curr_chat}"
+            formatted_chat += chat + "\n"
+
+        return formatted_chat
+
     def rewrite_query(self, query, chat_history):
+        formatted_chat = self._format_chat_history(chat_history[-6:])
+
         prompt = f"""
         Given the conversation history and the user's new query, your task is to reformulate the user's latest query into a single, standalone search query. This new query must be optimized for retrieving relevant information from a knowledge base.
         
@@ -218,7 +229,7 @@ class CollegeRAG:
         
         ---
         CONVERSATION HISTORY:
-        {chat_history[-6:]}
+        {formatted_chat}
         
         ---
         CURRENT USER QUERY:
@@ -260,6 +271,7 @@ class CollegeRAG:
         print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
 
         context_text = "\n\n".join(context_chunks)
+        formatted_chat = self._format_chat_history(chat_history[-6:])
 
         prompt = f"""
             You are Lora, a private AI Assistant.
@@ -271,7 +283,7 @@ class CollegeRAG:
             Use chat history to understand the conversation better and make your responses more natural and coherent.
 
             CHAT HISTORY:
-            {chat_history[-6:]}
+            {formatted_chat}
 
             CONTEXT:
             {context_text}
