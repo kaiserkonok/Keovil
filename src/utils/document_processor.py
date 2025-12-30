@@ -14,7 +14,7 @@ class DocumentProcessor:
     """
 
     def __init__(self, use_gpu: bool = True):
-        # Configure hardware acceleration
+        # Configure hardware acceleration for your RTX 5060 Ti
         accel_options = AcceleratorOptions(
             num_threads=8,
             device=AcceleratorDevice.CUDA if use_gpu else AcceleratorDevice.CPU
@@ -47,6 +47,7 @@ class DocumentProcessor:
         complex_queue = []
 
         for fpath in file_paths:
+            # Ensure fpath is a Path object
             fpath = Path(fpath)
             if not fpath.exists():
                 continue
@@ -69,6 +70,9 @@ class DocumentProcessor:
 
     def _process_text_file(self, fpath, chunker, docs_list):
         try:
+            # FORCE ABSOLUTE PATH for metadata consistency
+            abs_path = str(fpath.absolute())
+
             with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             if text.strip():
@@ -76,7 +80,11 @@ class DocumentProcessor:
                 docs_list.extend([
                     Document(
                         page_content=c.text,
-                        metadata={"source": str(fpath), "chunk_id": c.id, **c.meta}
+                        metadata={
+                            "source": abs_path,
+                            "chunk_id": c.id,
+                            **c.meta
+                        }
                     ) for c in chunks
                 ])
         except Exception as e:
@@ -88,13 +96,20 @@ class DocumentProcessor:
 
         for res in results:
             if res.status == ConversionStatus.SUCCESS:
+                # FORCE ABSOLUTE PATH for metadata consistency
+                abs_path = str(Path(res.input.file).absolute())
+
                 text = res.document.export_to_markdown()
                 if text.strip():
                     chunks = chunker.chunk_document(text)
                     converted_docs.extend([
                         Document(
                             page_content=c.text,
-                            metadata={"source": str(res.input.file), "chunk_id": c.id, **c.meta}
+                            metadata={
+                                "source": abs_path,
+                                "chunk_id": c.id,
+                                **c.meta
+                            }
                         ) for c in chunks
                     ])
             else:
