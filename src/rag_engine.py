@@ -80,7 +80,7 @@ class CollegeRAG:
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
         self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
-        self.query_llm = OllamaLLM(model='qwen2.5:3b-instruct', temperature=0)
+        self.query_llm = OllamaLLM(model='qwen2.5:7b-instruct', temperature=0)
 
         # 3. Automatic Startup Sync (Atomic & Idempotent)
         self._initial_sync()
