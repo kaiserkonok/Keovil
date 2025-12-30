@@ -144,51 +144,31 @@
         .file-info .path { font-size: 12px; color: var(--muted); font-family: 'Fira Code', monospace; }
 
         #editor {
-            flex:1;
-            background: var(--bg-deep);
-            border: none;
-            color: #d2a8ff;
-            padding: 25px;
-            font-family: 'Fira Code', monospace;
-            font-size: 14px;
-            line-height: 1.6;
-            resize: none;
-            outline: none;
-            tab-size: 4;
+            flex:1; background: var(--bg-deep); border: none; color: #d2a8ff;
+            padding: 25px; font-family: 'Fira Code', monospace; font-size: 14px;
+            line-height: 1.6; resize: none; outline: none; tab-size: 4;
         }
 
-        /* Database Table Styling */
-        .db-table {
+        /* Unified Data Grid Styling (DB & Spreadsheet) */
+        .data-grid-table {
             min-width: 100%;
-            width: max-content; /* This ensures columns expand to fit their data */
+            width: max-content;
             border-collapse: separate;
             border-spacing: 0;
             font-size: 13px;
             color: var(--text-main);
         }
-        .db-table th {
-            position: sticky;
-            top: 0;
-            background: #161b22;
-            padding: 12px 15px;
-            text-align: left;
-            border-bottom: 2px solid var(--border);
-            color: var(--accent);
-            z-index: 10;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        .data-grid-table th {
+            position: sticky; top: 0; background: #161b22; padding: 12px 15px;
+            text-align: left; border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
+            color: var(--accent); z-index: 10; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
         }
-        .db-table td {
-            padding: 10px 15px;
-            border-bottom: 1px solid var(--border);
-            white-space: nowrap;
-            max-width: 400px;
-            overflow: hidden;
-            text-overflow: ellipsis;
+        .data-grid-table td {
+            padding: 10px 15px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+            white-space: nowrap; max-width: 450px; overflow: hidden; text-overflow: ellipsis;
         }
-        .db-table tr:hover td { background: #1f242c; color: #fff; }
-        .db-table tr:nth-child(even) { background: #0d1117; }
+        .data-grid-table tr:hover td { background: #1f242c; color: #fff; }
+        .data-grid-table tr:nth-child(even) { background: #0d1117; }
 
         .editor-placeholder {
             flex: 1; display: flex; align-items: center; justify-content: center;
@@ -197,20 +177,13 @@
         }
 
         .status-bar {
-            padding: 8px 20px;
-            background: var(--sidebar-bg);
-            border-top: 1px solid var(--border);
-            font-size: 12px;
-            color: var(--muted);
-            display: flex;
-            justify-content: space-between;
-            font-family: 'Fira Code', monospace;
+            padding: 8px 20px; background: var(--sidebar-bg); border-top: 1px solid var(--border);
+            font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; font-family: 'Fira Code', monospace;
         }
 
         .context-menu {
             position:absolute; background: var(--panel); border:1px solid var(--border);
-            border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:1000; min-width:180px; display:none;
-            padding: 5px;
+            border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.5); z-index:1000; min-width:180px; display:none; padding: 5px;
         }
         .context-menu-item { padding:10px 14px; cursor:pointer; display:flex; align-items:center; gap:10px; color:var(--text-main); font-size: 13px; border-radius: 4px; }
         .context-menu-item:hover { background: var(--accent); color: white; }
@@ -273,12 +246,13 @@
 
         <div id="doc-viewer" style="display:none; overflow:auto;"></div>
 
-        <div id="spreadsheet-viewer" style="display:none; overflow:auto;">
-            <div class="controls" style="background: var(--sidebar-bg); padding:10px; border-bottom:1px solid var(--border);">
-                <select id="sheet-selector" style="background:var(--bg-deep); color:#fff; border:1px solid var(--border); padding:5px; border-radius:4px;"></select>
+        <div id="spreadsheet-viewer" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+            <div class="controls" style="background: var(--sidebar-bg); padding:10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;">
+                <select id="sheet-selector" style="background:var(--bg-deep); color:#fff; border:1px solid var(--border); padding:5px; border-radius:4px; min-width:150px;"></select>
                 <button class="btn" id="sheet-download"><i class="fas fa-download"></i> Download</button>
+                <span id="sheet-stats" style="font-size:11px; color:var(--muted); font-family:'Fira Code'; margin-left:auto;"></span>
             </div>
-            <div id="sheet-table-container" style="padding:0 20px;"></div>
+            <div id="sheet-table-container" style="flex:1; overflow:auto;"></div>
         </div>
 
         <div id="database-viewer" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
@@ -436,30 +410,74 @@
             container.appendChild(canvas);
         }
 
+        // --- UPDATED SPREADSHEET (CSV/EXCEL) LOGIC ---
         async function loadSpreadsheetFile(path) {
+            const filename = path.split('/').pop();
+            const ext = getFileExtension(filename);
+            const container = document.getElementById('sheet-table-container');
+            const selector = document.getElementById('sheet-selector');
+
             try {
                 const response = await fetch(`/api/explorer/files/download?path=${encodeURIComponent(path)}`);
-                const arrayBuffer = await response.arrayBuffer();
-                const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
-                const selector = document.getElementById('sheet-selector'); selector.innerHTML = '';
-                workbook.SheetNames.forEach((name, i) => {
-                    const opt = document.createElement('option'); opt.value = i; opt.textContent = name; selector.appendChild(opt);
-                });
-                displayExcelSheet(workbook, 0);
-                selector.onchange = () => displayExcelSheet(workbook, parseInt(selector.value));
-                document.getElementById('spreadsheet-viewer').style.display = 'block';
+
+                if (ext === 'csv') {
+                    selector.style.display = 'none'; // No sheet selector for CSV
+                    const text = await response.text();
+                    Papa.parse(text, {
+                        skipEmptyLines: true,
+                        complete: function(results) {
+                            renderRawDataToTable(results.data, 'sheet-table-container');
+                        }
+                    });
+                } else {
+                    selector.style.display = 'block';
+                    const arrayBuffer = await response.arrayBuffer();
+                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
+                    selector.innerHTML = '';
+                    workbook.SheetNames.forEach((name, i) => {
+                        const opt = document.createElement('option'); opt.value = i; opt.textContent = name; selector.appendChild(opt);
+                    });
+
+                    const updateExcelView = (idx) => {
+                        const sheet = workbook.Sheets[workbook.SheetNames[idx]];
+                        const data = XLSX.utils.sheet_to_json(sheet, {header: 1});
+                        renderRawDataToTable(data, 'sheet-table-container');
+                    };
+
+                    updateExcelView(0);
+                    selector.onchange = () => updateExcelView(parseInt(selector.value));
+                }
+
+                document.getElementById('spreadsheet-viewer').style.display = 'flex';
                 document.getElementById('editorPlaceholder').style.display = 'none';
                 hideSaveButton();
             } catch (err) { showUnsupportedFile('Error loading spreadsheet'); }
         }
 
-        function displayExcelSheet(workbook, index) {
-            const sheet = workbook.Sheets[workbook.SheetNames[index]];
-            const html = XLSX.utils.sheet_to_html(sheet);
-            const container = document.getElementById('sheet-table-container');
+        // Unified rendering for Data Grids
+        function renderRawDataToTable(data, containerId) {
+            const container = document.getElementById(containerId);
+            if (!data || data.length === 0) {
+                container.innerHTML = '<div style="padding:20px; color:var(--muted);">No data found.</div>';
+                return;
+            }
+
+            let html = `<table class="data-grid-table"><thead><tr>`;
+            // Headers
+            data[0].forEach(col => html += `<th>${col || ''}</th>`);
+            html += `</tr></thead><tbody>`;
+
+            // Body
+            for (let i = 1; i < data.length; i++) {
+                html += `<tr>`;
+                data[i].forEach(cell => {
+                    const val = (cell === null || cell === undefined) ? '' : cell;
+                    html += `<td>${val}</td>`;
+                });
+                html += `</tr>`;
+            }
+            html += `</tbody></table>`;
             container.innerHTML = html;
-            const table = container.querySelector('table');
-            if (table) table.className = 'sheet-table';
         }
 
         async function loadDocFile(path) {
@@ -487,10 +505,7 @@
                     const opt = document.createElement('option'); opt.value = table; opt.textContent = table; selector.appendChild(opt);
                 });
 
-                if (data.tables.length > 0) {
-                    renderDatabaseTable(path, data.tables[0]);
-                }
-
+                if (data.tables.length > 0) renderDatabaseTable(path, data.tables[0]);
                 selector.onchange = () => renderDatabaseTable(path, selector.value);
 
                 document.getElementById('database-viewer').style.display = 'flex';
@@ -506,7 +521,7 @@
                 const resp = await fetch(`/api/explorer/db/data?path=${encodeURIComponent(path)}&table=${encodeURIComponent(tableName)}`);
                 const data = await resp.json();
 
-                let html = `<table class="db-table"><thead><tr>`;
+                let html = `<table class="data-grid-table"><thead><tr>`;
                 data.columns.forEach(col => html += `<th>${col}</th>`);
                 html += `</tr></thead><tbody>`;
                 data.rows.forEach(row => {
@@ -536,10 +551,7 @@
             });
         }
 
-        function hideSaveButton() {
-            document.getElementById('saveBtn').style.display = 'none';
-        }
-
+        function hideSaveButton() { document.getElementById('saveBtn').style.display = 'none'; }
         function showFileActions() {
             document.getElementById('renameBtn').style.display = 'inline-flex';
             document.getElementById('deleteBtn').style.display = 'inline-flex';
