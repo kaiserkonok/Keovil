@@ -157,6 +157,38 @@
             tab-size: 4;
         }
 
+        /* Database Table Styling */
+        .db-table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            font-size: 13px;
+            color: var(--text-main);
+        }
+        .db-table th {
+            position: sticky;
+            top: 0;
+            background: #161b22;
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 2px solid var(--border);
+            color: var(--accent);
+            z-index: 10;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .db-table td {
+            padding: 10px 15px;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .db-table tr:hover td { background: #1f242c; color: #fff; }
+        .db-table tr:nth-child(even) { background: #0d1117; }
+
         .editor-placeholder {
             flex: 1; display: flex; align-items: center; justify-content: center;
             color: var(--muted); font-size: 16px; background: var(--bg-deep);
@@ -248,6 +280,15 @@
             <div id="sheet-table-container" style="padding:0 20px;"></div>
         </div>
 
+        <div id="database-viewer" style="display:none; flex:1; flex-direction:column; overflow:hidden;">
+            <div class="controls" style="background: var(--sidebar-bg); padding:10px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:12px;">
+                <span style="font-size:12px; color:var(--muted); font-family:'Fira Code';">TABLE:</span>
+                <select id="db-table-selector" style="background:var(--bg-deep); color:#fff; border:1px solid var(--border); padding:5px; border-radius:4px; min-width:150px;"></select>
+                <span id="db-stats" style="font-size:11px; color:var(--muted); font-family:'Fira Code'; margin-left:auto;"></span>
+            </div>
+            <div id="db-grid-container" style="flex:1; overflow:auto;"></div>
+        </div>
+
         <div class="editor-placeholder" id="editorPlaceholder">
             <div style="text-align:center;">
                 <div style="font-size:48px; margin-bottom:20px; color: var(--border);"><i class="fas fa-terminal"></i></div>
@@ -286,12 +327,14 @@
         const pdfExtensions = ['pdf'];
         const docExtensions = ['docx', 'doc', 'ppt', 'pptx'];
         const spreadsheetExtensions = ['xlsx', 'xls', 'csv'];
+        const dbExtensions = ['db', 'sqlite', 'sqlite3'];
 
         function getFileExtension(filename) { return filename.split('.').pop().toLowerCase(); }
         function isTextFile(filename) { return textExtensions.includes(getFileExtension(filename)); }
         function isPdfFile(filename) { return pdfExtensions.includes(getFileExtension(filename)); }
         function isDocFile(filename) { return docExtensions.includes(getFileExtension(filename)); }
         function isSpreadsheetFile(filename) { return spreadsheetExtensions.includes(getFileExtension(filename)); }
+        function isDatabaseFile(filename) { return dbExtensions.includes(getFileExtension(filename)); }
 
         $(document).ready(function() {
             $('#file-tree').jstree({
@@ -350,6 +393,7 @@
                 else if (isPdfFile(filename)) await loadPdfFile(path);
                 else if (isDocFile(filename)) await loadDocFile(path);
                 else if (isSpreadsheetFile(filename)) await loadSpreadsheetFile(path);
+                else if (isDatabaseFile(filename)) await loadDatabaseFile(path);
                 else showUnsupportedFile();
             } catch (error) { showUnsupportedFile(); }
         }
@@ -429,14 +473,66 @@
             } catch (err) { showUnsupportedFile(); }
         }
 
+        // DATABASE LOADING LOGIC
+        async function loadDatabaseFile(path) {
+            try {
+                const resp = await fetch(`/api/explorer/db/tables?path=${encodeURIComponent(path)}`);
+                const data = await resp.json();
+                if(data.error) throw new Error(data.error);
+
+                const selector = document.getElementById('db-table-selector');
+                selector.innerHTML = '';
+                data.tables.forEach(table => {
+                    const opt = document.createElement('option'); opt.value = table; opt.textContent = table; selector.appendChild(opt);
+                });
+
+                if (data.tables.length > 0) {
+                    renderDatabaseTable(path, data.tables[0]);
+                }
+
+                selector.onchange = () => renderDatabaseTable(path, selector.value);
+
+                document.getElementById('database-viewer').style.display = 'flex';
+                document.getElementById('editorPlaceholder').style.display = 'none';
+                hideSaveButton();
+            } catch (err) { showUnsupportedFile('Error reading database schema'); }
+        }
+
+        async function renderDatabaseTable(path, tableName) {
+            const container = document.getElementById('db-grid-container');
+            container.innerHTML = '<div style="padding:20px; color:var(--muted);"><i class="fas fa-spinner fa-spin"></i> Fetching records...</div>';
+            try {
+                const resp = await fetch(`/api/explorer/db/data?path=${encodeURIComponent(path)}&table=${encodeURIComponent(tableName)}`);
+                const data = await resp.json();
+
+                let html = `<table class="db-table"><thead><tr>`;
+                data.columns.forEach(col => html += `<th>${col}</th>`);
+                html += `</tr></thead><tbody>`;
+                data.rows.forEach(row => {
+                    html += `<tr>`;
+                    data.columns.forEach(col => {
+                        const val = row[col] === null ? '<span style="color:#6e7681">NULL</span>' : row[col];
+                        html += `<td>${val}</td>`;
+                    });
+                    html += `</tr>`;
+                });
+                html += `</tbody></table>`;
+                container.innerHTML = html;
+                document.getElementById('db-stats').textContent = `${data.rows.length} ROWS LOADED`;
+            } catch (err) { container.innerHTML = `<div style="padding:20px; color:#ff7b72;">Failed to load table data.</div>`; }
+        }
+
         function showUnsupportedFile(msg = 'Preview not available') {
             document.getElementById('editorPlaceholder').innerHTML = `<div style="text-align:center;"><i class="fas fa-eye-slash" style="font-size:40px; color:var(--muted);"></i><p style="margin-top:15px;">${msg}</p></div>`;
             hideSaveButton();
         }
 
         function hideAllViewers() {
-            ['editor','pdf-viewer','doc-viewer','spreadsheet-viewer','editorPlaceholder']
-            .forEach(id => document.getElementById(id).style.display = 'none');
+            ['editor','pdf-viewer','doc-viewer','spreadsheet-viewer','database-viewer','editorPlaceholder']
+            .forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.style.display = 'none';
+            });
         }
 
         function hideSaveButton() {
@@ -524,23 +620,17 @@
             if((await resp.json()).ok) refreshTree();
         }
 
-        // Updated for Batch/Folder upload logic
         async function uploadBatch(files, path=currentFolder){
             if (files.length === 0) return;
             const fd = new FormData();
             fd.append('path', path);
-
             for (let i = 0; i < files.length; i++) {
                 fd.append('file', files[i]);
-                // Send relative path so backend can recreate folders
                 const relPath = files[i].webkitRelativePath || files[i].name;
                 fd.append('full_paths', relPath);
             }
-
             const resp = await fetch('/api/explorer/files/upload', {method:'POST', body:fd});
-            if((await resp.json()).ok) {
-                refreshTree();
-            }
+            if((await resp.json()).ok) { refreshTree(); }
         }
 
         function downloadFile(path){ window.location.href=`/api/explorer/files/download?path=${encodeURIComponent(path)}`; }
@@ -558,7 +648,6 @@
         document.getElementById('newFileBtn').onclick = () => createNewFile();
         document.getElementById('saveBtn').onclick = () => saveFile();
 
-        // Dropdown Controls
         document.getElementById('uploadMainBtn').onclick = (e) => {
             e.stopPropagation();
             const menu = document.getElementById('uploadOptions');

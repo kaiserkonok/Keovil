@@ -414,6 +414,62 @@ def api_sql_query():
     response = sql_system.query(query) if sql_system else "SQL system not initialized."
     return jsonify({"output": response})
 
+
+# ---------------------------------------------------------
+# DATABASE EXPLORER API
+# ---------------------------------------------------------
+@app.route("/api/explorer/db/tables")
+def get_db_tables():
+    rel = safe_rel_path(request.args.get("path"))
+    path = (FILES_DIR / rel).resolve()
+
+    if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
+        return jsonify({"error": "File not found"}), 404
+
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
+        tables = [row[0] for row in cursor.fetchall()]
+        conn.close()
+        return jsonify({"tables": tables})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/explorer/db/data")
+def get_db_data():
+    rel = safe_rel_path(request.args.get("path"))
+    table_name = request.args.get("table")
+    path = (FILES_DIR / rel).resolve()
+
+    if not table_name:
+        return jsonify({"error": "No table specified"}), 400
+
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row  # This allows us to get dictionary-like rows
+        cursor = conn.cursor()
+
+        # Use parameterized query for table name is tricky,
+        # but since we get table names from the DB itself, it's safer.
+        cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 500")
+        rows = cursor.fetchall()
+
+        if not rows:
+            # Handle empty table but still return columns
+            cursor.execute(f"PRAGMA table_info(`{table_name}`)")
+            columns = [info[1] for info in cursor.fetchall()]
+            data = []
+        else:
+            columns = list(rows[0].keys())
+            data = [dict(row) for row in rows]
+
+        conn.close()
+        return jsonify({"columns": columns, "rows": data})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
     app.run(debug=True, threaded=True, host="0.0.0.0", port=5000)
