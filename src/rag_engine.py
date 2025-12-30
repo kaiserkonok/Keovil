@@ -225,7 +225,7 @@ class CollegeRAG:
         
         If the user's query is clear and already standalone, return the original query as is.
         If the user's query depends on the history, use the context to make the new query explicit and comprehensive.
-        Do NOT answer the question; only return the reformatted search query.
+        Do NOT answer the question; only return the reformatted search query and nothing else except the reformatted search query.
         
         ---
         CONVERSATION HISTORY:
