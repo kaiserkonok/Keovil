@@ -281,7 +281,7 @@ class CollegeRAG:
                 f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {Colors.OKGREEN}Score: {score:.4f}{Colors.ENDC} | {src}")
             context_chunks.append(res.payload['text'])
             print(
-                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{res.payload['text'].replace('\n', ' ')}...{Colors.ENDC}")
+                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{res.payload['text']}...{Colors.ENDC}")
         print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
 
         context_text = "\n\n".join(context_chunks)
@@ -307,8 +307,6 @@ class CollegeRAG:
 
             ANSWER:
         """.strip()
-
-        print(prompt)
 
         if stream:
             print(f"{Colors.BOLD}Lora:{Colors.ENDC} ", end="", flush=True)
