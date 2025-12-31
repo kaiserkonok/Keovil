@@ -34,8 +34,7 @@ class DocumentProcessor:
 
         # Formats Docling handles natively
         self.supported_extensions = {
-            '.pdf', '.docx', '.pptx', '.html',
-            '.png', '.jpg', '.jpeg', '.md'
+            '.pdf', '.docx', '.pptx', '.md'
         }
 
     def convert_to_documents(self, file_paths: List[Path], chunker) -> List[Document]:

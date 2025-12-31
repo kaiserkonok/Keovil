@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 from typing import List, Dict, Any, Union
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 from datetime import datetime
 from langchain_core.documents import Document
 from langchain_ollama import OllamaLLM
@@ -33,22 +33,25 @@ class Colors:
 # ----------------------
 # Watchdog handler
 # ----------------------
-class NewFileHandler(FileSystemEventHandler):
+class NewFileHandler(PatternMatchingEventHandler):
     def __init__(self, rag_instance):
+        # Define EXACTLY what the RAG system is allowed to touch
+        super().__init__(
+            patterns=["*.txt", "*.pdf", "*.docx", "*.pptx", "*.md"],
+            ignore_directories=True,
+            case_sensitive=False
+        )
         self.rag = rag_instance
 
     def on_created(self, event):
-        if not event.is_directory:
-            print(f"File modified: {event.src_path}")
-            self.rag.ingest([event.src_path])
+        print(f"File created and allowed: {event.src_path}")
+        self.rag.ingest([event.src_path])
 
     def on_modified(self, event):
-        if not event.is_directory:
-            print(f"File modified: {event.src_path}")
-            self.rag.ingest([event.src_path])
+        self.rag.ingest([event.src_path])
 
     def on_deleted(self, event):
-        if not event.is_directory: self.rag.remove_file(event.src_path)
+        self.rag.remove_file(event.src_path)
 
 
 # ----------------------
@@ -116,10 +119,14 @@ class CollegeRAG:
             json.dump(self.manifest, f, indent=4)
 
     def _initial_sync(self):
-        """Standardizes the vector store with the local filesystem on boot."""
+        """Standardizes the vector store with the local filesystem on boot, filtering for RAG-only files."""
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
 
-        # Verify Qdrant isn't empty (Self-healing if DB was wiped manually)
+        # 1. Define strictly supported extensions for the RAG/ColBERT pipeline
+        # This prevents CSV/Excel/SQL files from entering the vector store
+        SUPPORTED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.pptx', '.md'}
+
+        # 2. Verify Qdrant isn't empty (Self-healing if DB was wiped manually)
         try:
             current_points = self.engine.get_points_count()
             if current_points == 0 and self.manifest:
@@ -128,14 +135,20 @@ class CollegeRAG:
         except Exception as e:
             print(f"{Colors.FAIL}[Sync] Qdrant connection error: {e}{Colors.ENDC}")
 
-        current_files = {str(p.absolute()): p for p in self.data_dir.rglob('*') if p.is_file()}
+        # 3. Discovery: Only pick up files that match our supported extensions
+        current_files = {
+            str(p.absolute()): p for p in self.data_dir.rglob('*')
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        }
 
-        # A. Cleanup deletions (Manifest has it, Disk doesn't)
+        # 4. A. Cleanup deletions (Manifest has it, Disk doesn't)
+        # This also handles cases where a user might have changed a .txt to a .csv;
+        # the .txt record will be purged because it's no longer in 'current_files'
         for path in list(self.manifest.keys()):
             if path not in current_files:
                 self.remove_file(path)
 
-        # B. Process new/modified (Disk has it, Manifest is missing it or hash differs)
+        # 5. B. Process new/modified (Disk has it, Manifest is missing it or hash differs)
         to_process = []
         for p_str, p_obj in current_files.items():
             f_hash = self._get_file_hash(p_str)
@@ -143,9 +156,10 @@ class CollegeRAG:
                 to_process.append(p_str)
 
         if to_process:
+            print(f"{Colors.OKBLUE}[Sync] Found {len(to_process)} new/modified files.{Colors.ENDC}")
             self.ingest(to_process)
         else:
-            print(f"{Colors.OKGREEN}[Sync] Filesystem is clean. No duplicates created.{Colors.ENDC}")
+            print(f"{Colors.OKGREEN}[Sync] Filesystem is clean. No duplicates or invalid files indexed.{Colors.ENDC}")
 
     def ingest(self, new_files: List[str] = None):
         """
