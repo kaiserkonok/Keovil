@@ -161,17 +161,61 @@ class CollegeRAG:
         else:
             print(f"{Colors.OKGREEN}[Sync] Filesystem is clean. No duplicates or invalid files indexed.{Colors.ENDC}")
 
+    def aggregate_to_limit(self, raw_chunks: List[Any], token_limit: int = 512):
+        """
+        Standardizes fragments into perfect 512-token blocks.
+        Now uses the standardized .metadata attribute.
+        """
+        standardized_docs = []
+        current_text_block = []
+        current_tokens = 0
+        current_source = None
+
+        for c in raw_chunks:
+            # Access metadata and text safely
+            # DocumentProcessor/Chunker now both use .metadata
+            source = c.metadata.get("source", "Unknown")
+
+            # Handles LangChain (.page_content) and our Chunker (.text)
+            text_content = getattr(c, 'page_content', getattr(c, 'text', ""))
+            tokens = self.chunker.count_tokens(text_content)
+
+            # TRIGGER: File change OR Token limit reached
+            file_changed = (source != current_source and current_source is not None)
+            limit_reached = (current_tokens + tokens > token_limit)
+
+            if file_changed or limit_reached:
+                if current_text_block:
+                    standardized_docs.append(Document(
+                        page_content="\n\n".join(current_text_block),
+                        metadata={"source": current_source}
+                    ))
+                # Reset for the next block
+                current_text_block, current_tokens = [], 0
+
+            current_text_block.append(text_content)
+            current_tokens += tokens
+            current_source = source
+
+        # Catch the final block remaining in the loop
+        if current_text_block:
+            standardized_docs.append(Document(
+                page_content="\n\n".join(current_text_block),
+                metadata={"source": current_source}
+            ))
+
+        return standardized_docs
+
     def ingest(self, new_files: List[str] = None):
         """
         Synchronizes file system changes with the Qdrant vector database.
-        Ensures absolute path consistency to prevent 'ghost' data.
+        Ensures absolute path consistency and applies the 512-token aggregation.
         """
         if not new_files:
             return
 
         with self.lock:
             # 1. Normalize all incoming paths to Absolute Strings
-            # This is the key to matching the metadata in Qdrant exactly.
             valid_paths = []
             for f in new_files:
                 p = Path(f).absolute()
@@ -182,7 +226,6 @@ class CollegeRAG:
                 return
 
             # 2. Purge old vectors first
-            # We must wipe the file's old state before adding the new state
             for p_str in valid_paths:
                 print(f"{Colors.WARNING}[Sync] Purging old state for: {os.path.basename(p_str)}{Colors.ENDC}")
                 try:
@@ -193,24 +236,33 @@ class CollegeRAG:
             # 3. Process and Vectorize
             print(f"{Colors.OKCYAN}[Ingest] Vectorizing {len(valid_paths)} files...{Colors.ENDC}")
             try:
-                # DocumentProcessor now also uses absolute paths internally
-                new_docs = self.doc_processor.convert_to_documents(valid_paths, self.chunker)
+                # Get raw fragments (handles the 'worst case' messy formatting)
+                raw_docs = self.doc_processor.convert_to_documents(valid_paths, self.chunker)
 
-                if new_docs:
-                    # Multi-vector ingestion for ColBERT
-                    self.engine.ingest_batches(new_docs, batch_size=32)
+                if raw_docs:
+                    # --- THE UPDATE: APPLY YOUR AGGREGATION LOGIC ---
+                    print(f"{Colors.OKBLUE}[Ingest] Aggregating fragments into standardized blocks...{Colors.ENDC}")
+                    final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
+
+                    print(
+                        f"{Colors.OKBLUE}[Ingest] Created {len(final_docs)} blocks from {len(raw_docs)} fragments.{Colors.ENDC}")
+
+                    # Multi-vector ingestion for ColBERT using aggregated blocks
+                    self.engine.ingest_batches(final_docs, batch_size=32)
 
                     # 4. Update manifest to prevent redundant processing
                     for p_str in valid_paths:
                         self.manifest[p_str] = self._get_file_hash(p_str)
 
                     self._save_manifest()
-                    print(f"{Colors.OKGREEN}[Ingest] Success: {len(new_docs)} chunks updated.{Colors.ENDC}")
+                    print(f"{Colors.OKGREEN}[Ingest] Success: Optimized chunks updated.{Colors.ENDC}")
                 else:
                     print(f"{Colors.WARNING}[Ingest] No text content extracted from files.{Colors.ENDC}")
 
             except Exception as e:
                 print(f"❌ Ingestion failed: {e}")
+                import traceback
+                traceback.print_exc()
 
     def remove_file(self, fpath):
         """Removes vectors and manifest entry for a file."""
