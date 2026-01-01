@@ -8,6 +8,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 from datetime import datetime
 from langchain_core.documents import Document
+from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain_ollama import OllamaLLM
 import intelligent_rag_chunker
 from utils.document_processor import DocumentProcessor
@@ -84,6 +87,27 @@ class CollegeRAG:
 
         self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
         self.query_llm = OllamaLLM(model='qwen2.5:7b-instruct', temperature=0)
+
+        # --- UPDATED: History-Aware Retriever Setup ---
+        contextualize_q_system_prompt = (
+            "Given a chat history and the latest user question "
+            "which might reference context in the chat history, "
+            "formulate a standalone search query. Do NOT answer the question, "
+            "just reformulate it if needed and otherwise return it as is."
+        )
+
+        contextualize_q_prompt = ChatPromptTemplate.from_messages([
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+
+        # This automatically handles the "Rewrite Query" logic using your ColBERT engine
+        self.history_aware_retriever = create_history_aware_retriever(
+            self.query_llm,
+            self.engine.as_retriever(search_kwargs={"k": self.top_k}),
+            contextualize_q_prompt
+        )
 
         # 3. Automatic Startup Sync (Atomic & Idempotent)
         self._initial_sync()
@@ -283,62 +307,53 @@ class CollegeRAG:
 
         return formatted_chat
 
-    def rewrite_query(self, query, chat_history):
-        formatted_chat = self._format_chat_history(chat_history[-6:])
-
-        prompt = f"""
-        Given the conversation history and the user's new query, your task is to reformulate the user's latest query into a single, standalone search query. This new query must be optimized for retrieving relevant information from a knowledge base.
-        
-        If the user's query is clear and already standalone, return the original query as is.
-        If the user's query depends on the history, use the context to make the new query explicit and comprehensive.
-        Do NOT answer the question; only return the reformatted search query and nothing else except the reformatted search query.
-        
-        ---
-        CONVERSATION HISTORY:
-        {formatted_chat}
-        
-        ---
-        CURRENT USER QUERY:
-        {query}
-        
-        ---
-        REFORMULATED STANDALONE QUERY:
-        """
-
-        response = self.query_llm.invoke(prompt)
-
-        return response
-
     def ask(self, query, chat_history=None, stream=False):
+        # 1. Determine which history to use (Flask passed or internal)
         history = chat_history if chat_history is not None else self.chat_history
-        rewritten = self.rewrite_query(query, history)
 
-        print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH {'=' * 20}{Colors.ENDC}")
-        print(f"{Colors.BOLD}Rewritten Query:{Colors.ENDC} {rewritten}")
+        # 2. Convert raw history tuples to LangChain Message objects for the retriever
+        # This is required for create_history_aware_retriever to function
+        lc_history = []
+        for role, text in history[-6:]:
+            if role == "You":
+                lc_history.append(HumanMessage(content=text))
+            else:
+                lc_history.append(AIMessage(content=text))
 
-        # ColBERT MaxSim Search
-        results = self.engine.search(rewritten, k=self.top_k)
+        print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH (History-Aware) {'=' * 20}{Colors.ENDC}")
 
-        if not results:
+        # 3. Retrieve Documents
+        # This one call uses Qwen to contextualize the query AND searches Qdrant via ColBERT
+        try:
+            docs = self.history_aware_retriever.invoke({
+                "input": query,
+                "chat_history": lc_history
+            })
+        except Exception as e:
+            print(f"{Colors.FAIL}[Error] Retrieval failed: {e}{Colors.ENDC}")
+            return "I encountered an error while searching for information."
+
+        if not docs:
             print(f"{Colors.FAIL}[Error] No matches found in Qdrant!{Colors.ENDC}")
             return "I don't have information on that yet."
 
-        # --- DEBUG PRINTING (RETAINED) ---
+        # --- DEBUG PRINTING (RETAINED & ADAPTED FOR DOC OBJECTS) ---
         print(f"\n{Colors.HEADER}┌{'─' * 78}┐{Colors.ENDC}")
         context_chunks = []
-        for i, res in enumerate(results):
-            src = os.path.basename(res.payload.get("source", "Unknown"))
-            score = getattr(res, 'score', 0.0)
+        for i, doc in enumerate(docs):
+            src = os.path.basename(doc.metadata.get("source", "Unknown"))
+            # Note: score isn't always returned by the generic retriever wrapper
+            print(f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {src}")
+            context_chunks.append(doc.page_content)
             print(
-                f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {Colors.OKGREEN}Score: {score:.4f}{Colors.ENDC} | {src}")
-            context_chunks.append(res.payload['text'])
-            print(
-                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{res.payload['text']}...{Colors.ENDC}")
+                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{doc.page_content[:150].replace('\n', ' ')}...{Colors.ENDC}")
         print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
 
+        # 4. Final Answer Generation
         context_text = "\n\n".join(context_chunks)
-        formatted_chat = self._format_chat_history(chat_history[-6:])
+        formatted_chat = self._format_chat_history(history[-6:])
 
+        # Your custom prompt exactly as requested
         prompt = f"""
             You are Lora, a private AI Assistant.
 
@@ -366,14 +381,19 @@ class CollegeRAG:
             for chunk in self.llm.stream(prompt):
                 print(chunk, end="", flush=True)
                 ans += chunk
-            self.chat_history.append(("You", query))
-            self.chat_history.append(("AI", ans))
+
+            # Update internal history only if we aren't using Flask's passed history
+            if chat_history is None:
+                self.chat_history.append(("You", query))
+                self.chat_history.append(("AI", ans))
+
             print(f"\n\n{Colors.HEADER}{'=' * 56}{Colors.ENDC}")
             return ans
 
         res = self.llm.invoke(prompt)
-        self.chat_history.append(("You", query))
-        self.chat_history.append(("AI", res))
+        if chat_history is None:
+            self.chat_history.append(("You", query))
+            self.chat_history.append(("AI", res))
         return res
 
 
