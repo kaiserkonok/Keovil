@@ -47,60 +47,61 @@ class SQLQueryAgent:
         with self._lock:
             if not self.db: return "SQL system not initialized."
             try:
-                # 1. Fetch Schema
                 schema = self.db.get_table_info()
 
-                # 2. Prompt for Reasoning & SQL
-                prompt = f"""You are a SQLite Expert. Analyze the schema and answer the user.
-                SCHEMA:
+                # NEW: Sophisticated Multi-Step Prompt
+                prompt = f"""You are a Senior SQL Engineer. Work through the user's request step-by-step.
+
+                DATABASE SCHEMA:
                 {schema}
 
-                USER QUESTION: {query}
+                USER REQUEST: {query}
 
-                Respond in this EXACT format:
-                Thought: <reasoning>
-                SQL: ```sql
-                <query>
+                Follow this reasoning structure:
+                1. SCHEMA LINKING: List the specific tables and columns required. Identify if any JOINs are needed.
+                2. LOGICAL PLAN: Explain the step-by-step logic (e.g., "First filter by X, then group by Y, finally calculate Z").
+                3. REFINED SQL: Write the final SQLite query inside ```sql blocks.
+
+                Structure your response as:
+                Thought: 
+                [Your detailed reasoning covering Schema Linking and Logical Planning]
+
+                SQL: 
+                ```sql
+                [Your query]
                 ```
                 """
 
                 raw_response = self.llm.invoke(prompt).content
 
-                # --- Extract Thought & SQL ---
+                # --- Enhanced Logging ---
                 thought_match = re.search(r"Thought:(.*?)SQL:", raw_response, re.DOTALL | re.IGNORECASE)
                 if thought_match:
-                    print(f"\n{Fore.MAGENTA}🤔 THOUGHT:{Style.RESET_ALL} {thought_match.group(1).strip()}")
+                    # Splitting the thought into a nice scannable list for your terminal
+                    thought_text = thought_match.group(1).strip()
+                    print(f"\n{Fore.MAGENTA}{Style.BRIGHT}🧠 AGENT REASONING:{Style.RESET_ALL}")
+                    for line in thought_text.split('\n'):
+                        if line.strip(): print(f"{Fore.MAGENTA} › {line.strip()}")
 
                 sql_match = re.search(r"```sql\n(.*?)\n```", raw_response, re.DOTALL)
                 sql_query = sql_match.group(1).strip() if sql_match else None
 
-                if not sql_query: return f"AI failed to generate SQL: {raw_response}"
+                if not sql_query: return "AI failed to generate SQL logic."
 
-                print(f"{Fore.BLUE}🖥️  EXECUTING SQL:{Style.RESET_ALL} {sql_query}")
+                print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
 
-                # 3. EXECUTION WITH HEADERS (The Fix)
-                # We use SQLAlchemy directly to get column names so the AI doesn't get confused
+                # 3. Execution with Column Headers
                 with self.engine.connect() as conn:
                     result_proxy = conn.execute(text(sql_query))
                     columns = result_proxy.keys()
                     rows = result_proxy.fetchall()
-
-                    # Convert to a readable string with headers
                     data_with_headers = f"Columns: {list(columns)}\nData: {list(rows)}"
-                    print(f"{Fore.CYAN}📊 DATA SECURED:{Style.RESET_ALL} {data_with_headers}")
 
-                # 4. FINAL SUMMARY (With clear instructions not to hallucinate)
-                summary_prompt = f"""
-                USER QUESTION: {query}
-                DATABASE RESULT:
-                {data_with_headers}
-
-                INSTRUCTION: 
-                Summarize the data above to answer the user. 
-                """
-
+                # 4. Final Answer
+                summary_prompt = f"Question: {query}\nData: {data_with_headers}\nSummarize the answer clearly."
                 final_answer = self.llm.invoke(summary_prompt).content
-                print(f"{Fore.GREEN}🤖 FINAL ANSWER:{Style.RESET_ALL} {final_answer}\n")
+
+                print(f"{Fore.GREEN}{Style.BRIGHT}🤖 FINAL ANSWER:{Style.RESET_ALL} {final_answer}\n")
                 return final_answer
 
             except Exception as e:
