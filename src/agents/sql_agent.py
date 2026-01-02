@@ -49,7 +49,7 @@ class SQLQueryAgent:
             try:
                 schema = self.db.get_table_info()
 
-                # --- 1. YOUR ORIGINAL SUPERIOR PROMPT ---
+                # 1. BRAIN: Generate the SQL (Using your preferred logic)
                 prompt = f"""You are a Senior SQL Engineer. Work through the user's request step-by-step.
 
                 DATABASE SCHEMA:
@@ -58,87 +58,73 @@ class SQLQueryAgent:
                 USER REQUEST: {query}
 
                 Follow this reasoning structure:
-                1. SCHEMA LINKING: List the specific tables and columns required. Identify if any JOINs are needed.
+                1. SCHEMA LINKING: List the specific tables and columns required.
                 2. LOGICAL PLAN: Explain the step-by-step logic.
                 3. REFINED SQL: Write the final SQLite query inside ```sql blocks.
 
-                Note: If multiple tables are requested, separate queries with a semicolon (;).
+                Note: Separate multiple queries with a semicolon (;).
 
                 Structure your response as:
-                Thought: 
-                [Detailed reasoning covering Schema Linking and Logical Planning]
-
-                SQL: 
-                ```sql
-                [Your query]
-                ```
+                Thought: [Reasoning]
+                SQL: ```sql [Query] ```
                 """
 
                 raw_response = self.llm.invoke(prompt).content
 
-                # --- Terminal Logging ---
-                thought_match = re.search(r"Thought:(.*?)SQL:", raw_response, re.DOTALL | re.IGNORECASE)
-                if thought_match:
-                    print(f"\n{Fore.MAGENTA}{Style.BRIGHT}🧠 AGENT REASONING:{Style.RESET_ALL}")
-                    for line in thought_match.group(1).strip().split('\n'):
-                        if line.strip(): print(f"{Fore.MAGENTA} › {line.strip()}")
-
+                # --- Extract SQL ---
                 sql_match = re.search(r"```sql\n(.*?)\n```", raw_response, re.DOTALL)
                 sql_raw = sql_match.group(1).strip() if sql_match else None
                 if not sql_raw: return "AI failed to generate SQL logic."
 
-                # Support for sequential execution if AI provides multiple queries
                 queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
+                final_output_blocks = []
 
-                all_results_html = []
-                data_for_summary = []
-                total_rows = 0
-
-                # --- 2. EXECUTION ENGINE ---
+                # --- 2. EXECUTION & PER-TABLE EXPLANATION ---
                 with self.engine.connect() as conn:
                     for sql_query in queries:
-                        print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
+                        print(f"\n{Fore.BLUE}🖥️  EXECUTING SQL:{Style.RESET_ALL} {sql_query}")
+
+                        # Execute
                         result_proxy = conn.execute(text(sql_query))
                         columns = list(result_proxy.keys())
                         rows = result_proxy.fetchall()
 
                         if not rows: continue
-                        total_rows += len(rows)
 
-                        # Add a snippet for the summary (e.g., first 2 rows of each table)
-                        data_for_summary.append(f"Table Data: {list(rows[:2])}")
+                        # Determine a label/title for this specific table result
+                        # We use a tiny, fast LLM call to describe what THIS specific query result shows
+                        mini_summary_prompt = f"""
+                        Query: {sql_query}
+                        Data Sample: {list(rows[:2])}
+                        Instruction: Provide a 1-sentence caption for this table. 
+                        No conversational filler.
+                        """
+                        table_label = self.llm.invoke(mini_summary_prompt).content.strip()
 
-                        # Build Markdown Table
+                        # Build the Markdown table
                         md_table = "| " + " | ".join(columns) + " |\n"
                         md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
                         for row in rows:
-                            clean_row = [str(cell).replace('|', '\\|') for cell in row]
+                            clean_row = [str(cell).replace('|', '\\|').replace('\n', ' ') for cell in row]
                             md_table += "| " + " | ".join(clean_row) + " |\n"
 
-                        all_results_html.append(f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>')
+                        # Create the structured block for this table
+                        block = (
+                            f"### {table_label}\n"
+                            f"**Query:** `{sql_query}`\n\n"
+                            f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>\n'
+                            f"---"
+                        )
+                        final_output_blocks.append(block)
 
-                if not all_results_html: return "No data returned."
+                if not final_output_blocks:
+                    return "No data returned from the database."
 
-                # --- 3. THE FIXED SUMMARY PROMPT ---
-                # We "prime" the AI by telling it exactly what it's looking at.
-                summary_prompt = f"""
-                You are a Data Analyst. You just successfully queried the database.
-
-                USER QUESTION: {query}
-                DATABASE RESULTS: {data_for_summary}
-                TOTAL ROWS FOUND: {total_rows}
-
-                INSTRUCTION: Summarize the results found above. 
-                Do NOT say you don't have access to the database; you are looking at the execution results right now.
-                Be concise and professional.
-                """
-
-                final_answer = self.llm.invoke(summary_prompt).content
-                print(f"{Fore.GREEN}{Style.BRIGHT}🤖 FINAL ANSWER:{Style.RESET_ALL} {final_answer}\n")
-
-                return f"{final_answer}\n\n" + "\n\n".join(all_results_html)
+                # Combine all explained table blocks
+                return "\n\n".join(final_output_blocks)
 
             except Exception as e:
+                print(f"{Fore.RED}⚠️ Error: {str(e)}")
                 return f"⚠️ SQL Error: {str(e)}"
 
 
