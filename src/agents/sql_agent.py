@@ -49,91 +49,97 @@ class SQLQueryAgent:
             try:
                 schema = self.db.get_table_info()
 
-                # --- 1. YOUR ORIGINAL SUPERIOR PROMPT (RESTORED) ---
-                prompt = f"""You are a Senior SQL Engineer. Work through the user's request step-by-step.
-
+                # --- 1. THE BRAIN: REASONING & PLAN ---
+                # We combine your Senior Engineer logic with a conversational persona
+                system_context = f"""
+                You are a Senior Data Analyst.
                 DATABASE SCHEMA:
                 {schema}
 
-                USER REQUEST: {query}
-
-                Follow this reasoning structure:
-                1. SCHEMA LINKING: List the specific tables and columns required. Identify if any JOINs are needed.
-                2. LOGICAL PLAN: Explain the step-by-step logic.
-                3. REFINED SQL: Write the final SQLite query inside ```sql blocks.
-
-                Note: If multiple tables are requested, separate queries with a semicolon (;).
-
-                Structure your response as:
-                Thought: 
-                [Detailed reasoning covering Schema Linking and Logical Planning]
-
-                SQL: 
-                ```sql
-                [Your query/queries]
-                ```
+                INSTRUCTIONS:
+                - ALWAYS start with a 'Thought:' section explaining your logic.
+                - If the request requires data, provide the SQLite query in a ```sql block.
+                - If multiple tables are needed, separate queries with a semicolon.
+                - If it's just a general chat (hello, etc.), respond naturally without SQL.
                 """
 
-                raw_response = self.llm.invoke(prompt).content
+                initial_response = self.llm.invoke(f"{system_context}\n\nUser Request: {query}").content
 
-                # Terminal Logging
-                thought_match = re.search(r"Thought:(.*?)SQL:", raw_response, re.DOTALL | re.IGNORECASE)
+                # --- EXTRACT REASONING & SQL ---
+                thought_process = ""
+                thought_match = re.search(r"Thought:(.*?)SQL:", initial_response, re.DOTALL | re.IGNORECASE)
+                if not thought_match:
+                    thought_match = re.search(r"Thought:(.*)", initial_response, re.DOTALL | re.IGNORECASE)
+
                 if thought_match:
-                    print(f"\n{Fore.MAGENTA}{Style.BRIGHT}🧠 AGENT REASONING:{Style.RESET_ALL}")
-                    for line in thought_match.group(1).strip().split('\n'):
-                        if line.strip(): print(f"{Fore.MAGENTA} › {line.strip()}")
+                    thought_process = thought_match.group(1).strip()
+                    print(f"\n{Fore.MAGENTA}🧠 THINKING: {thought_process}{Style.RESET_ALL}")
 
-                sql_match = re.search(r"```sql\n(.*?)\n```", raw_response, re.DOTALL)
-                sql_raw = sql_match.group(1).strip() if sql_match else None
-                if not sql_raw: return "I couldn't generate the necessary database logic."
+                sql_match = re.search(r"```sql\n(.*?)\n```", initial_response, re.DOTALL)
 
-                # --- 2. EXECUTION & DATA GATHERING ---
-                queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
+                # --- 2. THE ENGINE: BIG DATA EXECUTION ---
                 all_results_html = []
-                data_for_synthesis = []
+                data_for_chat_summary = []
 
-                with self.engine.connect() as conn:
-                    for sql_query in queries:
-                        print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
-                        res = conn.execute(text(sql_query))
-                        cols = list(res.keys())
-                        rows = res.fetchall()
+                if sql_match:
+                    sql_raw = sql_match.group(1).strip()
+                    queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
 
-                        if not rows: continue
+                    with self.engine.connect() as conn:
+                        for sql_query in queries:
+                            print(f"{Fore.BLUE}🖥️  EXECUTING:{Style.RESET_ALL} {sql_query}")
+                            res = conn.execute(text(sql_query))
+                            cols = list(res.keys())
+                            rows = res.fetchall()
 
-                        data_for_synthesis.append({
-                            "query": sql_query,
-                            "results": [dict(zip(cols, r)) for r in rows[:10]]
-                        })
+                            if rows:
+                                # We send a 'digest' of the data to the LLM so it doesn't choke on 1000s of rows
+                                data_for_chat_summary.append({
+                                    "total_rows": len(rows),
+                                    "columns": cols,
+                                    "sample_data": [dict(zip(cols, r)) for r in rows[:15]]
+                                })
 
-                        md_table = "| " + " | ".join(cols) + " |\n| " + " | ".join(["---"] * len(cols)) + " |\n"
-                        for row in rows:
-                            clean_row = [str(cell).replace('|', '\\|') for cell in row]
-                            md_table += "| " + " | ".join(clean_row) + " |\n"
+                                # We render the FULL data set into the Markdown table for the UI
+                                md = "| " + " | ".join(cols) + " |\n| " + " | ".join(["---"] * len(cols)) + " |\n"
+                                for r in rows:
+                                    clean_row = [str(x).replace('|', '\\|') for x in r]
+                                    md += "| " + " | ".join(clean_row) + " |\n"
 
-                        all_results_html.append(f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>')
+                                # The container handles the "Thousands of Rows" scrolling
+                                all_results_html.append(f'<div class="df-scroll-container">\n\n{md}\n\n</div>')
 
-                if not all_results_html:
-                    return "No data was found for this query."
+                # --- 3. THE VOICE: NATURAL CONVERSATION ---
+                if not sql_match:
+                    # Just return the natural chat if no database was needed
+                    return initial_response
 
-                # --- 3. CLEAN ANALYTICAL SUMMARY ---
-                summary_prompt = f"""
-                You are a Data Analyst. Based on these database results, answer the user's question directly.
+                # Final pass: The AI sees the real data and talks about it
+                final_prompt = f"""
+                User: {query}
+                Your Logic: {thought_process}
+                Data Found: {data_for_chat_summary}
 
-                USER QUESTION: {query}
-                DATABASE DATA: {data_for_synthesis}
-
-                Answer:
+                Based on the results above, give a natural, human-like response to the user.
+                Explain what you found and any patterns you noticed. 
+                If there are many rows, mention the total count.
                 """
 
-                final_narrative = self.llm.invoke(summary_prompt).content
-                print(f"{Fore.GREEN}{Style.BRIGHT}🤖 ANALYST SUMMARY:{Style.RESET_ALL} {final_narrative}\n")
+                final_chat = self.llm.invoke(final_prompt).content
+                print(f"{Fore.GREEN}🤖 RESPONSE READY.{Style.RESET_ALL}")
 
-                # --- 4. COMBINE ---
-                return f"{final_narrative}\n\n### 📋 Data Reference\n" + "\n\n".join(all_results_html)
+                # --- 4. THE OUTPUT ---
+                # We put the thought process in a quote block, then the chat, then the tables.
+                output = f"{final_chat}\n\n"
+
+                if all_results_html:
+                    output += "### 📊 Data Records\n" + "\n\n".join(all_results_html)
+
+                return output
 
             except Exception as e:
-                return f"⚠️ System Error: {str(e)}"
+                print(f"{Fore.RED}⚠️ Error: {str(e)}{Style.RESET_ALL}")
+                return f"I ran into an issue while processing that: {str(e)}"
 
 
 class IngestionHandler(FileSystemEventHandler):
