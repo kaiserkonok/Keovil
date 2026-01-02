@@ -164,6 +164,33 @@
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-deep); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+
+        /* Add this inside your <style> block */
+        .df-scroll-container {
+            max-height: 400px; /* Limits height exactly like Jupyter */
+            overflow-y: auto;
+            overflow-x: auto;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin-top: 15px;
+            background: #0d1117;
+        }
+
+        /* Make sure the table inside doesn't have top margins that break the look */
+        .df-scroll-container table {
+            margin: 0;
+            border: none;
+            width: 100%;
+        }
+
+        /* Keep the headers sticky so you see them while scrolling */
+        .df-scroll-container th {
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            background: #21262d; /* Matches your current th background */
+        }
     </style>
 </head>
 <body>

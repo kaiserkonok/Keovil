@@ -49,7 +49,7 @@ class SQLQueryAgent:
             try:
                 schema = self.db.get_table_info()
 
-                # NEW: Sophisticated Multi-Step Prompt
+                # KEEPING YOUR SUPERIOR PROMPT STRUCTURE
                 prompt = f"""You are a Senior SQL Engineer. Work through the user's request step-by-step.
 
                 DATABASE SCHEMA:
@@ -59,12 +59,12 @@ class SQLQueryAgent:
 
                 Follow this reasoning structure:
                 1. SCHEMA LINKING: List the specific tables and columns required. Identify if any JOINs are needed.
-                2. LOGICAL PLAN: Explain the step-by-step logic (e.g., "First filter by X, then group by Y, finally calculate Z").
+                2. LOGICAL PLAN: Explain the step-by-step logic.
                 3. REFINED SQL: Write the final SQLite query inside ```sql blocks.
 
                 Structure your response as:
                 Thought: 
-                [Your detailed reasoning covering Schema Linking and Logical Planning]
+                [Detailed reasoning covering Schema Linking and Logical Planning]
 
                 SQL: 
                 ```sql
@@ -74,35 +74,51 @@ class SQLQueryAgent:
 
                 raw_response = self.llm.invoke(prompt).content
 
-                # --- Enhanced Logging ---
+                # --- Terminal Logging ---
                 thought_match = re.search(r"Thought:(.*?)SQL:", raw_response, re.DOTALL | re.IGNORECASE)
                 if thought_match:
-                    # Splitting the thought into a nice scannable list for your terminal
-                    thought_text = thought_match.group(1).strip()
                     print(f"\n{Fore.MAGENTA}{Style.BRIGHT}🧠 AGENT REASONING:{Style.RESET_ALL}")
-                    for line in thought_text.split('\n'):
+                    for line in thought_match.group(1).strip().split('\n'):
                         if line.strip(): print(f"{Fore.MAGENTA} › {line.strip()}")
 
                 sql_match = re.search(r"```sql\n(.*?)\n```", raw_response, re.DOTALL)
                 sql_query = sql_match.group(1).strip() if sql_match else None
-
                 if not sql_query: return "AI failed to generate SQL logic."
 
                 print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
 
-                # 3. Execution with Column Headers
+                # --- Execution & Smart Table Generation ---
                 with self.engine.connect() as conn:
                     result_proxy = conn.execute(text(sql_query))
-                    columns = result_proxy.keys()
+                    columns = list(result_proxy.keys())
                     rows = result_proxy.fetchall()
-                    data_with_headers = f"Columns: {list(columns)}\nData: {list(rows)}"
+                    row_count = len(rows)
 
-                # 4. Final Answer
-                summary_prompt = f"Question: {query}\nData: {data_with_headers}\nSummarize the answer clearly."
+                    # Build Markdown Table
+                    md_table = "| " + " | ".join(columns) + " |\n"
+                    md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+                    for row in rows:
+                        clean_row = [str(cell).replace('|', '\\|') for cell in row]
+                        md_table += "| " + " | ".join(clean_row) + " |\n"
+
+                    scrollable_table = f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>'
+
+                # --- Final Summary (The Safety Rail) ---
+                # We provide a preview to save tokens, but explicitly tell the AI the full count.
+                data_preview = f"Total rows found: {row_count}. Preview of first 5: {list(rows[:5])}" if row_count > 10 else f"Data: {list(rows)}"
+
+                summary_prompt = f"""
+                User Question: {query}
+                Execution Result: {data_preview}
+
+                Instruction: Summarize the results. The user sees all {row_count} rows in the table below. 
+                Do not claim data is missing if the count is greater than what is in the preview.
+                """
+
                 final_answer = self.llm.invoke(summary_prompt).content
-
                 print(f"{Fore.GREEN}{Style.BRIGHT}🤖 FINAL ANSWER:{Style.RESET_ALL} {final_answer}\n")
-                return final_answer
+
+                return f"{final_answer}\n\n{scrollable_table}"
 
             except Exception as e:
                 return f"⚠️ SQL Error: {str(e)}"
