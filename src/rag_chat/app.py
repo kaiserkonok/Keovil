@@ -470,6 +470,16 @@ def get_db_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/api/ingest/status")
+def get_ingest_status():
+    """Returns the current status of the RAG ingestion process."""
+    if not rag:
+        return jsonify({"status": "idle", "files": []})
+
+    # We will define 'get_status()' in the next step inside rag_engine.py
+    return jsonify(rag.get_status())
+
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
     app.run(debug=True, threaded=True, host="0.0.0.0", port=5000)
