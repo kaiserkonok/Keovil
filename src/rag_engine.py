@@ -302,7 +302,7 @@ class CollegeRAG:
                     self.status["current_file"] = "Aggregating chunks..."
                     final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
 
-                    self.status["current_file"] = "Storing in Qdrant..."
+                    self.status["current_file"] = "Storing in Database..."
                     self.engine.ingest_batches(final_docs, batch_size=32)
 
                     # Update manifest in SQLite
