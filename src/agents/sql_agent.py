@@ -49,7 +49,7 @@ class SQLQueryAgent:
             try:
                 schema = self.db.get_table_info()
 
-                # KEEPING YOUR SUPERIOR PROMPT STRUCTURE
+                # --- 1. YOUR ORIGINAL SUPERIOR PROMPT ---
                 prompt = f"""You are a Senior SQL Engineer. Work through the user's request step-by-step.
 
                 DATABASE SCHEMA:
@@ -61,6 +61,8 @@ class SQLQueryAgent:
                 1. SCHEMA LINKING: List the specific tables and columns required. Identify if any JOINs are needed.
                 2. LOGICAL PLAN: Explain the step-by-step logic.
                 3. REFINED SQL: Write the final SQLite query inside ```sql blocks.
+
+                Note: If multiple tables are requested, separate queries with a semicolon (;).
 
                 Structure your response as:
                 Thought: 
@@ -82,43 +84,59 @@ class SQLQueryAgent:
                         if line.strip(): print(f"{Fore.MAGENTA} › {line.strip()}")
 
                 sql_match = re.search(r"```sql\n(.*?)\n```", raw_response, re.DOTALL)
-                sql_query = sql_match.group(1).strip() if sql_match else None
-                if not sql_query: return "AI failed to generate SQL logic."
+                sql_raw = sql_match.group(1).strip() if sql_match else None
+                if not sql_raw: return "AI failed to generate SQL logic."
 
-                print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
+                # Support for sequential execution if AI provides multiple queries
+                queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
 
-                # --- Execution & Smart Table Generation ---
+                all_results_html = []
+                data_for_summary = []
+                total_rows = 0
+
+                # --- 2. EXECUTION ENGINE ---
                 with self.engine.connect() as conn:
-                    result_proxy = conn.execute(text(sql_query))
-                    columns = list(result_proxy.keys())
-                    rows = result_proxy.fetchall()
-                    row_count = len(rows)
+                    for sql_query in queries:
+                        print(f"\n{Fore.BLUE}{Style.BRIGHT}🖥️  EXECUTING SQL:{Style.RESET_ALL} {Style.DIM}{sql_query}")
+                        result_proxy = conn.execute(text(sql_query))
+                        columns = list(result_proxy.keys())
+                        rows = result_proxy.fetchall()
 
-                    # Build Markdown Table
-                    md_table = "| " + " | ".join(columns) + " |\n"
-                    md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
-                    for row in rows:
-                        clean_row = [str(cell).replace('|', '\\|') for cell in row]
-                        md_table += "| " + " | ".join(clean_row) + " |\n"
+                        if not rows: continue
+                        total_rows += len(rows)
 
-                    scrollable_table = f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>'
+                        # Add a snippet for the summary (e.g., first 2 rows of each table)
+                        data_for_summary.append(f"Table Data: {list(rows[:2])}")
 
-                # --- Final Summary (The Safety Rail) ---
-                # We provide a preview to save tokens, but explicitly tell the AI the full count.
-                data_preview = f"Total rows found: {row_count}. Preview of first 5: {list(rows[:5])}" if row_count > 10 else f"Data: {list(rows)}"
+                        # Build Markdown Table
+                        md_table = "| " + " | ".join(columns) + " |\n"
+                        md_table += "| " + " | ".join(["---"] * len(columns)) + " |\n"
+                        for row in rows:
+                            clean_row = [str(cell).replace('|', '\\|') for cell in row]
+                            md_table += "| " + " | ".join(clean_row) + " |\n"
 
+                        all_results_html.append(f'<div class="df-scroll-container">\n\n{md_table}\n\n</div>')
+
+                if not all_results_html: return "No data returned."
+
+                # --- 3. THE FIXED SUMMARY PROMPT ---
+                # We "prime" the AI by telling it exactly what it's looking at.
                 summary_prompt = f"""
-                User Question: {query}
-                Execution Result: {data_preview}
+                You are a Data Analyst. You just successfully queried the database.
 
-                Instruction: Summarize the results. The user sees all {row_count} rows in the table below. 
-                Do not claim data is missing if the count is greater than what is in the preview.
+                USER QUESTION: {query}
+                DATABASE RESULTS: {data_for_summary}
+                TOTAL ROWS FOUND: {total_rows}
+
+                INSTRUCTION: Summarize the results found above. 
+                Do NOT say you don't have access to the database; you are looking at the execution results right now.
+                Be concise and professional.
                 """
 
                 final_answer = self.llm.invoke(summary_prompt).content
                 print(f"{Fore.GREEN}{Style.BRIGHT}🤖 FINAL ANSWER:{Style.RESET_ALL} {final_answer}\n")
 
-                return f"{final_answer}\n\n{scrollable_table}"
+                return f"{final_answer}\n\n" + "\n\n".join(all_results_html)
 
             except Exception as e:
                 return f"⚠️ SQL Error: {str(e)}"
