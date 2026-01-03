@@ -11,9 +11,9 @@ from langchain_ollama import ChatOllama
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from tqdm import tqdm
 
 init(autoreset=True)
-
 
 class SQLQueryAgent:
     def __init__(self, db_uri: str, model_name: str = 'qwen2.5-coder:7b-instruct'):
@@ -29,7 +29,7 @@ class SQLQueryAgent:
         with self._lock:
             try:
                 self.db = SQLDatabase(self.engine)
-                # Optimized for your RTX 5060 Ti 16GB
+                # Optimized for your RTX 5060 Ti 16GB VRAM
                 self.llm = ChatOllama(
                     model=self.model_name,
                     temperature=0,
@@ -46,7 +46,7 @@ class SQLQueryAgent:
             try:
                 schema = self.db.get_table_info()
 
-                # --- RESTORED: YOUR ORIGINAL BRAIN PROMPT ---
+                # --- YOUR ORIGINAL BRAIN PROMPT ---
                 system_context = f"""
                 You are a Senior Data Analyst.
                 DATABASE SCHEMA:
@@ -77,11 +77,6 @@ class SQLQueryAgent:
 
                 if sql_match:
                     sql_raw = sql_match.group(1).strip()
-                    # --- ADDED: BASIC SELF-CORRECTION FOR DOT COMMANDS ---
-                    if sql_raw.startswith('.'):
-                        print(f"{Fore.YELLOW}⚠️ CLI command detected. Re-routing...{Style.RESET_ALL}")
-                        return self.ask(f"Do not use dot commands. Use standard SQL to: {query}")
-
                     queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
 
                     with self.engine.connect() as conn:
@@ -108,7 +103,7 @@ class SQLQueryAgent:
                 if not sql_match:
                     return initial_response
 
-                # --- RESTORED: YOUR ORIGINAL VOICE PROMPT ---
+                # --- YOUR ORIGINAL VOICE PROMPT ---
                 final_prompt = f"""
                 User: {query}
                 Your Logic: {thought_process}
@@ -122,7 +117,7 @@ class SQLQueryAgent:
                 final_chat = self.llm.invoke(final_prompt).content
                 print(f"{Fore.GREEN}🤖 RESPONSE READY.{Style.RESET_ALL}")
 
-                # --- RESTORED: YOUR ORIGINAL OUTPUT FORMAT ---
+                # --- YOUR ORIGINAL OUTPUT FORMAT ---
                 output = f"{final_chat}\n\n"
                 if all_results_html:
                     output += "### 📊 Data Records\n" + "\n\n".join(all_results_html)
@@ -133,13 +128,12 @@ class SQLQueryAgent:
                 print(f"{Fore.RED}⚠️ Error in ask(): {str(e)}{Style.RESET_ALL}")
                 return f"I ran into an issue while processing that: {str(e)}"
 
-
 class StructuredDataAgent:
     def __init__(self, db_path=None, watch_dir=None):
         home = str(Path.home())
         base = os.path.join(home, ".k_rag_storage")
         self.watch_dir = os.path.abspath(watch_dir or os.path.join(base, "data"))
-        self.db_path = os.path.abspath(db_path or os.path.join(base, "database", "main.db"))
+        self.db_path = os.path.abspath(os.path.join(base, "database", "main.db"))
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
         os.makedirs(self.watch_dir, exist_ok=True)
         self.db_uri = f"sqlite:///{self.db_path}"
@@ -150,34 +144,60 @@ class StructuredDataAgent:
     def sync_database(self):
         if self.is_syncing: return
         self.is_syncing = True
-        print(f"{Fore.YELLOW}🔄 Syncing Folder to Database Mirror...")
+        print(f"{Fore.YELLOW}🔄 Syncing Folder (Streaming with Progress Bars)...")
         try:
             active_tables = []
+            chunk_size = 100000
+
             for root, _, files in os.walk(self.watch_dir):
                 for f_name in files:
                     fp = os.path.join(root, f_name)
                     ext = f_name.lower()
+                    t_name = os.path.splitext(f_name)[0].replace(" ", "_").lower()
 
-                    # --- SPREADSHEETS ---
-                    if ext.endswith((".csv", ".xlsx", ".xls")):
-                        t_name = os.path.splitext(f_name)[0].replace(" ", "_").lower()
+                    # --- CSV HANDLER (STREAMED) ---
+                    if ext.endswith(".csv"):
                         active_tables.append(t_name)
-                        df = pd.read_csv(fp) if ext.endswith(".csv") else pd.read_excel(fp)
-                        df.to_sql(t_name, self.agent.engine, if_exists="replace", index=False)
-                        print(f"{Fore.BLUE}📦 Updated Table: {t_name}")
+                        try:
+                            row_count = sum(1 for _ in open(fp, 'rb'))
+                            with tqdm(total=row_count, desc=f"Streaming {f_name}", unit="rows") as pbar:
+                                first_chunk = True
+                                for chunk in pd.read_csv(fp, chunksize=chunk_size):
+                                    mode = 'replace' if first_chunk else 'append'
+                                    chunk.to_sql(t_name, self.agent.engine, if_exists=mode, index=False)
+                                    first_chunk = False
+                                    pbar.update(len(chunk))
+                            print(f"{Fore.BLUE}📦 Streamed CSV: {t_name}")
+                        except Exception as e:
+                            print(f"{Fore.RED}✖ Error streaming CSV {f_name}: {e}")
 
-                    # --- DATABASE FILES (CLONING) ---
+                    # --- EXCEL HANDLER ---
+                    elif ext.endswith((".xlsx", ".xls")):
+                        active_tables.append(t_name)
+                        try:
+                            print(f"{Fore.BLUE}📖 Reading Excel: {f_name}")
+                            df = pd.read_excel(fp)
+                            df.to_sql(t_name, self.agent.engine, if_exists="replace", index=False)
+                        except Exception as e:
+                            print(f"{Fore.RED}✖ Error reading Excel {f_name}: {e}")
+
+                    # --- DATABASE CLONING (STREAMED) ---
                     elif ext.endswith((".db", ".sqlite", ".sqlite3")) and "main.db" not in f_name:
                         with sqlite3.connect(fp) as src_conn:
                             tbl_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", src_conn)
                             for t in tbl_names['name']:
                                 if t.startswith('sqlite_'): continue
                                 active_tables.append(t)
-                                df = pd.read_sql(f'SELECT * FROM "{t}"', src_conn)
-                                df.to_sql(t, self.agent.engine, if_exists="replace", index=False)
-                                print(f"{Fore.MAGENTA}💎 Cloned Table: {t}")
+                                total_rows = src_conn.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
+                                with tqdm(total=total_rows, desc=f"Cloning {t}", unit="rows") as pbar:
+                                    first_chunk = True
+                                    for chunk in pd.read_sql(f'SELECT * FROM "{t}"', src_conn, chunksize=chunk_size):
+                                        mode = 'replace' if first_chunk else 'append'
+                                        chunk.to_sql(t, self.agent.engine, if_exists=mode, index=False)
+                                        first_chunk = False
+                                        pbar.update(len(chunk))
 
-            # --- RESTORED: LIVE DELETION LOGIC ---
+            # --- LIVE DELETION LOGIC ---
             with self.agent.engine.begin() as conn:
                 existing = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';")).fetchall()
                 for (et,) in existing:
@@ -202,14 +222,12 @@ class StructuredDataAgent:
         print(f"{Fore.YELLOW}👀 Monitoring Directory: {self.watch_dir}")
 
     def stop(self):
-        self.observer.stop();
+        self.observer.stop()
         self.observer.join()
-
 
 class IngestionHandler(FileSystemEventHandler):
     def __init__(self, manager):
         self.manager = manager
-        # Updated to include database files
         self.valid_exts = (".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")
 
     def process(self, event):
@@ -220,11 +238,6 @@ class IngestionHandler(FileSystemEventHandler):
             self._timer = threading.Timer(2.0, self.manager.sync_database)
             self._timer.start()
 
-    def on_created(self, event):
-        self.process(event)
-
-    def on_deleted(self, event):
-        self.process(event)
-
-    def on_moved(self, event):
-        self.process(event)
+    def on_created(self, event): self.process(event)
+    def on_deleted(self, event): self.process(event)
+    def on_moved(self, event): self.process(event)
