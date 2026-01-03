@@ -1,9 +1,33 @@
 # colbert_engine.py
 import hashlib
 import uuid
+from typing import List, Any
 from pylate import models as pylate_models
 from qdrant_client import QdrantClient, models as q_models
+from langchain_core.retrievers import BaseRetriever
+from langchain_core.documents import Document
+from pydantic import Field
 import torch
+
+
+class ColBERTRetriever(BaseRetriever):
+    # Field allows LangChain to "see" these variables
+    engine: Any = Field(exclude=True)
+    k: int = 5
+
+    def _get_relevant_documents(self, query: str) -> List[Document]:
+        """Bridge between LangChain and your ColBERT search."""
+        # This calls your existing search method
+        results = self.engine.search(query, k=self.k)
+
+        # Convert Qdrant points back into LangChain Documents
+        docs = []
+        for res in results:
+            docs.append(Document(
+                page_content=res.payload.get("text", ""),
+                metadata=res.payload
+            ))
+        return docs
 
 
 class ColBERTEngine:
@@ -85,6 +109,11 @@ class ColBERTEngine:
             limit=k
         ).points
         return results
+
+    def as_retriever(self, search_kwargs=None):
+        """Returns the LangChain-compatible retriever object."""
+        k = (search_kwargs or {}).get("k", 5)
+        return ColBERTRetriever(engine=self, k=k)
 
     def delete_by_source(self, source_path):
         """

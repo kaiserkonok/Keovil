@@ -34,35 +34,25 @@ class DocumentProcessor:
 
         # Formats Docling handles natively
         self.supported_extensions = {
-            '.pdf', '.docx', '.pptx', '.html',
-            '.png', '.jpg', '.jpeg', '.md'
+            '.pdf', '.docx', '.pptx', '.md'
         }
 
     def convert_to_documents(self, file_paths: List[Path], chunker) -> List[Document]:
-        """
-        Converts a list of paths into LangChain Document objects.
-        Separates raw .txt handling from complex document parsing.
-        """
         docs = []
         complex_queue = []
 
         for fpath in file_paths:
-            # Ensure fpath is a Path object
             fpath = Path(fpath)
             if not fpath.exists():
                 continue
 
             ext = fpath.suffix.lower()
 
-            # Strategy 1: Fast path for plain text
             if ext == '.txt':
                 self._process_text_file(fpath, chunker, docs)
-
-            # Strategy 2: Docling path for structured documents
             elif ext in self.supported_extensions:
                 complex_queue.append(fpath)
 
-        # Execute batch conversion for complex files
         if complex_queue:
             docs.extend(self._process_complex_files(complex_queue, chunker))
 
@@ -70,7 +60,6 @@ class DocumentProcessor:
 
     def _process_text_file(self, fpath, chunker, docs_list):
         try:
-            # FORCE ABSOLUTE PATH for metadata consistency
             abs_path = str(fpath.absolute())
 
             with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
@@ -83,7 +72,7 @@ class DocumentProcessor:
                         metadata={
                             "source": abs_path,
                             "chunk_id": c.id,
-                            **c.meta
+                            **c.metadata # FIX: Changed from .meta to .metadata
                         }
                     ) for c in chunks
                 ])
@@ -96,7 +85,6 @@ class DocumentProcessor:
 
         for res in results:
             if res.status == ConversionStatus.SUCCESS:
-                # FORCE ABSOLUTE PATH for metadata consistency
                 abs_path = str(Path(res.input.file).absolute())
 
                 text = res.document.export_to_markdown()
@@ -108,7 +96,7 @@ class DocumentProcessor:
                             metadata={
                                 "source": abs_path,
                                 "chunk_id": c.id,
-                                **c.meta
+                                **c.metadata # FIX: Changed from .meta to .metadata
                             }
                         ) for c in chunks
                     ])

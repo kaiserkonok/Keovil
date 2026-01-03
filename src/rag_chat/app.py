@@ -9,6 +9,8 @@ from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
+from colorama import Fore, Style, init
+init(autoreset=True)
 
 # ---------------------------------------------------------
 # Path Configurations (Cross-OS compatible)
@@ -95,6 +97,8 @@ except ImportError:
 # Flask Initialization
 # ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
+
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
 # Globals for engines
 rag = None
@@ -363,20 +367,35 @@ def mkdir():
     path.mkdir(parents=True, exist_ok=True)
     return jsonify({"ok": True})
 
+
 @app.route("/api/explorer/files/upload", methods=["POST"])
 def upload_file():
     parent_dir = (FILES_DIR / safe_rel_path(request.form.get("path", ""))).resolve()
     files = request.files.getlist("file")
     full_paths = request.form.getlist("full_paths")
+
     if not str(parent_dir).startswith(str(FILES_DIR.resolve())):
         return jsonify({"error": "Invalid path"}), 400
+
+    print(f"{Fore.CYAN}📥 Upload started for {len(files)} items...{Style.RESET_ALL}")
+
     for i, file in enumerate(files):
         if not file.filename: continue
+
         rel_path = full_paths[i] if (full_paths and i < len(full_paths)) else file.filename
         dest = (parent_dir / rel_path).resolve()
+
         if not str(dest).startswith(str(FILES_DIR.resolve())): continue
         dest.parent.mkdir(parents=True, exist_ok=True)
+
+        # Log for GB files so you know it's working
+        print(f"{Fore.YELLOW}💾 Saving: {file.filename} to {dest}...{Style.RESET_ALL}")
+
+        # Using a buffer to save to avoid memory spikes
         file.save(dest)
+
+        print(f"{Fore.GREEN}✅ Saved: {file.filename}{Style.RESET_ALL}")
+
     return jsonify({"ok": True})
 
 @app.route("/api/explorer/files/download")
@@ -453,7 +472,7 @@ def get_db_data():
 
         # Use parameterized query for table name is tricky,
         # but since we get table names from the DB itself, it's safer.
-        cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 500")
+        cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 100")
         rows = cursor.fetchall()
 
         if not rows:
@@ -469,6 +488,53 @@ def get_db_data():
         return jsonify({"columns": columns, "rows": data})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+import pandas as pd
+
+
+@app.route("/api/explorer/files/preview")
+def preview_data_file():
+    rel = safe_rel_path(request.args.get("path"))
+    path = (FILES_DIR / rel).resolve()
+    ext = path.suffix.lower()
+
+    if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
+        return jsonify({"error": "Not found"}), 404
+
+    try:
+        if ext == '.csv':
+            df = pd.read_csv(path, nrows=100, on_bad_lines='skip', encoding_errors='replace')
+            # Add this line to handle NaN
+            df = df.fillna("")
+            data = [df.columns.tolist()] + df.values.tolist()
+            return jsonify({"data": data, "total_rows": "Large File"})
+
+        elif ext in ['.xlsx', '.xls']:
+            xl = pd.ExcelFile(path)
+            sheet_name = request.args.get("sheet") or xl.sheet_names[0]
+            df = pd.read_excel(path, sheet_name=sheet_name, nrows=100)
+
+            # --- CRITICAL FIX HERE ---
+            # Replace NaN/Infinity with empty strings so JSON remains valid
+            df = df.fillna("")
+
+            data = [df.columns.tolist()] + df.values.tolist()
+            return jsonify({"data": data, "sheets": xl.sheet_names, "total_rows": "Large File"})
+
+        return jsonify({"error": "Unsupported preview format"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ingest/status")
+def get_ingest_status():
+    """Returns the current status of the RAG ingestion process."""
+    if not rag:
+        return jsonify({"status": "idle", "files": []})
+
+    # We will define 'get_status()' in the next step inside rag_engine.py
+    return jsonify(rag.get_status())
 
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
