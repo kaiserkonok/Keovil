@@ -131,7 +131,14 @@
         .jstree-default .jstree-clicked { color: var(--accent) !important; }
         .jstree-folder { color: var(--accent) !important; }
 
-        #editor-panel { flex:1; display:flex; flex-direction:column; background: var(--bg-deep); }
+        #editor-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-deep);
+            height: 100vh; /* Anchor the total height to the viewport */
+            overflow: hidden; /* Prevent the header from being pushed out */
+        }
         .editor-header {
             padding: 15px 25px;
             border-bottom: 1px solid var(--border);
@@ -264,6 +271,33 @@
             text-overflow: ellipsis;
             display: block;
         }
+
+        /* --- Optimized Spreadsheet Layout --- */
+
+/* Ensures the viewer doesn't push the status bar off-screen */
+#spreadsheet-viewer {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0; /* CRITICAL: Allows flex items to shrink below their content size */
+    overflow: hidden;
+}
+
+/* Fixes the 'ugly left' look and ensures headers stay put */
+.data-grid-table {
+    min-width: 100%;
+    width: max-content; /* Allows columns to push outward if needed */
+    border-collapse: separate;
+    border-spacing: 0;
+}
+
+/* Keeps the top bar (Sheet selector/Download) fixed while you scroll data */
+#spreadsheet-viewer .controls {
+    flex-shrink: 0;
+    background: var(--sidebar-bg);
+    z-index: 20;
+    border-bottom: 1px solid var(--border);
+}
     </style>
 </head>
 <body>
@@ -501,96 +535,102 @@
         // --- UPDATED SPREADSHEET (CSV/EXCEL) LOGIC ---
         async function loadSpreadsheetFile(path) {
             const filename = path.split('/').pop();
-            const ext = getFileExtension(filename);
             const container = document.getElementById('sheet-table-container');
             const selector = document.getElementById('sheet-selector');
 
             try {
-                const response = await fetch(`/api/explorer/files/download?path=${encodeURIComponent(path)}`);
+                // 1. Call the PREVIEW API instead of the DOWNLOAD API
+                const resp = await fetch(`/api/explorer/files/preview?path=${encodeURIComponent(path)}`);
+                const result = await resp.json();
 
-                if (ext === 'csv') {
-                    selector.style.display = 'none'; // No sheet selector for CSV
-                    const text = await response.text();
-                    Papa.parse(text, {
-                        skipEmptyLines: true,
-                        complete: function(results) {
-                            renderRawDataToTable(results.data, 'sheet-table-container');
-                        }
-                    });
-                } else {
+                if (result.error) throw new Error(result.error);
+
+                // 2. Handle Sheet Selection (for Excel)
+                if (result.sheets && result.sheets.length > 0) {
                     selector.style.display = 'block';
-                    const arrayBuffer = await response.arrayBuffer();
-                    const workbook = XLSX.read(new Uint8Array(arrayBuffer), { type: 'array' });
                     selector.innerHTML = '';
-                    workbook.SheetNames.forEach((name, i) => {
-                        const opt = document.createElement('option'); opt.value = i; opt.textContent = name; selector.appendChild(opt);
+                    result.sheets.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        selector.appendChild(opt);
                     });
 
-                    const updateExcelView = (idx) => {
-                        const sheet = workbook.Sheets[workbook.SheetNames[idx]];
-                        const data = XLSX.utils.sheet_to_json(sheet, {header: 1});
-                        renderRawDataToTable(data, 'sheet-table-container');
+                    // Re-fetch preview when the user changes the sheet
+                    selector.onchange = async () => {
+                        const sheetName = selector.value;
+                        const sResp = await fetch(`/api/explorer/files/preview?path=${encodeURIComponent(path)}&sheet=${encodeURIComponent(sheetName)}`);
+                        const sData = await sResp.json();
+                        renderRawDataToTable(sData.data, 'sheet-table-container');
                     };
-
-                    updateExcelView(0);
-                    selector.onchange = () => updateExcelView(parseInt(selector.value));
+                } else {
+                    selector.style.display = 'none';
                 }
+
+                // 3. Render the 100-row chunk returned by the server
+                renderRawDataToTable(result.data, 'sheet-table-container');
 
                 document.getElementById('spreadsheet-viewer').style.display = 'flex';
                 document.getElementById('editorPlaceholder').style.display = 'none';
                 hideSaveButton();
-            } catch (err) { showUnsupportedFile('Error loading spreadsheet'); }
-        }
+            } catch (err) {
+                console.error(err);
+                showUnsupportedFile('Error loading spreadsheet preview');
+            }
+}
 
-        // Unified rendering for Data Grids
         // Unified rendering for Data Grids with a safety limit
-        function renderRawDataToTable(data, containerId) {
-            const container = document.getElementById(containerId);
-            const rowLimit = 10; // Match your database limit
+function renderRawDataToTable(data, containerId) {
+    const container = document.getElementById(containerId);
 
-            if (!data || data.length === 0) {
-                container.innerHTML = '<div style="padding:20px; color:var(--muted);">No data found.</div>';
-                return;
-            }
+    // We don't need to slice(0, 100) here anymore because the
+    // SERVER already did that. Data IS the 100-row chunk.
+    if (!data || data.length === 0) {
+        container.innerHTML = '<div style="padding:20px; color:var(--muted);">No data found.</div>';
+        return;
+    }
 
-            const totalRows = data.length;
-            const displayData = data.slice(0, rowLimit);
-            const isTruncated = totalRows > rowLimit;
+    const totalRows = data.length;
+    let html = '';
 
-            let html = '';
+    // 1. Updated Table HTML with the class that matches our new CSS
+    html += `<table class="data-grid-table">
+                <thead>
+                    <tr>`;
 
-            // Add a truncation warning if the file is huge
-            if (isTruncated) {
-                html += `<div style="padding: 10px 20px; background: #443d11; color: #e3b341; font-size: 12px; border-bottom: 1px solid var(--border);">
-                            <i class="fas fa-exclamation-triangle"></i> Showing first ${rowLimit} of ${totalRows.toLocaleString()} rows to prevent browser crash.
-                         </div>`;
-            }
+    // Headers (Row 0)
+    data[0].forEach(col => {
+        html += `<th>${col || ''}</th>`;
+    });
+    html += `</tr></thead><tbody>`;
 
-            html += `<table class="data-grid-table"><thead><tr>`;
+    // Body (Starting from Row 1)
+    for (let i = 1; i < data.length; i++) {
+        html += `<tr>`;
+        data[i].forEach(cell => {
+            // Fix: Show a dash for empty strings from Pandas fillna("")
+            const val = (cell === "" || cell === null || cell === undefined) ? '-' : cell;
+            html += `<td>${val}</td>`;
+        });
+        html += `</tr>`;
+    }
 
-            // Headers (Row 0)
-            displayData[0].forEach(col => html += `<th>${col || ''}</th>`);
-            html += `</tr></thead><tbody>`;
+    html += `</tbody></table>`;
 
-            // Body (Starting from Row 1)
-            for (let i = 1; i < displayData.length; i++) {
-                html += `<tr>`;
-                displayData[i].forEach(cell => {
-                    const val = (cell === null || cell === undefined) ? '' : cell;
-                    html += `<td>${val}</td>`;
-                });
-                html += `</tr>`;
-            }
+    // 2. Inject the HTML
+    container.innerHTML = html;
 
-            html += `</tbody></table>`;
-            container.innerHTML = html;
+    // 3. Reset Scroll (CRITICAL: This fixes the ugly alignment/view)
+    container.scrollLeft = 0;
+    container.scrollTop = 0;
 
-            // Update the stats label if it exists
-            const statsEl = document.getElementById('sheet-stats');
-            if (statsEl) {
-                statsEl.textContent = isTruncated ? `SHOWING ${rowLimit}/${totalRows.toLocaleString()} ROWS` : `${totalRows} ROWS LOADED`;
-            }
-        }
+    // 4. Update the stats label
+    const statsEl = document.getElementById('sheet-stats');
+    if (statsEl) {
+        // Since the server sends 100 rows, we label it as a preview
+        statsEl.textContent = `PREVIEW: ${totalRows} ROWS LOADED`;
+    }
+}
 
         async function loadDocFile(path) {
             try {

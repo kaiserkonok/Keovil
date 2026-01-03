@@ -472,7 +472,7 @@ def get_db_data():
 
         # Use parameterized query for table name is tricky,
         # but since we get table names from the DB itself, it's safer.
-        cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 500")
+        cursor.execute(f"SELECT * FROM `{table_name}` LIMIT 100")
         rows = cursor.fetchall()
 
         if not rows:
@@ -504,17 +504,21 @@ def preview_data_file():
 
     try:
         if ext == '.csv':
-            # Read only first 500 rows using pandas
-            df = pd.read_csv(path, nrows=500, on_bad_lines='skip', encoding_errors='replace')
-            # Convert to list of lists (row 0 is headers)
+            df = pd.read_csv(path, nrows=100, on_bad_lines='skip', encoding_errors='replace')
+            # Add this line to handle NaN
+            df = df.fillna("")
             data = [df.columns.tolist()] + df.values.tolist()
             return jsonify({"data": data, "total_rows": "Large File"})
 
         elif ext in ['.xlsx', '.xls']:
-            # For Excel, we get the sheet names first
             xl = pd.ExcelFile(path)
             sheet_name = request.args.get("sheet") or xl.sheet_names[0]
-            df = pd.read_excel(path, sheet_name=sheet_name, nrows=500)
+            df = pd.read_excel(path, sheet_name=sheet_name, nrows=100)
+
+            # --- CRITICAL FIX HERE ---
+            # Replace NaN/Infinity with empty strings so JSON remains valid
+            df = df.fillna("")
+
             data = [df.columns.tolist()] + df.values.tolist()
             return jsonify({"data": data, "sheets": xl.sheet_names, "total_rows": "Large File"})
 

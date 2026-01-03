@@ -53,10 +53,13 @@ class SQLQueryAgent:
                 {schema}
 
                 INSTRUCTIONS:
-                - ALWAYS start with a 'Thought:' section explaining your logic.
+                - ALWAYS start with a 'Thought:' section.
                 - If the request requires data, provide the SQLite query in a ```sql block.
+                - **CRITICAL**: Do NOT use "Meta-Commands" or "Dot-Commands" (e.g., .tables, .schema). 
+                - Use the **Standard System Catalog** instead: 
+                  - To list tables: `SELECT name FROM sqlite_master WHERE type='table';`
+                  - To see table structure: `PRAGMA table_info('table_name');`
                 - If multiple tables are needed, separate queries with a semicolon.
-                - If it's just a general chat (hello, etc.), respond naturally without SQL.
                 """
 
                 initial_response = self.llm.invoke(f"{system_context}\n\nUser Request: {query}").content
