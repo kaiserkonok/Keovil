@@ -490,6 +490,39 @@ def get_db_data():
         return jsonify({"error": str(e)}), 500
 
 
+import pandas as pd
+
+
+@app.route("/api/explorer/files/preview")
+def preview_data_file():
+    rel = safe_rel_path(request.args.get("path"))
+    path = (FILES_DIR / rel).resolve()
+    ext = path.suffix.lower()
+
+    if not str(path).startswith(str(FILES_DIR.resolve())) or not path.exists():
+        return jsonify({"error": "Not found"}), 404
+
+    try:
+        if ext == '.csv':
+            # Read only first 500 rows using pandas
+            df = pd.read_csv(path, nrows=500, on_bad_lines='skip', encoding_errors='replace')
+            # Convert to list of lists (row 0 is headers)
+            data = [df.columns.tolist()] + df.values.tolist()
+            return jsonify({"data": data, "total_rows": "Large File"})
+
+        elif ext in ['.xlsx', '.xls']:
+            # For Excel, we get the sheet names first
+            xl = pd.ExcelFile(path)
+            sheet_name = request.args.get("sheet") or xl.sheet_names[0]
+            df = pd.read_excel(path, sheet_name=sheet_name, nrows=500)
+            data = [df.columns.tolist()] + df.values.tolist()
+            return jsonify({"data": data, "sheets": xl.sheet_names, "total_rows": "Large File"})
+
+        return jsonify({"error": "Unsupported preview format"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/ingest/status")
 def get_ingest_status():
     """Returns the current status of the RAG ingestion process."""

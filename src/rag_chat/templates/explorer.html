@@ -543,29 +543,53 @@
         }
 
         // Unified rendering for Data Grids
+        // Unified rendering for Data Grids with a safety limit
         function renderRawDataToTable(data, containerId) {
             const container = document.getElementById(containerId);
+            const rowLimit = 10; // Match your database limit
+
             if (!data || data.length === 0) {
                 container.innerHTML = '<div style="padding:20px; color:var(--muted);">No data found.</div>';
                 return;
             }
 
-            let html = `<table class="data-grid-table"><thead><tr>`;
-            // Headers
-            data[0].forEach(col => html += `<th>${col || ''}</th>`);
+            const totalRows = data.length;
+            const displayData = data.slice(0, rowLimit);
+            const isTruncated = totalRows > rowLimit;
+
+            let html = '';
+
+            // Add a truncation warning if the file is huge
+            if (isTruncated) {
+                html += `<div style="padding: 10px 20px; background: #443d11; color: #e3b341; font-size: 12px; border-bottom: 1px solid var(--border);">
+                            <i class="fas fa-exclamation-triangle"></i> Showing first ${rowLimit} of ${totalRows.toLocaleString()} rows to prevent browser crash.
+                         </div>`;
+            }
+
+            html += `<table class="data-grid-table"><thead><tr>`;
+
+            // Headers (Row 0)
+            displayData[0].forEach(col => html += `<th>${col || ''}</th>`);
             html += `</tr></thead><tbody>`;
 
-            // Body
-            for (let i = 1; i < data.length; i++) {
+            // Body (Starting from Row 1)
+            for (let i = 1; i < displayData.length; i++) {
                 html += `<tr>`;
-                data[i].forEach(cell => {
+                displayData[i].forEach(cell => {
                     const val = (cell === null || cell === undefined) ? '' : cell;
                     html += `<td>${val}</td>`;
                 });
                 html += `</tr>`;
             }
+
             html += `</tbody></table>`;
             container.innerHTML = html;
+
+            // Update the stats label if it exists
+            const statsEl = document.getElementById('sheet-stats');
+            if (statsEl) {
+                statsEl.textContent = isTruncated ? `SHOWING ${rowLimit}/${totalRows.toLocaleString()} ROWS` : `${totalRows} ROWS LOADED`;
+            }
         }
 
         async function loadDocFile(path) {
