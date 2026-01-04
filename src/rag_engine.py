@@ -212,6 +212,22 @@ class CollegeRAG:
     def _initial_sync(self):
         """Reconciles filesystem with vector store using SQLite for speed."""
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
+
+        # NEW: Check if the vector store is actually empty
+        # If Qdrant is empty, we must clear the librarian's notebook (SQLite)
+        try:
+            # We ask the engine for information about the collection
+            collection_info = self.engine.client.get_collection(self.engine.collection_name)
+            if collection_info.points_count == 0:
+                print(f"{Colors.WARNING}[Sync] Vector store is empty! Forcing full re-sync...{Colors.ENDC}")
+                conn = sqlite3.connect(self.manifest_db)
+                conn.execute("DELETE FROM file_hashes")
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            # If the collection doesn't even exist yet, that's fine too
+            print(f"{Colors.OKCYAN}[Sync] Starting fresh...{Colors.ENDC}")
+
         SUPPORTED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.pptx', '.md'}
 
         db_state = self._get_stored_hashes()
