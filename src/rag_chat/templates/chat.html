@@ -310,6 +310,37 @@
         to { opacity: 1; transform: translateY(0); }
     }
 
+    /* Status Indicator Styles */
+    .status-indicator {
+        width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+    }
+    .pulse-amber {
+        background: #e3b341; box-shadow: 0 0 10px #e3b341;
+        animation: status-pulse 1.5s infinite;
+    }
+    .pulse-green {
+        background: #3fb950; box-shadow: 0 0 10px #3fb950;
+        animation: status-pulse 1s infinite;
+    }
+    @keyframes status-pulse {
+        0% { transform: scale(1); opacity: 1; }
+        50% { transform: scale(1.3); opacity: 0.5; }
+        100% { transform: scale(1); opacity: 1; }
+    }
+
+    /* Silent Input Lock */
+    .query-input:disabled {
+        cursor: wait;
+        border-color: var(--accent);
+        animation: borderPulse 2s infinite ease-in-out;
+        opacity: 0.8;
+    }
+    @keyframes borderPulse {
+        0% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+        50% { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); }
+        100% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+    }
+
     /* Hot Scrollbar Styling */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -353,6 +384,19 @@
       </div>
     </div>
   </div>
+
+  <div id="ingest-status-card" style="display:none; position:fixed; bottom:120px; right:40px; width:320px; background: rgba(22, 27, 34, 0.8); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; transition: all 0.3s ease;">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <div id="status-dot" class="status-indicator"></div>
+        <span id="status-title" style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); font-weight: 500;">ENGINE ACTIVE</span>
+    </div>
+    <div style="height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin: 8px 0;">
+        <div id="ingest-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease;"></div>
+    </div>
+    <span id="current-status-detail" style="font-size: 11px; font-family: 'Fira Code', monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">Initializing...</span>
+  </div>
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
 <script>
 /**
@@ -557,6 +601,58 @@ inputBox.onkeydown = e => {
 };
 
 loadSessions();
+
+
+// Initialize Socket Connection
+const socket = io();
+
+socket.on('system_status', function(data) {
+    const card = document.getElementById('ingest-status-card');
+    const dot = document.getElementById('status-dot');
+    const bar = document.getElementById('ingest-progress-bar');
+    const title = document.getElementById('status-title');
+    const detail = document.getElementById('current-status-detail');
+
+    const isSql = data.sql_syncing === true;
+    const isRag = data.rag && data.rag.state === 'processing';
+    const isThinking = data.is_busy === true;
+
+    // 1. UPDATE THE FLOATING CARD (THE "TALKING" PART)
+    if (isSql || isRag) {
+        card.style.display = 'block';
+        card.style.opacity = '1';
+
+        if (isSql) {
+            dot.className = 'status-indicator pulse-amber';
+            title.innerText = "SQL RE-INDEXING";
+            detail.innerText = "Analyzing database schema...";
+            bar.style.width = "40%";
+        } else {
+            dot.className = 'status-indicator pulse-green';
+            title.innerText = "VECTORIZING DOCUMENTS";
+            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+
+            if (data.rag.total_files > 0) {
+                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
+                bar.style.width = pc + "%";
+            } else {
+                bar.style.width = "100%";
+            }
+        }
+    } else {
+        // Smooth fade out
+        card.style.opacity = '0';
+        setTimeout(() => {
+            if(card.style.opacity === '0') card.style.display = 'none';
+        }, 300);
+    }
+
+    // 2. THE INPUT BOX (THE "SILENT" PART)
+    // No text changes, just the pulse animation and disabling the button
+    inputBox.disabled = (isSql || isRag || isThinking);
+    sendBtn.disabled = (isSql || isRag || isThinking);
+});
+
 </script>
 </body>
 </html>
