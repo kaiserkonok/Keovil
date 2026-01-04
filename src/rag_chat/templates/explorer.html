@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>Lora Lab — Explorer</title>
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/themes/default/style.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jstree/3.3.12/jstree.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -206,10 +207,10 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             padding: 16px;
-            z-index: 9999;
             box-shadow: 0 10px 30px rgba(0,0,0,0.5);
             display: none; /* Hidden by default */
             transition: all 0.3s ease;
+            z-index: 99999 !important; /* Make sure it's on top of EVERYTHING */
         }
 
         .status-header {
@@ -774,7 +775,6 @@
 
         async function deleteItem(path){
             if(!confirm(`Delete "${path}"?`)) return;
-            startStatusPolling();
             const resp=await fetch('/api/explorer/files/delete',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path})});
             if((await resp.json()).ok) { refreshTree(); showPlaceholder(); }
         }
@@ -801,8 +801,6 @@
                 const result = await resp.json();
                 if(result.ok) {
                     refreshTree();
-                    // START polling ONLY when a real upload happens
-                    startStatusPolling();
                 }
             } catch (e) {
                 console.error("Upload failed", e);
@@ -843,62 +841,59 @@
         document.addEventListener('keydown', e => { if(e.ctrlKey && e.key==='s'){ e.preventDefault(); saveFile(); }});
 
                 // --- REAL-TIME INGESTION MONITORING ---
-        let statusInterval = null;
+        // --- ELITE REAL-TIME MONITORING (SOCKET.IO) ---
+// --- ELITE REAL-TIME MONITORING (SOCKET.IO) ---
+// Adding a small delay to ensure the DOM is fully ready and the server is responsive
+const socket = io({
+    transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
+    reconnectionAttempts: 5
+});
 
-        function updateIngestStatus() {
-            fetch('/api/ingest/status')
-                .then(res => res.json())
-                .then(data => {
-                    const card = document.getElementById('ingest-status-card');
+socket.on('connect', () => {
+    console.log("✅ Connected to RTX 5060 Ti Monitoring System");
+});
 
-                    // THE FIX: If idle, hide the card AND stop the timer
-                    if (!data || data.state === 'idle') {
-                        $(card).fadeOut();
-                        if (statusInterval) {
-                            clearInterval(statusInterval);
-                            statusInterval = null;
-                        }
-                        return;
-                    }
+socket.on('system_status', function(data) {
+    console.log("DEBUG Status Received:", data); // Check F12 Console for this!
 
-                    $(card).fadeIn();
-                    const dot = document.getElementById('status-dot');
-                    const bar = document.getElementById('ingest-progress-bar');
-                    const title = document.getElementById('status-title');
-                    const fileText = document.getElementById('current-ingest-file');
+    const card = $('#ingest-status-card');
+    const dot = document.getElementById('status-dot');
+    const bar = document.getElementById('ingest-progress-bar');
+    const title = document.getElementById('status-title');
+    const fileText = document.getElementById('current-ingest-file');
 
-                    if (data.state === 'waiting') {
-                        dot.className = 'status-indicator pulse-amber';
-                        title.innerText = "QUEUING BATCH...";
-                        fileText.innerText = data.message;
-                        bar.style.width = "0%";
-                    } else if (data.state === 'processing') {
-                        dot.className = 'status-indicator pulse-green';
-                        title.innerText = "VECTORIZING (GPU)...";
-                        fileText.innerText = data.current_file || "Reading documents...";
-                        bar.style.width = data.progress + "%";
-                    }
-                })
-                .catch(err => {
-                    console.error("Status check failed:", err);
-                    clearInterval(statusInterval);
-                    statusInterval = null;
-                });
+    if (data.rag && data.rag.state !== 'idle') {
+        // Stop current animations and show the card
+        card.stop(true, true).show();
+        card.css('opacity', '1');
+
+        // Handle Different States
+        if (data.rag.state === 'waiting') {
+            dot.className = 'status-indicator pulse-amber';
+            title.innerText = "QUEUING BATCH...";
+            fileText.innerText = data.rag.message || "Waiting for quiet period...";
+            bar.style.width = "15%";
         }
+        else if (data.rag.state === 'processing') {
+            dot.className = 'status-indicator pulse-green';
 
-        function startStatusPolling() {
-            if (!statusInterval) {
-                statusInterval = setInterval(updateIngestStatus, 1000); // Check every second
+            // UI Hint: If 'Purging' is in the text, change title to RED
+            if (data.rag.current_file && data.rag.current_file.includes("Purging")) {
+                title.innerText = "PURGING DATA...";
+                dot.style.background = "#ff7b72"; // Red for deletion
+            } else {
+                title.innerText = "VECTORIZING (GPU)...";
+                dot.style.background = "#3fb950"; // Green for processing
             }
-        }
 
-        // Hook into your existing uploadBatch function
-        const originalUploadBatch = uploadBatch;
-        uploadBatch = async function(files, path=currentFolder) {
-            await originalUploadBatch(files, path);
-            // After upload finishes, start monitoring the backend ingestion
-            startStatusPolling();
-        };
+            fileText.innerText = data.rag.current_file || "Processing documents...";
+            bar.style.width = (data.rag.progress || 10) + "%";
+        }
+    } else {
+        // Idle: Smooth fade out
+        card.fadeOut(1000);
+    }
+});
     </script>
 </body>
 </html>

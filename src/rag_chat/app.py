@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 import os
 import sys
 import shutil
@@ -9,7 +11,9 @@ from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
+from flask_socketio import SocketIO # <--- ADD THIS
 from colorama import Fore, Style, init
+
 init(autoreset=True)
 
 # ---------------------------------------------------------
@@ -99,45 +103,55 @@ except ImportError:
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # Globals for engines
 rag = None
 sql_system = None
 
+
 def initialize_engines():
     """
     Initializes heavy GPU engines only once.
-    Protects VRAM while allowing Flask live-reload to work.
+    Passes the socketio instance to engines so animations work.
     """
     global rag, sql_system
 
-    # Only initialize in the main worker process, not the reloader's watcher process
-    is_main_process = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    # THE MAGIC GUARD: Prevents double-loading and VRAM crashes
+    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     is_debug_disabled = not app.debug
 
-    if is_main_process or is_debug_disabled:
-        # 1. Init RAG engine
+    if is_reloader_child or is_debug_disabled:
+        print(f"{Fore.GREEN}🚀 [Worker] Initializing heavy engines on RTX 5060 Ti...{Style.RESET_ALL}")
+
+        # 1. Init RAG engine with SocketIO support
         if CollegeRAG and rag is None:
             try:
                 rag = CollegeRAG(
                     str(DATA_DIR),
                     llm_model=current_cfg["llm_model"],
-                    temperature=current_cfg["temperature"]
+                    temperature=current_cfg["temperature"],
+                    socketio=socketio  # <--- PASS MICROPHONE TO RAG
                 )
-                print("✅ [Worker] RAG engine synchronized and initialized")
+                print("✅ [Worker] RAG engine synchronized")
             except Exception as e:
                 print(f"❌ RAG init failed: {e}")
 
-        # 2. Init SQL Agent
+        # 2. Init SQL Agent with SocketIO support
         if StructuredDataAgent and sql_system is None:
             try:
-                sql_system = StructuredDataAgent()
+                # Assuming StructuredDataAgent can also accept socketio
+                sql_system = StructuredDataAgent(socketio=socketio) # <--- PASS MICROPHONE TO SQL
                 sql_system.start_monitoring()
                 print("✅ [Worker] SQL Agent initialized")
             except Exception as e:
-                print(f"❌ SQL Agent init failed: {e}")
+                # If your SQL agent doesn't take socketio yet,
+                # fallback to old way so it doesn't crash
+                sql_system = StructuredDataAgent()
+                sql_system.start_monitoring()
+                print("✅ [Worker] SQL Agent initialized (No Socket Support)")
     else:
-        print("⏳ Waiting for Flask Reloader worker to spawn...")
+        # Parent process just stays quiet and watches for code changes
+        print(f"{Fore.YELLOW}🛡️ [Watcher] Reloader active. Waiting for code changes...{Style.RESET_ALL}")
 
 # Trigger engine initialization
 initialize_engines()
@@ -225,6 +239,8 @@ def api_chat():
         history_rows = cur.fetchall()
         rag_history = [("You" if r[0] == 'user' else "AI", r[1]) for r in history_rows]
 
+    socketio.emit('system_status', {"is_busy": True, "rag": {"state": "processing"}})
+
     ans = ""
     if rag:
         try:
@@ -233,6 +249,7 @@ def api_chat():
             conn.close()
             return jsonify({"error": str(e)}), 500
     else:
+        socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
         ans = "(RAG not initialized)"
 
     if not session_id:
@@ -253,6 +270,7 @@ def api_chat():
     )
     conn.commit()
     conn.close()
+    socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
     return jsonify({"response": ans, "session_id": session_id})
 
 @app.route("/api/chat/sessions/delete", methods=["POST"])
@@ -426,11 +444,16 @@ def list_files_tree():
 
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
+    socketio.emit('system_status', {"is_busy": True, "sql_syncing": True})
     data = request.json or {}
     query = data.get("query", "")
     if not query:
+        socketio.emit('system_status', {"is_busy": False, "sql_syncing": False})
         return jsonify({"output": "Please enter a query."}), 400
+
     response = sql_system.query(query) if sql_system else "SQL system not initialized."
+    socketio.emit('system_status', {"is_busy": False, "sql_syncing": False})
+
     return jsonify({"output": response})
 
 
@@ -529,13 +552,16 @@ def preview_data_file():
 
 @app.route("/api/ingest/status")
 def get_ingest_status():
-    """Returns the current status of the RAG ingestion process."""
-    if not rag:
-        return jsonify({"status": "idle", "files": []})
+    """Returns the current status and triggers a broadcast."""
+    rag_info = rag.get_status() if rag else {"state": "idle"}
+    sql_is_syncing = sql_system.is_syncing if sql_system else False
 
-    # We will define 'get_status()' in the next step inside rag_engine.py
-    return jsonify(rag.get_status())
+    return jsonify({
+        "is_busy": (rag_info.get("state") != "idle") or sql_is_syncing,
+        "rag": rag_info,
+        "sql_syncing": sql_is_syncing
+    })
 
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
-    app.run(debug=True, threaded=True, host="0.0.0.0", port=5000)
+    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)

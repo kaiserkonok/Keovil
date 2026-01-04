@@ -8,6 +8,7 @@
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
     <style>
         :root {
@@ -189,11 +190,24 @@
             position: sticky;
             top: 0;
             z-index: 10;
-            background: #21262d; /* Matches your current th background */
+            background: #21262d; /* Ensure this is solid! */
+            border-bottom: 2px solid var(--accent);
         }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
     </style>
 </head>
 <body>
+
+<div id="system-lock-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10, 12, 16, 0.6); backdrop-filter: blur(12px) saturate(180%); z-index:9999; flex-direction:column; align-items:center; justify-content:center; transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);">
+    <div class="loader-content" style="text-align: center; transform: translateY(20px); animation: slideUp 0.6s forwards;">
+        <div class="spinner-box" style="width: 60px; height: 60px; border: 3px solid transparent; border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite cubic-bezier(0.5, 0, 0.5, 1); margin: 0 auto 20px;"></div>
+
+        <h2 id="lock-title" style="font-family: 'Fira Code', monospace; color: white; font-weight: 400; letter-spacing: 1px; margin: 0;">SQL ENGINE SYNCING</h2>
+        <p id="lock-detail" style="color: var(--input-num); font-size: 14px; margin-top: 10px;">Refreshing database schema for your RTX 5060 Ti...</p>
+    </div>
+</div>
 
 <div class="notebook-container" id="notebook">
     <div class="header-area">
@@ -223,14 +237,14 @@
 
     let cellCount = 1;
 
+    // REPLACE BOTH handleKey FUNCTIONS WITH THIS ONE:
     async function handleKey(e) {
-        if (e.key === 'Enter') {
-            const input = document.getElementById('userInput');
+        const input = document.getElementById('userInput');
+        // Don't send if: 1. Not Enter, 2. Empty, 3. Input is disabled (System Busy)
+        if (e.key === 'Enter' && input.value.trim() !== '' && !input.disabled) {
             const query = input.value;
-            if (!query.trim()) return;
-
-            addCell(query);
-            input.value = '';
+            input.value = ''; // Clear immediately for snappy feel
+            await addCell(query);
         }
     }
 
@@ -283,6 +297,47 @@
             `;
         }
     }
+
+    // Initialize Socket.IO
+    const socket = io();
+
+    // UI Elements to freeze
+    const overlay = document.getElementById('system-lock-overlay');
+    const userInput = document.getElementById('userInput');
+    const lockTitle = document.getElementById('lock-title');
+    const lockDetail = document.getElementById('lock-detail');
+
+    socket.on('connect', () => {
+        console.log("Connected to Lora SQL Engine");
+    });
+
+    socket.on('disconnect', () => {
+        userInput.placeholder = "Connection lost. Reconnecting...";
+        userInput.disabled = true;
+    });
+
+    // LISTEN FOR BROADCASTS
+    socket.on('system_status', function(data) {
+        const isBusy = data.is_busy || (data.rag && data.rag.state !== 'idle');
+
+        if (isBusy) {
+            overlay.style.display = 'flex'; // Shows the overlay
+            userInput.disabled = true;
+
+            // Specific text for SQL vs RAG
+            if (data.sql_syncing) {
+                lockTitle.innerText = "DATABASE SYNCING";
+                lockDetail.innerText = "RTX 5060 Ti is re-indexing tables...";
+            } else if (data.rag && data.rag.state === 'processing') {
+                lockTitle.innerText = "VECTORIZING DOCUMENTS";
+                lockDetail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+            }
+        } else {
+            overlay.style.display = 'none'; // Hides the overlay
+            userInput.disabled = false;
+            userInput.placeholder = "Ask your data...";
+        }
+    });
 </script>
 
 </body>

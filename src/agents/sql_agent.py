@@ -12,6 +12,7 @@ from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from tqdm import tqdm
+from flask_socketio import emit
 
 init(autoreset=True)
 
@@ -170,9 +171,11 @@ class IngestionHandler(FileSystemEventHandler):
 
 
 class StructuredDataAgent:
-    def __init__(self, db_path=None, watch_dir=None):
+    def __init__(self, socketio=None, db_path=None, watch_dir=None):
         home = str(Path.home())
         base = os.path.join(home, ".k_rag_storage")
+
+        self.socketio = socketio  # <--- Store the microphone!
 
         self.watch_dir = os.path.abspath(watch_dir or os.path.join(base, "data"))
         self.db_path = os.path.abspath(os.path.join(base, "database", "main.db"))
@@ -231,6 +234,7 @@ class StructuredDataAgent:
 
         try:
             self.is_syncing = True
+            self.broadcast_status()  # <--- ADD THIS (Shout: "I am starting!")
             print(f"{Fore.YELLOW}🔄 Syncing Folder (Smart Differential Sync)...")
 
             active_tables = []
@@ -325,6 +329,7 @@ class StructuredDataAgent:
             print(f"{Fore.CYAN}🧼 Finalizing sync and refreshing AI context...{Style.RESET_ALL}")
             self.agent.refresh_agent()
             self.is_syncing = False
+            self.broadcast_status()  # <--- ADD THIS (Shout: "I am finished!")
             self.sync_lock.release()
             print(f"{Fore.GREEN}✅ Sync Complete. System is ready.{Style.RESET_ALL}")
 
@@ -340,3 +345,21 @@ class StructuredDataAgent:
     def stop(self):
         self.observer.stop()
         self.observer.join()
+
+    def broadcast_status(self):
+        """Standardized status broadcast using the injected socket instance."""
+        if not self.socketio:
+            return
+
+        try:
+            # NO MORE IMPORTS FROM APP!
+            self.socketio.emit('system_status', {
+                "is_busy": self.is_syncing,
+                "sql_syncing": self.is_syncing,
+                "rag": {"state": "idle"}
+            })
+            status_text = 'Busy' if self.is_syncing else 'Idle'
+            print(f"{Fore.MAGENTA}📡 [SQL Socket] Status: {status_text}{Style.RESET_ALL}")
+        except Exception as e:
+            # Quietly fail if socket is disconnected
+            pass

@@ -64,10 +64,11 @@ class NewFileHandler(PatternMatchingEventHandler):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, llm_model='llama3.2:latest', temperature=0):
+    def __init__(self, data_dir=None, top_k=5, llm_model='llama3.2:latest', temperature=0, socketio=None):
         home = Path.home()
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
+        self.socketio = socketio
 
         self.status = {
             "state": "idle",  # idle, processing, syncing
@@ -146,6 +147,26 @@ class CollegeRAG:
             return {"state": "waiting", "message": f"Waiting for quiet period... ({pending_count} files queued)"}
 
         return self.status
+
+    def broadcast_status(self):
+        """Notifies the UI via WebSockets using the injected socket instance."""
+        # NO MORE 'from app import socketio' <--- This was the drama!
+
+        if not self.socketio:
+            # If for some reason socketio wasn't passed, just skip
+            return
+
+        try:
+            # Use the internal reference 'self.socketio'
+            self.socketio.emit('system_status', {
+                "is_busy": self.status["state"] != "idle",
+                "sql_syncing": False,
+                "rag": self.get_status()
+            }, namespace='/')  # namespace='/' is the default
+
+            print(f"{Colors.OKBLUE}[Socket] Status Sent: {self.status['state']}{Colors.ENDC}")
+        except Exception as e:
+            print(f"{Colors.FAIL}[Socket Error] {e}{Colors.ENDC}")
 
     # ----------------------
     # NEW: SQLite Database Logic
@@ -295,6 +316,7 @@ class CollegeRAG:
         self.status["state"] = "processing"
         self.status["total_files"] = len(new_files)
         self.status["progress"] = 0
+        self.broadcast_status()  # <--- SHOUT: "I started!"
 
         try:
             with self.lock:
@@ -335,12 +357,14 @@ class CollegeRAG:
             self.status["state"] = "idle"
             self.status["progress"] = 100
             self.status["current_file"] = ""
+            self.broadcast_status()  # <--- SHOUT: "I'm finished!"
 
     def remove_file(self, fpath):
         # Update status so the UI shows the "Purging" card
         self.status["state"] = "processing"
         self.status["current_file"] = f"Purging: {os.path.basename(fpath)}"
         self.status["progress"] = 50  # Start at 50% for visual effect
+        self.broadcast_status()  # <--- Add this
 
         try:
             with self.lock:
@@ -358,6 +382,7 @@ class CollegeRAG:
             self.status["progress"] = 100
             self.status["state"] = "idle"
             self.status["current_file"] = ""
+            self.broadcast_status()  # <--- Add this
 
     def _format_chat_history(self, chat_history):
         formatted_chat = ""
