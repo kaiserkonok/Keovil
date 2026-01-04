@@ -19,7 +19,7 @@ class SQLQueryAgent:
     def __init__(self, db_uri: str, model_name: str = 'qwen2.5-coder:7b-instruct'):
         self.db_uri = db_uri.replace('\\', '/')
         self.model_name = model_name
-        self.engine = create_engine(self.db_uri, pool_pre_ping=True)
+        self.engine = create_engine(self.db_uri, pool_pre_ping=True, connect_args={"timeout": 30})
         self.db = None
         self.llm = None
         self._lock = threading.Lock()
@@ -28,6 +28,8 @@ class SQLQueryAgent:
     def refresh_agent(self):
         with self._lock:
             try:
+                # IMPORTANT: Clear the old connection pool
+                self.engine.dispose()
                 self.db = SQLDatabase(self.engine)
                 # Optimized for your RTX 5060 Ti 16GB VRAM
                 self.llm = ChatOllama(
@@ -209,96 +211,110 @@ class StructuredDataAgent:
             """), {"path": file_path, "mtime": mtime, "fsize": fsize})
 
     def sync_database(self):
-        with self.sync_lock:
+        # The lock MUST be the very first thing.
+        # This prevents 'Thread 15' and 'Thread 16' from running at the same time.
+        if not self.sync_lock.acquire(blocking=False):
+            return  # If a sync is already running, just ignore this trigger
+
+        try:
             if self.is_syncing: return
             self.is_syncing = True
 
-            try:
-                print(f"{Fore.YELLOW}🔄 Syncing Folder (Smart Differential Sync)...")
-                active_tables = []
-                chunk_size = 100000
+            print(f"{Fore.YELLOW}🔄 Syncing Folder (Smart Differential Sync)...")
+            active_tables = []
+            chunk_size = 100000
 
-                for root, _, files in os.walk(self.watch_dir):
-                    for f_name in files:
-                        fp = os.path.join(root, f_name)
-                        ext = f_name.lower()
+            # 1. SCAN PHASE (Gather what should exist)
+            for root, _, files in os.walk(self.watch_dir):
+                for f_name in files:
+                    fp = os.path.join(root, f_name)
+                    if f_name in ["main.db", "sync_state.db"] or not any(f_name.lower().endswith(x) for x in
+                                                                         [".csv", ".xlsx", ".xls", ".db", ".sqlite",
+                                                                          ".sqlite3"]):
+                        continue
 
-                        if not any(ext.endswith(x) for x in [".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3"]): continue
-                        if f_name in ["main.db", "sync_state.db"]: continue
+                    t_base = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
 
-                        t_name = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
+                    # Add to active list
+                    if f_name.lower().endswith((".csv", ".xlsx", ".xls")):
+                        active_tables.append(t_base)
+                    else:  # It's a DB file
+                        try:
+                            with sqlite3.connect(fp) as temp_conn:
+                                tbls = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", temp_conn)
+                                active_tables.extend([t for t in tbls['name'] if not t.startswith('sqlite_')])
+                        except:
+                            pass
 
-                        if not self._should_sync(fp):
-                            print(f"{Fore.CYAN}⏩ Skipping (No Changes): {f_name}")
-                            if ext.endswith((".csv", ".xlsx", ".xls")):
-                                active_tables.append(t_name)
-                            elif ext.endswith((".db", ".sqlite", ".sqlite3")):
-                                try:
-                                    with sqlite3.connect(fp) as temp_conn:
-                                        tbls = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", temp_conn)
-                                        active_tables.extend([t for t in tbls['name'] if not t.startswith('sqlite_')])
-                                except: pass
-                            continue
+            # 2. SYNC PHASE (Only process if metadata says it's new/changed)
+            for root, _, files in os.walk(self.watch_dir):
+                for f_name in files:
+                    fp = os.path.join(root, f_name)
+                    ext = f_name.lower()
+                    if f_name in ["main.db", "sync_state.db"] or not any(
+                            ext.endswith(x) for x in [".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3"]):
+                        continue
 
-                        active_tables.append(t_name)
+                    if not self._should_sync(fp):
+                        continue
 
-                        if ext.endswith(".csv"):
-                            try:
-                                with self.agent.engine.begin() as conn:
-                                    conn.execute(text(f'DROP TABLE IF EXISTS "{t_name}"'))
-                                time.sleep(0.1)
-                                row_count = sum(1 for _ in open(fp, 'rb'))
-                                with tqdm(total=row_count, desc=f"Streaming {f_name}", unit="rows") as pbar:
-                                    for i, chunk in enumerate(pd.read_csv(fp, chunksize=chunk_size, on_bad_lines='skip', engine='c', low_memory=False, encoding_errors='replace')):
-                                        chunk.to_sql(t_name, self.agent.engine, if_exists='append', index=False)
-                                        pbar.update(len(chunk))
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ CSV Error {f_name}: {e}")
+                    t_name = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
 
-                        elif ext.endswith((".xlsx", ".xls")):
-                            try:
-                                df = pd.read_excel(fp)
-                                df.to_sql(t_name, self.agent.engine, if_exists="replace", index=False)
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ Excel Error {f_name}: {e}")
+                    # Handle DB Cloning
+                    if ext.endswith((".db", ".sqlite", ".sqlite3")):
+                        try:
+                            with sqlite3.connect(fp) as src_conn:
+                                tbl_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", src_conn)
+                                for t in [tn for tn in tbl_names['name'] if not tn.startswith('sqlite_')]:
+                                    # Use a fresh connection for the DROP to avoid long-held locks
+                                    with self.agent.engine.begin() as conn:
+                                        conn.execute(text(f'DROP TABLE IF EXISTS "{t}"'))
 
-                        elif ext.endswith((".db", ".sqlite", ".sqlite3")):
-                            try:
-                                with sqlite3.connect(fp) as src_conn:
-                                    tbl_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", src_conn)
-                                    db_tables = [t for t in tbl_names['name'] if not t.startswith('sqlite_')]
-                                    active_tables.extend(db_tables)
-                                    for t in db_tables:
-                                        total_rows = src_conn.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
-                                        with tqdm(total=total_rows, desc=f"Cloning {t}", unit="rows") as pbar:
-                                            first_chunk = True
-                                            for chunk in pd.read_sql(f'SELECT * FROM "{t}"', src_conn, chunksize=chunk_size):
-                                                mode = 'replace' if first_chunk else 'append'
-                                                chunk.to_sql(t, self.agent.engine, if_exists=mode, index=False)
-                                                first_chunk = False
-                                                pbar.update(len(chunk))
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ DB Error {f_name}: {e}")
+                                    df_iter = pd.read_sql(f'SELECT * FROM "{t}"', src_conn, chunksize=chunk_size)
+                                    for chunk in df_iter:
+                                        chunk.to_sql(t, self.agent.engine, if_exists='append', index=False)
+                            self._update_metadata(fp)
+                        except Exception as e:
+                            print(f"{Fore.RED}✖ DB Error {f_name}: {e}")
 
-                # --- CLEANUP ---
-                with self.agent.engine.begin() as conn:
-                    existing = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';")).fetchall()
-                    for (et,) in existing:
-                        if et.startswith('sqlite_'): continue
-                        if et not in active_tables:
-                            conn.execute(text(f'DROP TABLE IF EXISTS "{et}"'))
-                            with self.state_engine.begin() as s_conn:
-                                s_conn.execute(text("DELETE FROM file_history WHERE file_path LIKE :pattern"), {"pattern": f"%{et}%"})
-                            print(f"{Fore.RED}🔥 Dropped orphaned table: {et}")
-                    if active_tables: conn.execute(text("VACUUM"))
+                    # Handle CSV/Excel (Simplified)
+                    elif ext.endswith(".csv"):
+                        try:
+                            df = pd.read_csv(fp, low_memory=False, encoding_errors='replace')
+                            df.to_sql(t_name, self.agent.engine, if_exists='replace', index=False)
+                            self._update_metadata(fp)
+                        except Exception as e:
+                            print(f"{Fore.RED}✖ CSV Error: {e}")
 
-                self.agent.refresh_agent()
-                print(f"{Fore.GREEN}✅ Sync Complete. {len(active_tables)} tables active.{Style.RESET_ALL}")
-            finally:
-                self.is_syncing = False
+                    elif ext.endswith((".xlsx", ".xls")):
+                        try:
+                            df = pd.read_excel(fp)
+                            df.to_sql(t_name, self.agent.engine, if_exists='replace', index=False)
+                            self._update_metadata(fp)
+                        except Exception as e:
+                            print(f"{Fore.RED}✖ Excel Error: {e}")
+
+            # 3. CLEANUP PHASE (Drop tables that no longer have files)
+            with self.agent.engine.connect() as conn:
+                # Get existing tables without keeping a long transaction
+                res = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+                existing_on_disk = [r[0] for r in res.fetchall() if not r[0].startswith('sqlite_')]
+
+                for et in existing_on_disk:
+                    if et not in active_tables:
+                        # Drop inside its own tiny transaction
+                        with self.agent.engine.begin() as drop_conn:
+                            drop_conn.execute(text(f'DROP TABLE IF EXISTS "{et}"'))
+                        print(f"{Fore.RED}🔥 Dropped orphaned table: {et}")
+
+            self.agent.refresh_agent()
+            print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
+
+        except Exception as e:
+            print(f"{Fore.RED}✖ Sync Critical Error: {e}{Style.RESET_ALL}")
+        finally:
+            self.is_syncing = False
+            self.sync_lock.release()  # ALWAYS release the lock
 
     def query(self, text_input: str):
         return self.agent.ask(text_input)
