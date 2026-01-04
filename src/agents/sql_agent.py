@@ -28,17 +28,25 @@ class SQLQueryAgent:
     def refresh_agent(self):
         with self._lock:
             try:
-                # IMPORTANT: Clear the old connection pool
+                # 1. Kill all existing connections
                 self.engine.dispose()
+
+                # 2. CLEAR THE METADATA CACHE (The important part!)
+                # This wipes SQLAlchemy's memory of what tables exist
+                if hasattr(self, 'db') and self.db:
+                    self.db._metadata.clear()
+
+                # 3. Re-initialize the DB wrapper
                 self.db = SQLDatabase(self.engine)
-                # Optimized for your RTX 5060 Ti 16GB VRAM
+
+                # 4. Re-initialize the LLM
                 self.llm = ChatOllama(
                     model=self.model_name,
                     temperature=0,
                     num_ctx=16384,
                     timeout=180
                 )
-                print(f"{Fore.CYAN}🔄 SQL Engine & Schema Re-Initialized.{Style.RESET_ALL}")
+                print(f"{Fore.CYAN}🔄 CACHE PURGED: Database and AI memory are now 100% clean.{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}✖ SQL Agent init failed: {e}{Style.RESET_ALL}")
 
@@ -46,7 +54,13 @@ class SQLQueryAgent:
         with self._lock:
             if not self.db: return "SQL system not initialized."
             try:
-                schema = self.db.get_table_info()
+                # FORCE RELOAD SCHEMA BEFORE EACH QUESTION
+                self.db._metadata.clear()  # Wipe SQLAlchemy's internal cache
+                self.db = SQLDatabase(self.engine)  # Re-bind
+                schema = self.db.get_table_info()  # Get the REAL tables only
+
+                if not schema.strip():
+                    return "The database is currently empty. Please add some files."
 
                 # --- YOUR ORIGINAL BRAIN PROMPT ---
                 system_context = f"""
@@ -211,34 +225,34 @@ class StructuredDataAgent:
             """), {"path": file_path, "mtime": mtime, "fsize": fsize})
 
     def sync_database(self):
-        # The lock MUST be the very first thing.
-        # This prevents 'Thread 15' and 'Thread 16' from running at the same time.
+        # 1. PREVENT CONCURRENCY COLLISIONS
         if not self.sync_lock.acquire(blocking=False):
-            return  # If a sync is already running, just ignore this trigger
+            return
 
         try:
-            if self.is_syncing: return
             self.is_syncing = True
-
             print(f"{Fore.YELLOW}🔄 Syncing Folder (Smart Differential Sync)...")
+
             active_tables = []
             chunk_size = 100000
+            valid_extensions = (".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")
 
-            # 1. SCAN PHASE (Gather what should exist)
+            # --- 2. SCAN PHASE: Determine what should exist ---
             for root, _, files in os.walk(self.watch_dir):
                 for f_name in files:
-                    fp = os.path.join(root, f_name)
-                    if f_name in ["main.db", "sync_state.db"] or not any(f_name.lower().endswith(x) for x in
-                                                                         [".csv", ".xlsx", ".xls", ".db", ".sqlite",
-                                                                          ".sqlite3"]):
+                    # Filter out temporary Excel files and hidden system files
+                    if f_name.startswith("~$") or f_name.startswith(".") or f_name in ["main.db", "sync_state.db"]:
                         continue
 
+                    if not f_name.lower().endswith(valid_extensions):
+                        continue
+
+                    fp = os.path.join(root, f_name)
                     t_base = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
 
-                    # Add to active list
                     if f_name.lower().endswith((".csv", ".xlsx", ".xls")):
                         active_tables.append(t_base)
-                    else:  # It's a DB file
+                    else:  # Database files
                         try:
                             with sqlite3.connect(fp) as temp_conn:
                                 tbls = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", temp_conn)
@@ -246,30 +260,25 @@ class StructuredDataAgent:
                         except:
                             pass
 
-            # 2. SYNC PHASE (Only process if metadata says it's new/changed)
+            # --- 3. IMPORT PHASE: Load new/changed files ---
             for root, _, files in os.walk(self.watch_dir):
                 for f_name in files:
+                    if f_name.startswith("~$") or f_name.startswith(".") or not self._should_sync(
+                            os.path.join(root, f_name)):
+                        continue
+
                     fp = os.path.join(root, f_name)
                     ext = f_name.lower()
-                    if f_name in ["main.db", "sync_state.db"] or not any(
-                            ext.endswith(x) for x in [".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3"]):
-                        continue
-
-                    if not self._should_sync(fp):
-                        continue
-
                     t_name = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
 
-                    # Handle DB Cloning
+                    # Handle Database Files
                     if ext.endswith((".db", ".sqlite", ".sqlite3")):
                         try:
                             with sqlite3.connect(fp) as src_conn:
                                 tbl_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", src_conn)
                                 for t in [tn for tn in tbl_names['name'] if not tn.startswith('sqlite_')]:
-                                    # Use a fresh connection for the DROP to avoid long-held locks
                                     with self.agent.engine.begin() as conn:
                                         conn.execute(text(f'DROP TABLE IF EXISTS "{t}"'))
-
                                     df_iter = pd.read_sql(f'SELECT * FROM "{t}"', src_conn, chunksize=chunk_size)
                                     for chunk in df_iter:
                                         chunk.to_sql(t, self.agent.engine, if_exists='append', index=False)
@@ -277,44 +286,47 @@ class StructuredDataAgent:
                         except Exception as e:
                             print(f"{Fore.RED}✖ DB Error {f_name}: {e}")
 
-                    # Handle CSV/Excel (Simplified)
+                    # Handle CSV Files
                     elif ext.endswith(".csv"):
                         try:
                             df = pd.read_csv(fp, low_memory=False, encoding_errors='replace')
                             df.to_sql(t_name, self.agent.engine, if_exists='replace', index=False)
                             self._update_metadata(fp)
                         except Exception as e:
-                            print(f"{Fore.RED}✖ CSV Error: {e}")
+                            print(f"{Fore.RED}✖ CSV Error {f_name}: {e}")
 
+                    # Handle Excel Files (FORCED ENGINES)
                     elif ext.endswith((".xlsx", ".xls")):
                         try:
-                            df = pd.read_excel(fp)
+                            # Use openpyxl for xlsx, xlrd for xls. Explicitly.
+                            engine_to_use = "openpyxl" if ext.endswith(".xlsx") else "xlrd"
+                            df = pd.read_excel(fp, engine=engine_to_use)
                             df.to_sql(t_name, self.agent.engine, if_exists='replace', index=False)
                             self._update_metadata(fp)
                         except Exception as e:
-                            print(f"{Fore.RED}✖ Excel Error: {e}")
+                            print(f"{Fore.RED}✖ Excel Error {f_name}: {e}")
 
-            # 3. CLEANUP PHASE (Drop tables that no longer have files)
+            # --- 4. CLEANUP PHASE: Remove orphaned tables ---
             with self.agent.engine.connect() as conn:
-                # Get existing tables without keeping a long transaction
                 res = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
                 existing_on_disk = [r[0] for r in res.fetchall() if not r[0].startswith('sqlite_')]
 
                 for et in existing_on_disk:
                     if et not in active_tables:
-                        # Drop inside its own tiny transaction
                         with self.agent.engine.begin() as drop_conn:
                             drop_conn.execute(text(f'DROP TABLE IF EXISTS "{et}"'))
                         print(f"{Fore.RED}🔥 Dropped orphaned table: {et}")
 
-            self.agent.refresh_agent()
-            print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
-
         except Exception as e:
             print(f"{Fore.RED}✖ Sync Critical Error: {e}{Style.RESET_ALL}")
+
         finally:
+            # --- 5. REFRESH PHASE: Always update the AI Brain ---
+            print(f"{Fore.CYAN}🧼 Finalizing sync and refreshing AI context...{Style.RESET_ALL}")
+            self.agent.refresh_agent()
             self.is_syncing = False
-            self.sync_lock.release()  # ALWAYS release the lock
+            self.sync_lock.release()
+            print(f"{Fore.GREEN}✅ Sync Complete. System is ready.{Style.RESET_ALL}")
 
     def query(self, text_input: str):
         return self.agent.ask(text_input)
