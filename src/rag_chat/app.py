@@ -444,15 +444,33 @@ def list_files_tree():
 
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
-    socketio.emit('system_status', {"is_busy": True, "sql_syncing": True})
+    # SET 'sql_syncing' to False.
+    # This keeps the UI open but lets it know the GPU is working.
+    socketio.emit('system_status', {
+        "is_busy": True,
+        "sql_syncing": False,
+        "rag": {"state": "idle"}
+    })
+
     data = request.json or {}
     query = data.get("query", "")
+
     if not query:
         socketio.emit('system_status', {"is_busy": False, "sql_syncing": False})
         return jsonify({"output": "Please enter a query."}), 400
 
-    response = sql_system.query(query) if sql_system else "SQL system not initialized."
-    socketio.emit('system_status', {"is_busy": False, "sql_syncing": False})
+    try:
+        # Your RTX 5060 Ti crunches the numbers here
+        response = sql_system.query(query) if sql_system else "SQL system not initialized."
+    except Exception as e:
+        response = f"Error: {str(e)}"
+    finally:
+        # Always tell the UI we are done, even if it failed
+        socketio.emit('system_status', {
+            "is_busy": False,
+            "sql_syncing": False,
+            "rag": {"state": "idle"}
+        })
 
     return jsonify({"output": response})
 

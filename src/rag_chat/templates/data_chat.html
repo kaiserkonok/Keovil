@@ -196,17 +196,57 @@
 
         @keyframes spin { to { transform: rotate(360deg); } }
         @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
+
+        .pulse-amber {
+            background: #e3b341;
+            box-shadow: 0 0 10px #e3b341;
+            animation: status-pulse 1.5s infinite;
+        }
+
+        .pulse-green {
+            background: #3fb950;
+            box-shadow: 0 0 10px #3fb950;
+            animation: status-pulse 1s infinite;
+        }
+
+        @keyframes status-pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Keep original colors, just add a subtle pulse */
+        .query-input:disabled {
+            cursor: wait; /* Shows the loading spinner cursor on hover */
+            border-color: var(--accent); /* Keep the accent color visible */
+            animation: borderPulse 2s infinite ease-in-out;
+            opacity: 0.8; /* Only a very slight fade */
+        }
+
+        @keyframes borderPulse {
+            0% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+            50% { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); }
+            100% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+        }
     </style>
 </head>
 <body>
 
-<div id="system-lock-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(10, 12, 16, 0.6); backdrop-filter: blur(12px) saturate(180%); z-index:9999; flex-direction:column; align-items:center; justify-content:center; transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);">
-    <div class="loader-content" style="text-align: center; transform: translateY(20px); animation: slideUp 0.6s forwards;">
-        <div class="spinner-box" style="width: 60px; height: 60px; border: 3px solid transparent; border-top-color: var(--accent); border-radius: 50%; animation: spin 1s infinite cubic-bezier(0.5, 0, 0.5, 1); margin: 0 auto 20px;"></div>
-
-        <h2 id="lock-title" style="font-family: 'Fira Code', monospace; color: white; font-weight: 400; letter-spacing: 1px; margin: 0;">SQL ENGINE SYNCING</h2>
-        <p id="lock-detail" style="color: var(--input-num); font-size: 14px; margin-top: 10px;">Refreshing database schema for your RTX 5060 Ti...</p>
+<div id="ingest-status-card" style="display:none; position:fixed; bottom:100px; right:30px; width:320px; background: rgba(22, 27, 34, 0.8); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; transition: all 0.3s ease;">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <div id="status-dot" class="status-indicator"></div>
+        <span id="status-title" style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); font-weight: 500;">ENGINE ACTIVE</span>
     </div>
+    <div style="height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin: 8px 0;">
+        <div id="ingest-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease;"></div>
+    </div>
+    <span id="current-status-detail" style="font-size: 11px; font-family: 'Fira Code', monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">Initializing...</span>
 </div>
 
 <div class="notebook-container" id="notebook">
@@ -221,7 +261,7 @@
 </div>
 
 <div class="query-bar">
-    <input type="text" class="query-input" id="userInput" placeholder="Ask your data: 'What is the average age in family_age.csv?'" onkeypress="handleKey(event)" autofocus>
+    <input type="text" class="query-input" id="userInput" placeholder="Ask your data..." onkeypress="handleKey(event)" autofocus>
 </div>
 
 <script>
@@ -302,10 +342,7 @@
     const socket = io();
 
     // UI Elements to freeze
-    const overlay = document.getElementById('system-lock-overlay');
     const userInput = document.getElementById('userInput');
-    const lockTitle = document.getElementById('lock-title');
-    const lockDetail = document.getElementById('lock-detail');
 
     socket.on('connect', () => {
         console.log("Connected to Lora SQL Engine");
@@ -318,25 +355,52 @@
 
     // LISTEN FOR BROADCASTS
     socket.on('system_status', function(data) {
-        const isBusy = data.is_busy || (data.rag && data.rag.state !== 'idle');
+        const card = document.getElementById('ingest-status-card');
+        const dot = document.getElementById('status-dot');
+        const bar = document.getElementById('ingest-progress-bar');
+        const title = document.getElementById('status-title');
+        const detail = document.getElementById('current-status-detail');
 
-        if (isBusy) {
-            overlay.style.display = 'flex'; // Shows the overlay
-            userInput.disabled = true;
+        const isSql = data.sql_syncing === true;
+        const isRag = data.rag && data.rag.state === 'processing';
+        const isThinking = data.is_busy === true;
 
-            // Specific text for SQL vs RAG
-            if (data.sql_syncing) {
-                lockTitle.innerText = "DATABASE SYNCING";
-                lockDetail.innerText = "RTX 5060 Ti is re-indexing tables...";
-            } else if (data.rag && data.rag.state === 'processing') {
-                lockTitle.innerText = "VECTORIZING DOCUMENTS";
-                lockDetail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+        // 1. THE STATUS CARD (The "Talking" part we are bringing back)
+        if (isSql || isRag) {
+            card.style.display = 'block';
+            card.style.opacity = '1';
+
+            if (isSql) {
+                // Amber Pulse for Database work
+                dot.className = 'status-indicator pulse-amber';
+                title.innerText = "SQL RE-INDEXING";
+                detail.innerText = "RTX 5060 Ti is analyzing tables...";
+                bar.style.width = "40%"; // Progress for SQL
+            } else {
+                // Green Pulse for Document work
+                dot.className = 'status-indicator pulse-green';
+                title.innerText = "VECTORIZING DOCUMENTS";
+                detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+
+                // Real percentage for RAG
+                if (data.rag.total_files > 0) {
+                    let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
+                    bar.style.width = pc + "%";
+                } else {
+                    bar.style.width = "100%";
+                }
             }
         } else {
-            overlay.style.display = 'none'; // Hides the overlay
-            userInput.disabled = false;
-            userInput.placeholder = "Ask your data...";
+            // Smooth fade out when idle
+            card.style.opacity = '0';
+            setTimeout(() => {
+                if(card.style.opacity === '0') card.style.display = 'none';
+            }, 300);
         }
+
+        // 2. THE INPUT BOX (The "Silent" part)
+        // No text changes here, just the pulse animation from your CSS
+        userInput.disabled = (isSql || isRag || isThinking);
     });
 </script>
 
