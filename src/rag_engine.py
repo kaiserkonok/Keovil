@@ -69,6 +69,13 @@ class CollegeRAG:
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
 
+        self.status = {
+            "state": "idle",  # idle, processing, syncing
+            "current_file": "",
+            "progress": 0,
+            "total_files": 0
+        }
+
         # NEW: SQLite Manifest Initialization (replaces JSON manifest_path)
         self.db_dir = base_storage / "database"
         self.db_dir.mkdir(parents=True, exist_ok=True)
@@ -128,13 +135,6 @@ class CollegeRAG:
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
         print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching worker...{Colors.ENDC}")
-
-        self.status = {
-            "state": "idle",  # idle, processing, syncing
-            "current_file": "",
-            "progress": 0,
-            "total_files": 0
-        }
 
     def get_status(self):
         """Returns the current state for the UI."""

@@ -795,8 +795,18 @@
                 const relPath = files[i].webkitRelativePath || files[i].name;
                 fd.append('full_paths', relPath);
             }
-            const resp = await fetch('/api/explorer/files/upload', {method:'POST', body:fd});
-            if((await resp.json()).ok) { refreshTree(); }
+
+            try {
+                const resp = await fetch('/api/explorer/files/upload', {method:'POST', body:fd});
+                const result = await resp.json();
+                if(result.ok) {
+                    refreshTree();
+                    // START polling ONLY when a real upload happens
+                    startStatusPolling();
+                }
+            } catch (e) {
+                console.error("Upload failed", e);
+            }
         }
 
         function downloadFile(path){ window.location.href=`/api/explorer/files/download?path=${encodeURIComponent(path)}`; }
@@ -840,19 +850,22 @@
                 .then(res => res.json())
                 .then(data => {
                     const card = document.getElementById('ingest-status-card');
-                    const dot = document.getElementById('status-dot');
-                    const bar = document.getElementById('ingest-progress-bar');
-                    const title = document.getElementById('status-title');
-                    const fileText = document.getElementById('current-ingest-file');
 
-                    if (data.state === 'idle') {
+                    // THE FIX: If idle, hide the card AND stop the timer
+                    if (!data || data.state === 'idle') {
                         $(card).fadeOut();
-                        clearInterval(statusInterval);
-                        statusInterval = null;
+                        if (statusInterval) {
+                            clearInterval(statusInterval);
+                            statusInterval = null;
+                        }
                         return;
                     }
 
                     $(card).fadeIn();
+                    const dot = document.getElementById('status-dot');
+                    const bar = document.getElementById('ingest-progress-bar');
+                    const title = document.getElementById('status-title');
+                    const fileText = document.getElementById('current-ingest-file');
 
                     if (data.state === 'waiting') {
                         dot.className = 'status-indicator pulse-amber';
@@ -866,7 +879,11 @@
                         bar.style.width = data.progress + "%";
                     }
                 })
-                .catch(err => console.error("Status check failed:", err));
+                .catch(err => {
+                    console.error("Status check failed:", err);
+                    clearInterval(statusInterval);
+                    statusInterval = null;
+                });
         }
 
         function startStatusPolling() {
@@ -882,11 +899,6 @@
             // After upload finishes, start monitoring the backend ingestion
             startStatusPolling();
         };
-
-        // Also start polling on page load in case a background task is already running
-        $(document).ready(() => {
-            startStatusPolling();
-        });
     </script>
 </body>
 </html>
