@@ -265,6 +265,7 @@
 </div>
 
 <script>
+    const userInput = document.getElementById('userInput');
     const md = window.markdownit({
         html: true,
         highlight: function (str, lang) {
@@ -329,6 +330,8 @@
                 outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 150);
 
+            userInput.focus()
+
         } catch (err) {
             document.getElementById(`out-${currentId}`).innerHTML = `
                 <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px; font-family: 'Fira Code'; font-size: 13px;">
@@ -340,9 +343,6 @@
 
     // Initialize Socket.IO
     const socket = io();
-
-    // UI Elements to freeze
-    const userInput = document.getElementById('userInput');
 
     socket.on('connect', () => {
         console.log("Connected to Lora SQL Engine");
