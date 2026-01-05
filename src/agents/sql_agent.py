@@ -170,6 +170,8 @@ class IngestionHandler(FileSystemEventHandler):
     def on_moved(self, event): self.process(event)
 
 
+SQL_GLOBAL_LOCK = threading.Lock()
+
 class StructuredDataAgent:
     def __init__(self, socketio=None, db_path=None, watch_dir=None):
         home = str(Path.home())
@@ -187,7 +189,6 @@ class StructuredDataAgent:
         self.db_uri = f"sqlite:///{self.db_path}"
         self.agent = SQLQueryAgent(self.db_uri)
         self.state_engine = create_engine(f"sqlite:///{self.state_db_path}")
-        self.sync_lock = threading.Lock()
         self.observer = Observer()
         self.is_syncing = False
         self._init_metadata()
@@ -229,7 +230,8 @@ class StructuredDataAgent:
 
     def sync_database(self):
         # 1. PREVENT CONCURRENCY COLLISIONS
-        if not self.sync_lock.acquire(blocking=False):
+        if not SQL_GLOBAL_LOCK.acquire(blocking=False):
+            print(f"{Fore.YELLOW}⚠️  Sync blocked: Another instance is already working.{Style.RESET_ALL}")
             return
 
         try:
@@ -330,7 +332,7 @@ class StructuredDataAgent:
             self.agent.refresh_agent()
             self.is_syncing = False
             self.broadcast_status()  # <--- ADD THIS (Shout: "I am finished!")
-            self.sync_lock.release()
+            SQL_GLOBAL_LOCK.release()  # Open the door for the next sync
             print(f"{Fore.GREEN}✅ Sync Complete. System is ready.{Style.RESET_ALL}")
 
     def query(self, text_input: str):
