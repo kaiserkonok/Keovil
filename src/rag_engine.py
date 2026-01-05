@@ -149,24 +149,19 @@ class CollegeRAG:
         return self.status
 
     def broadcast_status(self):
-        """Notifies the UI via WebSockets using the injected socket instance."""
-        # NO MORE 'from app import socketio' <--- This was the drama!
-
         if not self.socketio:
-            # If for some reason socketio wasn't passed, just skip
             return
-
         try:
-            # Use the internal reference 'self.socketio'
+            # We add a specific 'reason' so the frontend can distinguish
+            # between vectorizing and just thinking.
             self.socketio.emit('system_status', {
                 "is_busy": self.status["state"] != "idle",
+                "reason": self.status["state"],  # 'processing', 'waiting', or 'idle'
                 "sql_syncing": False,
                 "rag": self.get_status()
-            }, namespace='/')  # namespace='/' is the default
-
-            print(f"{Colors.OKBLUE}[Socket] Status Sent: {self.status['state']}{Colors.ENDC}")
+            }, namespace='/')
         except Exception as e:
-            print(f"{Colors.FAIL}[Socket Error] {e}{Colors.ENDC}")
+            print(f"Socket Error: {e}")
 
     # ----------------------
     # NEW: SQLite Database Logic

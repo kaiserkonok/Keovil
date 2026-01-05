@@ -8,6 +8,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
 
   <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
 
@@ -562,14 +563,26 @@ function scrollToBottom() {
     messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
+let isLoraBusy = false; // The "Pro" Lock
+
 async function handleQuery(query) {
+    if (isLoraBusy) return;
+
+    isLoraBusy = true;
+    $('#ingest-status-card').stop(true, true).fadeOut(200);
+    // UI Feedback: Immediately lock the buttons
+    inputBox.disabled = true;
+    sendBtn.disabled = true;
+
     appendUser(query);
     const placeholder = appendPlaceholder();
+
     try {
         const res = await apiFetch('/api/chat', {
             method: 'POST',
             body: JSON.stringify({ query, session_id: currentSessionId })
         });
+
         const data = await res.json();
         if (data.error) {
             placeholder.textContent = "Error: " + data.error;
@@ -585,11 +598,18 @@ async function handleQuery(query) {
         }
     } catch (err) {
         placeholder.textContent = "Connection lost. Please try again.";
-        console.error(err);
+    } finally {
+        isLoraBusy = false;
+        // ALWAYS re-enable here so you never get stuck
+        inputBox.disabled = false;
+        sendBtn.disabled = false;
+        inputBox.focus();
     }
 }
 
+// Update the click handler to respect the lock
 sendBtn.onclick = () => {
+    if (isLoraBusy) return; // Don't even try if busy
     const q = inputBox.value.trim();
     if (!q) return;
     inputBox.value = '';
@@ -607,50 +627,61 @@ loadSessions();
 const socket = io();
 
 socket.on('system_status', function(data) {
-    const card = document.getElementById('ingest-status-card');
+    const card = $('#ingest-status-card');
     const dot = document.getElementById('status-dot');
     const bar = document.getElementById('ingest-progress-bar');
     const title = document.getElementById('status-title');
-    const detail = document.getElementById('current-status-detail');
+    const detailText = document.getElementById('current-status-detail');
 
-    const isSql = data.sql_syncing === true;
-    const isRag = data.rag && data.rag.state === 'processing';
-    const isThinking = data.is_busy === true;
+    if (!dot || !detailText) return;
 
-    // 1. UPDATE THE FLOATING CARD (THE "TALKING" PART)
-    if (isSql || isRag) {
-        card.style.display = 'block';
-        card.style.opacity = '1';
+    // 1. DETERMINE IF SYSTEM IS BUSY (Vectorizing or Answering)
+    const isVectorizing = (data.reason === 'processing' || data.reason === 'waiting');
 
-        if (isSql) {
-            dot.className = 'status-indicator pulse-amber';
-            title.innerText = "SQL RE-INDEXING";
-            detail.innerText = "Analyzing database schema...";
-            bar.style.width = "40%";
-        } else {
-            dot.className = 'status-indicator pulse-green';
-            title.innerText = "VECTORIZING DOCUMENTS";
-            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+    // 2. TOGGLE INPUT LOCK
+    // We disable the input if the AI is answering OR if the engine is vectorizing
+    const shouldLockInput = isLoraBusy || isVectorizing;
 
-            if (data.rag.total_files > 0) {
-                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
-                bar.style.width = pc + "%";
-            } else {
-                bar.style.width = "100%";
-            }
-        }
-    } else {
-        // Smooth fade out
-        card.style.opacity = '0';
-        setTimeout(() => {
-            if(card.style.opacity === '0') card.style.display = 'none';
-        }, 300);
+    inputBox.disabled = shouldLockInput;
+    sendBtn.disabled = shouldLockInput;
+
+    // Update placeholder text to explain why it's locked
+    if (isVectorizing && !isLoraBusy) {
+        inputBox.placeholder = "System updating... please wait.";
+    } else if (!isLoraBusy) {
+        inputBox.placeholder = "Ask Lora anything...";
     }
 
-    // 2. THE INPUT BOX (THE "SILENT" PART)
-    // No text changes, just the pulse animation and disabling the button
-    inputBox.disabled = (isSql || isRag || isThinking);
-    sendBtn.disabled = (isSql || isRag || isThinking);
+    // 3. UI VISIBILITY RULES
+    if (isLoraBusy) {
+        card.stop(true, true).fadeOut(200);
+        return;
+    }
+
+    if (isVectorizing) {
+        card.stop(true, true).fadeIn(200);
+
+        if (data.reason === 'waiting') {
+            dot.className = 'status-indicator pulse-amber';
+            title.innerText = "QUEUING BATCH...";
+            dot.style.background = "#e3b341";
+        } else {
+            dot.className = 'status-indicator pulse-green';
+            if (data.rag.current_file && data.rag.current_file.includes("Purging")) {
+                title.innerText = "PURGING DATA...";
+                dot.style.background = "#ff7b72";
+            } else {
+                title.innerText = "VECTORIZING (GPU)...";
+                dot.style.background = "#3fb950";
+            }
+        }
+
+        detailText.innerText = data.rag.current_file || data.rag.message || "Working...";
+        bar.style.width = (data.rag.progress || 10) + "%";
+    }
+    else {
+        card.stop(true, true).fadeOut(800);
+    }
 });
 
 </script>
