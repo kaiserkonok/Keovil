@@ -56,23 +56,28 @@ class SQLQueryAgent:
             schema_info = []
             for (t_name,) in tables:
                 cols = con.execute(f"DESCRIBE {t_name}").fetchall()
-                col_list = [f"{c[0]} ({c[1]})" for c in cols]
-                schema_info.append(f"Table '{t_name}': columns [{', '.join(col_list)}]")
+                # Use a vertical list for columns to make them distinct
+                col_details = "\n      ".join([f"- {c[0]} ({c[1]})" for c in cols])
+                schema_info.append(f"TABLE: {t_name}\n      {col_details}")
 
-            schema = "\n".join(schema_info)
+            schema = "\n\n".join(schema_info)
+
+            print(schema)
 
             # 2. Stage 1: The "Thought" and "SQL" Generation
             system_context = (
                 "You are a Senior Data Analyst using DuckDB.\n"
                 f"DATABASE SCHEMA:\n{schema}\n\n"
                 "INSTRUCTIONS:\n"
-                "- ALWAYS start with 'Thought: <reasoning>'\n"
-                "- Provide SQL inside a ```sql block.\n"
-                "- For metadata questions (e.g., 'how many tables', 'list tables'), use system views:\n"
+                "- ALWAYS start with 'Thought: <reasoning>'. Use this to determine if a query is actually needed.\n"
+                "- GREETINGS: If the user says 'hello' or provides a general greeting, respond politely WITHOUT a SQL block.\n"
+                "- SQL USAGE: ONLY provide a ```sql block if the user's request requires data or metadata from the database.\n"
+                "- NAMESPACING: Tables use a path-based naming convention (e.g., 'folder_subfolder_file_ext'). "
+                "Use these prefixes to distinguish between different departments or versions of data.\n"
+                "- METADATA: For questions about table/column counts, use system views:\n"
                 "  * Count tables: `SELECT count(*) FROM information_schema.tables WHERE table_schema='main';`\n"
                 "  * List tables: `SHOW TABLES;`\n"
-                "- Do NOT try to count tables by performing UNION ALL or querying the data tables themselves.\n"
-                "- Do NOT use dot-commands. Use standard SQL."
+                "- STANDARDS: Do NOT use dot-commands. Use standard SQL."
             )
 
             try:
@@ -93,35 +98,53 @@ class SQLQueryAgent:
                 console.print(
                     Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
 
-                # 3. Execution
+                # 3. Execution (The World-Class Batch Update)
                 print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
-                df = con.execute(sql_raw).df()
 
-                # 4. Stage 2: The "Voice" Synthesis (Human-like response)
-                # We only send a sample to the LLM to stay within token limits
-                data_preview = df.head(15).to_dict()
-                row_count = len(df)
+                # Split SQL by semicolon, filter out empty strings
+                sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]
 
+                all_results = []
+                combined_df_html = ""
+
+                for i, stmt in enumerate(sql_statements):
+                    res_df = con.execute(stmt).df()
+
+                    # Store a preview for the Voice Agent
+                    # We use a key like 'Table_N' or try to parse the table name from the SQL
+                    table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
+                    tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
+
+                    all_results.append({
+                        "source": tag,
+                        "rows": len(res_df),
+                        "data": res_df.head(5).to_dict()  # Small preview per statement
+                    })
+
+                    # Build the HTML output for the UI
+                    table_md = res_df.to_markdown(index=False)
+                    combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
+
+                # 4. Stage 2: The "Voice" Synthesis
+                # We send the aggregate results to the voice
                 voice_prompt = (
                     f"User Query: {query}\n"
                     f"Context/Logic: {thought_process}\n"
-                    f"Query Result Data: {data_preview}\n\n"
-                    "As a Senior Data Analyst, interpret the Query Result Data above to answer the User Query. "
-                    "1. Provide a direct, concise answer based on the data provided.\n"
-                    "2. If the data contains a single number (like a count), report that number clearly.\n"
-                    "3. Highlight any relevant patterns or insights.\n"
-                    "4. Do NOT mention SQL syntax or technical database internals in your response."
+                    f"Execution Results: {all_results}\n\n"
+                    "As a Senior Data Analyst, interpret the multiple result sets provided to answer the User Query. "
+                    "1. Synthesize the data from all tables into one cohesive answer.\n"
+                    "2. If the user asked for a comparison or 'top rows from all', summarize the findings.\n"
+                    "3. Do NOT mention technical SQL details."
                 )
 
                 final_chat = self.llm.invoke(voice_prompt).content
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
-                # 5. Format for UI (Scroll container + Markdown table)
-                table_md = df.to_markdown(index=False)
+                # 5. Format for UI
                 output = (
                     f"{final_chat}\n\n"
                     f"### 📊 Data Records\n"
-                    f"<div class='df-scroll-container'>\n\n{table_md}\n\n</div>"
+                    f"{combined_df_html}"
                 )
 
                 return output
