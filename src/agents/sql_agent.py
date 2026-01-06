@@ -62,8 +62,6 @@ class SQLQueryAgent:
 
             schema = "\n\n".join(schema_info)
 
-            print(schema)
-
             # 2. Stage 1: The "Thought" and "SQL" Generation
             system_context = (
                 "You are a Senior Data Analyst using DuckDB.\n"
@@ -218,6 +216,10 @@ class StructuredDataAgent:
     def sync_database(self):
         if not SQL_THREAD_LOCK.acquire(blocking=False): return
 
+        # Trigger the amber pulse in UI
+        if self.socketio:
+            self.socketio.emit('system_status', {'sql_syncing': True})
+
         try:
             self.is_syncing = True
             sync_table = Table(title="🔄 Hierarchical Smart Sync", show_header=True, header_style="bold cyan")
@@ -295,6 +297,10 @@ class StructuredDataAgent:
         finally:
             self.is_syncing = False
             SQL_THREAD_LOCK.release()
+
+            # Turn off the pulse
+            if self.socketio:
+                self.socketio.emit('system_status', {'sql_syncing': False})
             print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
 
     def start_monitoring(self):

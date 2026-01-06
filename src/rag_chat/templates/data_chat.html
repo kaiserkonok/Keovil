@@ -293,27 +293,29 @@
         const container = document.getElementById('notebook');
         const currentId = cellCount++;
 
+        // 1. LOCAL LOCK: This only happens in THIS browser tab
+        userInput.disabled = true;
+
         const cellHtml = `
             <div class="cell" id="cell-${currentId}">
                 <div class="cell-label">In [${currentId}]:</div>
                 <div class="cell-content">
                     <div class="input-area">${query}</div>
                     <div class="output-area" id="out-${currentId}">
-                        <span style="color: var(--accent); opacity: 0.8; font-family: 'Fira Code'; font-size: 13px;" class="thinking">Executing SQL Logic...</span>
+                        <span class="thinking" style="color: var(--accent); font-family: 'Fira Code'; font-size: 13px;">Executing SQL Logic...</span>
                     </div>
                 </div>
-            </div>
-        `;
+            </div>`;
         container.insertAdjacentHTML('beforeend', cellHtml);
-
         document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         try {
             const response = await fetch('/api/sql_query', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: query })
             });
+
             const data = await response.json();
 
             const outputDiv = document.getElementById(`out-${currentId}`);
@@ -322,25 +324,16 @@
                 <div class="markdown-body">${md.render(data.output)}</div>
             `;
 
-            outputDiv.querySelectorAll('pre code').forEach((el) => {
-                hljs.highlightElement(el);
-            });
-
-            setTimeout(() => {
-                outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 150);
-
-            userInput.focus()
+            outputDiv.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
 
         } catch (err) {
-            document.getElementById(`out-${currentId}`).innerHTML = `
-                <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px; font-family: 'Fira Code'; font-size: 13px;">
-                    <strong>Execution Error:</strong> ${err}
-                </div>
-            `;
+            document.getElementById(`out-${currentId}`).innerHTML = `<div style="color: #ff7b72;">Error: ${err.message}</div>`;
+        } finally {
+            // 2. LOCAL UNLOCK: Re-enable the box for this user only
+            userInput.disabled = false;
+            userInput.focus();
         }
     }
-
     // Initialize Socket.IO
     const socket = io();
 
@@ -354,54 +347,60 @@
     });
 
     // LISTEN FOR BROADCASTS
-    socket.on('system_status', function(data) {
-        const card = document.getElementById('ingest-status-card');
-        const dot = document.getElementById('status-dot');
-        const bar = document.getElementById('ingest-progress-bar');
-        const title = document.getElementById('status-title');
-        const detail = document.getElementById('current-status-detail');
+socket.on('system_status', function(data) {
+    const card = document.getElementById('ingest-status-card');
+    const dot = document.getElementById('status-dot');
+    const bar = document.getElementById('ingest-progress-bar');
+    const title = document.getElementById('status-title');
+    const detail = document.getElementById('current-status-detail');
 
-        const isSql = data.sql_syncing === true;
-        const isRag = data.rag && data.rag.state === 'processing';
-        const isThinking = data.is_busy === true;
+    // These are GLOBAL events (Indexing a CSV, Vectorizing PDFs)
+    const isSqlSync = data.sql_syncing === true;
+    const isRagSync = data.rag && data.rag.state === 'processing';
 
-        // 1. THE STATUS CARD (The "Talking" part we are bringing back)
-        if (isSql || isRag) {
-            card.style.display = 'block';
-            card.style.opacity = '1';
+    // 1. THE STATUS CARD (Global Animations)
+    if (isSqlSync || isRagSync) {
+        card.style.display = 'block';
+        card.style.opacity = '1';
 
-            if (isSql) {
-                // Amber Pulse for Database work
-                dot.className = 'status-indicator pulse-amber';
-                title.innerText = "SQL RE-INDEXING";
-                detail.innerText = "RTX 5060 Ti is analyzing tables...";
-                bar.style.width = "40%"; // Progress for SQL
-            } else {
-                // Green Pulse for Document work
-                dot.className = 'status-indicator pulse-green';
-                title.innerText = "VECTORIZING DOCUMENTS";
-                detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
-
-                // Real percentage for RAG
-                if (data.rag.total_files > 0) {
-                    let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
-                    bar.style.width = pc + "%";
-                } else {
-                    bar.style.width = "100%";
-                }
-            }
+        if (isSqlSync) {
+            dot.className = 'status-indicator pulse-amber';
+            title.innerText = "SQL RE-INDEXING";
+            detail.innerText = "RTX 5060 Ti is analyzing tables...";
+            bar.style.width = "40%";
         } else {
-            // Smooth fade out when idle
-            card.style.opacity = '0';
-            setTimeout(() => {
-                if(card.style.opacity === '0') card.style.display = 'none';
-            }, 300);
+            dot.className = 'status-indicator pulse-green';
+            title.innerText = "VECTORIZING DOCUMENTS";
+            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+            if (data.rag.total_files > 0) {
+                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
+                bar.style.width = pc + "%";
+            } else {
+                bar.style.width = "100%";
+            }
         }
 
-        // 2. THE INPUT BOX (The "Silent" part)
-        // No text changes here, just the pulse animation from your CSS
-        userInput.disabled = (isSql || isRag || isThinking);
-    });
+        // DISABLE INPUT because the whole DB is changing
+        userInput.disabled = true;
+        userInput.placeholder = "Database is updating...";
+
+    } else {
+        // Smooth fade out when idle
+        card.style.opacity = '0';
+        setTimeout(() => {
+            if(card.style.opacity === '0') {
+                card.style.display = 'none';
+
+                // ONLY re-enable if we aren't currently waiting for a private Query response
+                // (This is the magic part - it won't step on addCell's toes)
+                if (!document.querySelector('.thinking')) {
+                    userInput.disabled = false;
+                    userInput.placeholder = "Ask your data...";
+                }
+            }
+        }, 300);
+    }
+});
 </script>
 
 </body>

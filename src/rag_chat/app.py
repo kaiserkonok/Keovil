@@ -11,7 +11,7 @@ from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
-from flask_socketio import SocketIO # <--- ADD THIS
+from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
 from colorama import Fore, Style, init
 
 init(autoreset=True)
@@ -165,6 +165,14 @@ def safe_rel_path(p: str | None) -> str:
 # ---------------------------------------------------------
 # UI ROUTES
 # ---------------------------------------------------------
+
+
+@socketio.on('connect')
+def handle_connect():
+    # Automatically put every tab in its own private room based on its ID
+    join_room(request.sid)
+    print(f"Tab connected and private room created: {request.sid}")
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -442,36 +450,23 @@ def list_files_tree():
         return res
     return jsonify({"tree": get_tree_items(FILES_DIR)})
 
+
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
-    # SET 'sql_syncing' to False.
-    # This keeps the UI open but lets it know the GPU is working.
-    socketio.emit('system_status', {
-        "is_busy": True,
-        "sql_syncing": False,
-        "rag": {"state": "idle"}
-    })
-
+    # We don't need the sid here anymore for status!
     data = request.json or {}
     query = data.get("query", "")
 
     if not query:
-        socketio.emit('system_status', {"is_busy": False, "sql_syncing": False})
         return jsonify({"output": "Please enter a query."}), 400
 
     try:
-        # Your RTX 5060 Ti crunches the numbers here
-        response = sql_system.query(query) if sql_system else "SQL system not initialized."
+        # Just crunch the numbers and return them
+        response = sql_system.query(query) if sql_system else "System Offline"
     except Exception as e:
         response = f"Error: {str(e)}"
-    finally:
-        # Always tell the UI we are done, even if it failed
-        socketio.emit('system_status', {
-            "is_busy": False,
-            "sql_syncing": False,
-            "rag": {"state": "idle"}
-        })
 
+    # NO SOCKET EMIT HERE. Keep the "Megaphone" silent.
     return jsonify({"output": response})
 
 
@@ -582,4 +577,4 @@ def get_ingest_status():
 
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
-    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
+    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True, log_output=True)
