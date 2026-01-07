@@ -162,7 +162,9 @@ class IngestionHandler(FileSystemEventHandler):
 
     def process(self, event):
         if event.is_directory: return
-        if event.src_path.lower().endswith((".csv", ".xlsx", ".xls", ".parquet")):
+        # Cleaned up extensions and added .sqlite
+        valid_extensions = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
+        if event.src_path.lower().endswith(valid_extensions):
             if self._timer: self._timer.cancel()
             self._timer = threading.Timer(1.5, self.manager.sync_database)
             self._timer.start()
@@ -193,7 +195,6 @@ class StructuredDataAgent:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.watch_dir.mkdir(parents=True, exist_ok=True)
 
-        # Initialize State DB (Differential Tracking)
         with duckdb.connect(str(self.state_db)) as sc:
             sc.execute("""
                        CREATE TABLE IF NOT EXISTS file_history
@@ -216,7 +217,6 @@ class StructuredDataAgent:
     def sync_database(self):
         if not SQL_THREAD_LOCK.acquire(blocking=False): return
 
-        # Trigger the amber pulse in UI
         if self.socketio:
             self.socketio.emit('system_status', {'sql_syncing': True})
 
@@ -227,9 +227,9 @@ class StructuredDataAgent:
             sync_table.add_column("Status", justify="right")
 
             with duckdb.connect(str(self.db_path)) as con, duckdb.connect(str(self.state_db)) as state_con:
-                con.execute("LOAD excel; LOAD spatial;")
+                con.execute("LOAD excel; LOAD spatial; INSTALL sqlite; LOAD sqlite;")
 
-                valid_exts = (".csv", ".xlsx", ".xls", ".parquet")
+                valid_exts = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
                 active_views = set()
 
                 for root, _, files in os.walk(self.watch_dir):
@@ -240,32 +240,32 @@ class StructuredDataAgent:
                         mtime = fp.stat().st_mtime
                         size = fp.stat().st_size
 
-                        # 1. World-Class Naming: Relative Path + Extension
-                        # Example: 'finance/2024/sales.csv' -> 'finance_2024_sales_csv'
                         rel_path = fp.relative_to(self.watch_dir)
                         base_identity = str(rel_path).lower()
                         for char in [os.sep, ".", " ", "-"]:
                             base_identity = base_identity.replace(char, "_")
 
-                        # Check differential state
-                        prev = state_con.execute("SELECT mtime, size FROM file_history WHERE path = ?",
-                                                 [str(fp)]).fetchone()
-                        is_excel = fp.suffix.lower() in (".xlsx", ".xls")
+                        # --- GUARD 1: Safe History Check ---
+                        res = state_con.execute("SELECT mtime, size FROM file_history WHERE path = ?",
+                                                [str(fp)]).fetchall()
+                        prev = res[0] if res else None  # Avoids index error if fetchone() was weird
 
-                        # Skip if unchanged (Excel always re-indexed for sheet safety)
-                        if not is_excel and prev and prev[0] == mtime and prev[1] == size:
-                            # Still need to track this as active even if we don't re-ingest
-                            if not is_excel: active_views.add(base_identity)
+                        is_excel = fp.suffix.lower() in (".xlsx", ".xls")
+                        is_unchanged = prev is not None and len(prev) >= 2 and prev[0] == mtime and prev[1] == size
+
+                        if not is_excel and is_unchanged:
+                            active_views.add(base_identity)
                             continue
 
-                        # 2. Ingestion with Unique Names
-                        if fp.suffix.lower() == ".csv":
+                        # Ingestion Logic
+                        ext = fp.suffix.lower()
+                        if ext == ".csv":
                             con.execute(
                                 f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM read_csv_auto('{fp}')")
                             active_views.add(base_identity)
                             sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
 
-                        elif fp.suffix.lower() == ".parquet":
+                        elif ext == ".parquet":
                             con.execute(f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM parquet_scan('{fp}')")
                             active_views.add(base_identity)
                             sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
@@ -280,25 +280,64 @@ class StructuredDataAgent:
                                 active_views.add(view_name)
                             sync_table.add_row(str(rel_path), f"[cyan]INDEXED ({len(xls.sheet_names)} sheets)[/cyan]")
 
-                        state_con.execute("INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
-                                          [str(fp), mtime, size])
 
-                # 3. Precise Cleanup (Orphans)
-                existing_tables = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
-                for view in existing_tables - active_views:
-                    con.execute(f"DROP VIEW IF EXISTS {view}")
-                    sync_table.add_row(view, "[red]DELETED[/red]")
+                        elif ext in (".db", ".sqlite", ".sqlite3"):
+
+                            # 1. Attach temporarily to see what's inside
+
+                            alias = f"temp_{base_identity}"
+
+                            con.execute(f"ATTACH '{fp}' AS {alias} (TYPE SQLITE, READ_ONLY)")
+
+                            # 2. Get all table names from the attached DB
+
+                            sqlite_tables = con.execute(
+                                f"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
+
+                            for (st_name,) in sqlite_tables:
+                                view_name = f"{base_identity}_{st_name}"
+
+                                # 3. Create a persistent view in MAIN that points to the file
+
+                                con.execute(
+                                    f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM sqlite_scan('{fp}', '{st_name}')")
+
+                                active_views.add(view_name)
+
+                            con.execute(f"DETACH {alias}")
+
+                            sync_table.add_row(str(rel_path),
+                                               f"[magenta]SQLITE INDEXED ({len(sqlite_tables)} tables)[/magenta]")
+
+                # --- GUARD 2: Safe Database Detach ---
+                db_list = con.execute("PRAGMA show_databases").fetchall()
+                for row in db_list:
+                    if len(row) > 1:  # Ensure the tuple actually has a second element
+                        db_alias = row[1]
+                        if db_alias not in ('main', 'temp') and db_alias not in active_views:
+                            con.execute(f"DETACH {db_alias}")
+                            sync_table.add_row(db_alias, "[red]DETACHED DB[/red]")
+
+                # --- GUARD 3: Safe View Drop ---
+                table_list = con.execute("SHOW TABLES").fetchall()
+                for row in table_list:
+                    if len(row) > 0:  # Ensure the tuple has at least one element
+                        view = row[0]
+                        if view not in active_views:
+                            con.execute(f"DROP VIEW IF EXISTS {view}")
+                            sync_table.add_row(view, "[red]DELETED VIEW[/red]")
 
             if sync_table.row_count > 0:
                 console.print(sync_table)
 
         except Exception as e:
-            print(f"{Fore.RED}✖ Sync Error: {e}")
+            # This will now print exactly WHICH line failed if it happens again
+            import traceback
+            console.print(f"[bold red]✖ Sync Error: {e}[/bold red]")
+            console.print(traceback.format_exc())
         finally:
             self.is_syncing = False
             SQL_THREAD_LOCK.release()
-
-            # Turn off the pulse
             if self.socketio:
                 self.socketio.emit('system_status', {'sql_syncing': False})
             print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
