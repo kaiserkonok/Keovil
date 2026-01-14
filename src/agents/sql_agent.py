@@ -6,7 +6,6 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from langchain_ollama import ChatOllama
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -16,6 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.syntax import Syntax
+from src.utils.model_engine import ModelEngine
 
 init(autoreset=True)
 console = Console()
@@ -31,19 +31,19 @@ class SQLQueryAgent:
     def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
         self.db_path = str(db_path)
         self.model_name = model_name
-
-        # Optimized for RTX 5060 Ti 16GB VRAM
-        self.llm = ChatOllama(
-            model=self.model_name,
-            temperature=0,
-            num_ctx=16384,
-        )
+        self.engine = None
 
         # Install extensions ONCE
         duckdb.execute("INSTALL excel")
         duckdb.execute("INSTALL spatial")
 
     def ask(self, query: str):
+        # Load engine only when needed (Lazy Loading)
+        print(f"Engine: {self.engine}")
+        if self.engine is None:
+            console.print("[bold cyan]🚀 Initializing Local Engine for the first time...[/bold cyan]")
+            self.engine = ModelEngine(model_type="coder")
+
         with duckdb.connect(self.db_path) as con:
             con.execute("LOAD excel")
             con.execute("LOAD spatial")
@@ -80,7 +80,7 @@ class SQLQueryAgent:
 
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}").content
+                initial_response = self.engine.generate(system_context, query)
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -135,7 +135,7 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.llm.invoke(voice_prompt).content
+                final_chat = self.engine.generate("You are a Senior Data Analyst.", voice_prompt)
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI
