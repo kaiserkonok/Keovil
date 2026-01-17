@@ -68,7 +68,7 @@ class NewFileHandler(PatternMatchingEventHandler):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, model_type='instruct', socketio=None):
+    def __init__(self, data_dir=None, top_k=5, socketio=None):
         home = Path.home()
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
@@ -90,7 +90,7 @@ class CollegeRAG:
         # --- 1. ENGINE & LLM ---
         # Optimized for RTX 5060 Ti 16GB
         from src.utils.model_engine import ModelEngine
-        self.model_engine = ModelEngine(model_type=model_type)
+        self.model_engine = ModelEngine()
         self.llm = self.model_engine.llm
 
         # --- 2. VECTOR & DOCUMENT TOOLS ---

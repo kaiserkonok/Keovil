@@ -16,6 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.syntax import Syntax
 from src.utils.model_engine import ModelEngine
+import torch
 
 init(autoreset=True)
 console = Console()
@@ -28,9 +29,8 @@ SQL_THREAD_LOCK = threading.Lock()
 # SQL QUERY AGENT
 # ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
+    def __init__(self, db_path):
         self.db_path = str(db_path)
-        self.model_name = model_name
         self.engine = None
 
         # Install extensions ONCE
@@ -41,8 +41,8 @@ class SQLQueryAgent:
         # Load engine only when needed (Lazy Loading)
         print(f"Engine: {self.engine}")
         if self.engine is None:
-            console.print("[bold cyan]🚀 Initializing Local Engine for the first time...[/bold cyan]")
-            self.engine = ModelEngine(model_type="coder")
+            console.print("[bold cyan]🚀 Connecting to Shared Model Engine...[/bold cyan]")
+            self.engine = ModelEngine()
 
         with duckdb.connect(self.db_path) as con:
             con.execute("LOAD excel")
@@ -97,7 +97,8 @@ class SQLQueryAgent:
                     Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
 
                 # 3. Execution (The World-Class Batch Update)
-                print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
+                device_label = "GPU" if torch.cuda.is_available() else "CPU"
+                print(f"{Fore.BLUE}🖥️ Running on {device_label}...{Style.RESET_ALL}")
 
                 # Split SQL by semicolon, filter out empty strings
                 sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]

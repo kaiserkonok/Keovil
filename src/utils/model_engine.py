@@ -1,8 +1,9 @@
 import os
 import torch
+import threading
 from pathlib import Path
 from huggingface_hub import hf_hub_download
-from langchain_community.chat_models import ChatLlamaCpp  # New Import
+from langchain_community.chat_models import ChatLlamaCpp
 
 
 class Theme:
@@ -17,64 +18,92 @@ class Theme:
 
 
 class ModelEngine:
-    def __init__(self, model_type="instruct"):
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            with cls._lock:
+                if not cls._instance:
+                    cls._instance = super(ModelEngine, cls).__new__(cls)
+                    cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self):
+        if self._initialized: return
+
         self.model_dir = Path.home() / ".k_rag_storage" / "models"
         os.makedirs(self.model_dir, exist_ok=True)
 
-        self.models = {
-            "coder": {
-                "repo": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
-                "file": "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-            },
-            "instruct": {
-                "repo": "bartowski/Qwen2.5-7B-Instruct-GGUF",
-                "file": "Qwen2.5-7B-Instruct-Q4_K_M.gguf"
-            }
-        }
+        # Updated shared constants in your ModelEngine
+        self.repo = "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
+        self.file = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+        self.model_path = str(self.model_dir / self.file)
 
-        model_info = self.models[model_type]
-        self.model_path = str(self.model_dir / model_info["file"])
-
-        # Download logic (keeping your existing logic)
         if not os.path.exists(self.model_path):
-            hf_hub_download(repo_id=model_info["repo"], filename=model_info["file"], local_dir=self.model_dir)
+            hf_hub_download(repo_id=self.repo, filename=self.file, local_dir=self.model_dir)
 
-        # Hardware Scouting
+        # 1. DYNAMIC HARDWARE SCOUTING
         self.has_gpu = torch.cuda.is_available()
-        self.gpu_layers = -1 if self.has_gpu else 0
+        self.allocated_layers = 0
+        self.dynamic_ctx = 8192  # Default for CPU
+        self.vram_info = "N/A"
 
-        print(f"{Theme.MAGENTA}{Theme.BOLD}--- HARDWARE CALIBRATED ---{Theme.RESET}")
-        print(f"{Theme.CYAN}Device:{Theme.RESET} {'RTX 5060 Ti (16GB VRAM)' if self.has_gpu else 'CPU'}")
+        if self.has_gpu:
+            try:
+                # Get real-time VRAM info
+                free_b, total_b = torch.cuda.mem_get_info()
+                free_gb = free_b / (1024 ** 3)
+                total_gb = total_b / (1024 ** 3)
 
+                # Buffer: Leave 15% or 0.5GB (whichever is larger) for OS
+                buffer = max(0.5, total_gb * 0.15)
+                usable_vram = max(0, free_gb - buffer)
+
+                # Qwen 2.5 7B Q4_K_M weights: ~160MB per layer (28 layers total)
+                self.allocated_layers = max(0, min(int(usable_vram / 0.160), 28))
+
+                # Context (KV Cache) calculation: ~110MB per 1k tokens
+                remaining_for_ctx = max(0, usable_vram - (self.allocated_layers * 0.160))
+                calc_tokens = int((remaining_for_ctx / 0.11) * 1024)
+
+                # Floor of 5120 to ensure RAG works, cap at 32k
+                self.dynamic_ctx = max(5120, min(calc_tokens, 32768))
+                self.vram_info = f"{free_gb:.1f}GB Free / {total_gb:.1f}GB Total"
+
+            except Exception as e:
+                self.allocated_layers = 0
+                self.dynamic_ctx = 8192
+
+        self._print_calibration()
         self._llm_instance = None
+        self._initialized = True
+
+    def _print_calibration(self):
+        print(f"{Theme.MAGENTA}{Theme.BOLD}--- UNIVERSAL ENGINE CALIBRATED ---{Theme.RESET}")
+        device_name = torch.cuda.get_device_name(0) if self.has_gpu else "CPU"
+        print(f"{Theme.CYAN}Hardware:  {Theme.RESET}{device_name}")
+        print(f"{Theme.CYAN}VRAM:      {Theme.RESET}{self.vram_info}")
+        print(f"{Theme.CYAN}Offload:   {Theme.RESET}{self.allocated_layers}/28 layers to GPU")
+        print(f"{Theme.CYAN}Context:   {Theme.RESET}{self.dynamic_ctx} tokens (Safe-Limit)")
 
     @property
     def llm(self):
-        """Returns the LangChain-compatible ChatLlamaCpp instance"""
         if self._llm_instance is None:
-            print(f"{Theme.MAGENTA}🧠 Loading Model into VRAM...{Theme.RESET}")
-
-            # Using ChatLlamaCpp instead of raw Llama
             self._llm_instance = ChatLlamaCpp(
                 model_path=self.model_path,
-                n_gpu_layers=self.gpu_layers,
-                n_ctx=16384,  # Large context for RAG + History
-                n_batch=512,  # Optimized for 5060 Ti throughput
-                flash_attn=True,  # Massively reduces VRAM usage
-                last_n_tokens_size=64,
+                n_gpu_layers=self.allocated_layers,
+                n_ctx=self.dynamic_ctx,
+                n_batch=512 if self.has_gpu else 128,
+                flash_attn=True if self.allocated_layers > 10 else False,
                 chat_format="chatml",
-                temperature=0,  # Critical for SQL/RAG precision
+                temperature=0,
                 verbose=False,
-                streaming=True  # Allows for real-time response UI
+                streaming=True
             )
         return self._llm_instance
 
     def generate(self, system_prompt, user_prompt):
-        """Helper for simple direct calls without a chain"""
         from langchain_core.messages import SystemMessage, HumanMessage
-        messages = [
-            SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
-        ]
-        response = self.llm.invoke(messages)
-        return response.content
+        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+        return self.llm.invoke(messages).content
