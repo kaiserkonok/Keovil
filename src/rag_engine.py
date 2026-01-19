@@ -13,6 +13,8 @@ from langchain_core.documents import Document
 from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.callbacks import StdOutCallbackHandler
+from langchain_core.runnables import RunnableConfig
 from langchain_ollama import OllamaLLM
 import intelligent_rag_chunker
 from utils.document_processor import DocumentProcessor
@@ -59,6 +61,12 @@ class NewFileHandler(PatternMatchingEventHandler):
         # Deletions remain immediate as they are low-resource
         self.rag.remove_file(event.src_path)
 
+
+class RewriteLogger(StdOutCallbackHandler):
+    def on_chain_end(self, outputs, **kwargs):
+        # The history_aware_retriever output is usually the search query string
+        if isinstance(outputs, str):
+            print(f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}")
 
 # ----------------------
 # College RAG System
@@ -398,7 +406,10 @@ class CollegeRAG:
         print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH (History-Aware) {'=' * 20}{Colors.ENDC}")
 
         try:
-            docs = self.history_aware_retriever.invoke({"input": query, "chat_history": lc_history})
+            docs = self.history_aware_retriever.invoke(
+                {"input": query, "chat_history": lc_history},
+                config=RunnableConfig(callbacks=[RewriteLogger()])
+            )
         except Exception as e:
             print(f"{Colors.FAIL}[Error] Retrieval failed: {e}{Colors.ENDC}")
             return "I encountered an error."
