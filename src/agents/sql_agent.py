@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from langchain_ollama import ChatOllama
+from langchain_ollama import OllamaLLM
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -33,7 +33,7 @@ class SQLQueryAgent:
         self.model_name = model_name
 
         # Optimized for RTX 5060 Ti 16GB VRAM
-        self.llm = ChatOllama(
+        self.llm = OllamaLLM(
             model=self.model_name,
             temperature=0,
             num_ctx=16384,
@@ -45,42 +45,57 @@ class SQLQueryAgent:
 
     def ask(self, query: str):
         with duckdb.connect(self.db_path) as con:
-            con.execute("LOAD excel")
-            con.execute("LOAD spatial")
+            con.execute("LOAD excel; LOAD spatial;")
 
-            # 1. Fetch Schema
-            tables = con.execute("SHOW TABLES").fetchall()
-            if not tables:
-                return "Database is empty. Please upload files to the data folder."
+            # 1. Get ALL table names for the "Router" phase
+            tables_raw = con.execute("SHOW TABLES").fetchall()
+            if not tables_raw:
+                return "Database is empty."
 
-            schema_info = []
-            for (t_name,) in tables:
+            all_table_names = [t[0] for t in tables_raw]
+
+            # --- STEP A: IDENTIFY RELEVANT TABLES ---
+            router_prompt = (
+                "You are a database router. Given these tables, identify which are needed to answer the question.\n"
+                f"TABLES: {', '.join(all_table_names)}\n"
+                f"USER QUESTION: {query}\n"
+                "Output ONLY the table names as a comma-separated list. If none, say NONE."
+            )
+
+            router_output = self.llm.invoke(router_prompt).strip()
+            # Clean up the output (remove extra text LLMs sometimes add)
+            relevant_names = [name.strip() for name in router_output.split(',') if name.strip() in all_table_names]
+            print(relevant_names)
+
+            # Fallback: If router fails, give the first 3 tables to prevent total failure
+            if not relevant_names:
+                relevant_names = all_table_names
+
+            # --- STEP B: GRAB SPECIFIC SCHEMAS (THE FIX) ---
+            focused_schema = []
+            for t_name in relevant_names:
                 cols = con.execute(f"DESCRIBE {t_name}").fetchall()
-                # Use a vertical list for columns to make them distinct
-                col_details = "\n      ".join([f"- {c[0]} ({c[1]})" for c in cols])
-                schema_info.append(f"TABLE: {t_name}\n      {col_details}")
+                col_info = "\n      ".join([f"- {c[0]} ({c[1]})" for c in cols])
+                focused_schema.append(f"TABLE: {t_name}\n      {col_info}")
 
-            schema = "\n\n".join(schema_info)
+            schema_context = "\n\n".join(focused_schema)
 
-            # 2. Stage 1: The "Thought" and "SQL" Generation
+            print(schema_context)
+
+            # --- STEP C: GENERATE SQL WITH FOCUSED CONTEXT ---
             system_context = (
                 "You are a Senior Data Analyst using DuckDB.\n"
-                f"DATABASE SCHEMA:\n{schema}\n\n"
+                "Use the following FOCUSED SCHEMA to write your query:\n"
+                f"{schema_context}\n\n"
                 "INSTRUCTIONS:\n"
-                "- ALWAYS start with 'Thought: <reasoning>'. Use this to determine if a query is actually needed.\n"
-                "- GREETINGS: If the user says 'hello' or provides a general greeting, respond politely WITHOUT a SQL block.\n"
-                "- SQL USAGE: ONLY provide a ```sql block if the user's request requires data or metadata from the database.\n"
-                "- NAMESPACING: Tables use a path-based naming convention (e.g., 'folder_subfolder_file_ext'). "
-                "Use these prefixes to distinguish between different departments or versions of data.\n"
-                "- METADATA: For questions about table/column counts, use system views:\n"
-                "  * Count tables: `SELECT count(*) FROM information_schema.tables WHERE table_schema='main';`\n"
-                "  * List tables: `SHOW TABLES;`\n"
-                "- STANDARDS: Do NOT use dot-commands. Use standard SQL."
+                "- Start with 'Thought: <reasoning>'.\n"
+                "- Output exact SQL in a ```sql block.\n"
+                "- If no data is needed (greeting), just reply normally."
             )
 
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}").content
+                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}")
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -135,7 +150,7 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.llm.invoke(voice_prompt).content
+                final_chat = self.llm.invoke(voice_prompt)
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI
