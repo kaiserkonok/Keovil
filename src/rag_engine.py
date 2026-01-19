@@ -1,27 +1,23 @@
 import os
+import json
 import hashlib
 import threading
 import time
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 from datetime import datetime
 from langchain_core.documents import Document
-from langchain_community.chat_models import ChatLlamaCpp
 from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_classic.chains import create_retrieval_chain
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_ollama import OllamaLLM
 import intelligent_rag_chunker
 from utils.document_processor import DocumentProcessor
 from colbert_engine import ColBERTEngine
 import torch
-from langchain_core.globals import set_verbose
-
-set_verbose(True)
 
 
 # ----------------------
@@ -68,41 +64,48 @@ class NewFileHandler(PatternMatchingEventHandler):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, socketio=None):
+    def __init__(self, data_dir=None, top_k=5, llm_model='llama3.2:latest', temperature=0, socketio=None):
         home = Path.home()
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
         self.socketio = socketio
-        self.status = {"state": "idle", "current_file": "", "progress": 0, "total_files": 0}
 
+        self.status = {
+            "state": "idle",  # idle, processing, syncing
+            "current_file": "",
+            "progress": 0,
+            "total_files": 0
+        }
+
+        # NEW: SQLite Manifest Initialization (replaces JSON manifest_path)
         self.db_dir = base_storage / "database"
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_db = self.db_dir / "manifest.db"
         self._init_manifest_db()
 
         os.makedirs(self.data_dir, exist_ok=True)
+
         self.top_k = top_k
         self.lock = threading.Lock()
+
+        # NEW: Debounce Queue variables
         self.pending_files = set()
         self.queue_lock = threading.Lock()
+
         self.chat_history = []
 
-        # --- 1. ENGINE & LLM ---
-        # Optimized for RTX 5060 Ti 16GB
-        from src.utils.model_engine import ModelEngine
-        self.model_engine = ModelEngine()
-        self.llm = self.model_engine.llm
-
-        # --- 2. VECTOR & DOCUMENT TOOLS ---
+        # Initialize Engines
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"{Colors.HEADER}Initializing ColBERT Engine on: {Colors.BOLD}{device}{Colors.ENDC}")
+
         self.engine = ColBERTEngine(collection_name="krag", device=device)
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
-        # Base retriever from your ColBERT engine
-        base_retriever = self.engine.as_retriever(search_kwargs={"k": self.top_k})
+        self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
+        self.query_llm = OllamaLLM(model='qwen2.5:7b-instruct', temperature=0)
 
-        # Section 3: Rephraser Configuration
+        # History-Aware Retriever Setup
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
             "which might reference context in the chat history, "
@@ -110,40 +113,29 @@ class CollegeRAG:
             "just reformulate it if needed and otherwise return it as is."
         )
 
-        self.contextualize_q_prompt = ChatPromptTemplate.from_messages([
+        contextualize_q_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_q_system_prompt),
             MessagesPlaceholder("chat_history"),
             ("human", "{input}"),
         ])
 
-        # Strict QA Prompt: Forces Lora to stick to the facts and stop over-thinking titles.
-        self.qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", (
-                "You are Lora, a precise AI assistant. Answer the user question ONLY using the provided context. "
-                "If the information is not present in the context, say you do not know. "
-                "Do not use outside knowledge or speculate on titles like CEO/COO unless stated in the text."
-                "\n\nCONTEXT:\n{context}"
-            )),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
-
-        # --- 4. HISTORY-AWARE RETRIEVER SETUP ---
-        # This is the "powerful" logic that combines the rephraser and retriever
-        from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
         self.history_aware_retriever = create_history_aware_retriever(
-            self.llm,
-            base_retriever,
-            self.contextualize_q_prompt
+            self.query_llm,
+            self.engine.as_retriever(search_kwargs={"k": self.top_k}),
+            contextualize_q_prompt
         )
 
-        # --- 5. START WORKERS ---
+        # 3. Startup Sync (Now using SQLite)
         self._initial_sync()
+
+        # 4. Start Background Batch Worker
         threading.Thread(target=self._batch_worker, daemon=True).start()
 
+        # 5. Start Watchdog
         self.observer = Observer()
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
+        print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching worker...{Colors.ENDC}")
 
     def get_status(self):
         """Returns the current state for the UI."""
@@ -395,11 +387,6 @@ class CollegeRAG:
         return formatted_chat
 
     def ask(self, query, chat_history=None, stream=False):
-        """
-        Powerful History-Aware RAG Pipeline.
-        Uses the LangChain History-Aware Retriever for context-aware searching.
-        """
-        # 1. Prepare history (Limit to 6 for VRAM/Token efficiency)
         history = chat_history if chat_history is not None else self.chat_history
         lc_history = []
         for role, text in history[-6:]:
@@ -408,67 +395,67 @@ class CollegeRAG:
             else:
                 lc_history.append(AIMessage(content=text))
 
-        print(f"\n{Colors.HEADER}{'=' * 20} RAG PIPELINE {'=' * 20}{Colors.ENDC}")
+        print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH (History-Aware) {'=' * 20}{Colors.ENDC}")
 
         try:
-            # --- STEP 1: DEBUG VISIBILITY (The Standalone Query) ---
-            # We run the rephraser once manually just so YOU can see it.
-            # This is what Lora is actually going to search for.
-            rephrase_chain = self.contextualize_q_prompt | self.llm
-            standalone_query = rephrase_chain.invoke({
-                "chat_history": lc_history,
-                "input": query
-            }).content
-
-            print(
-                f"{Colors.OKCYAN}{Colors.BOLD}🔍 Standalone Query:{Colors.ENDC} {Colors.OKCYAN}{standalone_query}{Colors.ENDC}")
-
-            # --- STEP 2: POWERFUL RETRIEVAL ---
-            # The History-Aware Retriever uses the same logic but returns the Docs.
-            # It handles the rephrasing internally for the search.
-            docs = self.history_aware_retriever.invoke({
-                "input": query,
-                "chat_history": lc_history
-            })
-
-            # Show the matches using the visual helper
-            self._print_matches(docs)
-
-            # --- STEP 3: FINAL SYNTHESIS ---
-            # Prepare context for the final Llama call
-            context_text = "\n\n".join([d.page_content for d in docs])
-
-            # Use the QA prompt to generate the answer
-            qa_chain = self.qa_prompt | self.llm
-            ans = qa_chain.invoke({
-                "context": context_text,
-                "chat_history": lc_history,
-                "input": query
-            }).content
-
+            docs = self.history_aware_retriever.invoke({"input": query, "chat_history": lc_history})
         except Exception as e:
-            print(f"{Colors.FAIL}[Error] Pipeline failure: {e}{Colors.ENDC}")
-            import traceback
-            traceback.print_exc()
-            return "I hit a snag in my retrieval logic."
+            print(f"{Colors.FAIL}[Error] Retrieval failed: {e}{Colors.ENDC}")
+            return "I encountered an error."
 
-        # 4. Update internal memory if this isn't a temporary chat
-        if chat_history is None:
-            self.chat_history.append(("You", query))
-            self.chat_history.append(("AI", ans))
+        if not docs:
+            return "I don't have information on that yet."
 
-        return ans
-
-    def _print_matches(self, context_docs):
-        """Helper to display sources in the terminal."""
         print(f"\n{Colors.HEADER}┌{'─' * 78}┐{Colors.ENDC}")
-        for i, doc in enumerate(context_docs):
+        context_chunks = []
+        for i, doc in enumerate(docs):
             src = os.path.basename(doc.metadata.get("source", "Unknown"))
             print(f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {src}")
-            # Show a snippet of the context used
-            snippet = doc.page_content[:80].replace('\n', ' ').strip()
-            print(f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{snippet}...{Colors.ENDC}")
+            context_chunks.append(doc.page_content)
+            print(
+                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{doc.page_content[:150].replace('\n', ' ')}...{Colors.ENDC}")
         print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
+
+        context_text = "\n\n".join(context_chunks)
+        formatted_chat = self._format_chat_history(history[-6:])
+
+        prompt = f"""
+            You are Lora, a private AI Assistant.
+
+            Answer the question **only using the given context**. 
+            If someone does a typing mistake, like typing the same name with some different spelling, still give the correct answer with correct names. If you get context that is not related to the query, don't get confused with it. You might need to ignore it. 
+            Be friendly. Current date and time: {datetime.now()}
+
+            Use chat history to understand the conversation better and make your responses more natural and coherent.
+
+            CHAT HISTORY:
+            {formatted_chat}
+
+            CONTEXT:
+            {context_text}
+
+            QUESTION:
+            {query}
+
+            ANSWER:
+        """.strip()
+
+        if stream:
+            print(f"{Colors.BOLD}Lora:{Colors.ENDC} ", end="", flush=True)
+            ans = ""
+            for chunk in self.llm.stream(prompt):
+                print(chunk, end="", flush=True)
+                ans += chunk
+            if chat_history is None:
+                self.chat_history.append(("You", query))
+                self.chat_history.append(("AI", ans))
+            return ans
+
+        res = self.llm.invoke(prompt)
+        if chat_history is None:
+            self.chat_history.append(("You", query))
+            self.chat_history.append(("AI", res))
+        return res
 
 
 if __name__ == "__main__":
@@ -480,7 +467,7 @@ if __name__ == "__main__":
             question = input(f"{Colors.BOLD}You:{Colors.ENDC} ")
             if question.lower() in ['exit', 'quit']: break
             if not question.strip(): continue
-            rag.ask(question)
+            rag.ask(question, stream=True)
     except KeyboardInterrupt:
         print(f"\n{Colors.WARNING}Shutting down...{Colors.ENDC}")
         rag.observer.stop()

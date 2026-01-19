@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
+from langchain_ollama import ChatOllama
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -15,8 +16,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.syntax import Syntax
-from langchain_ollama import ChatOllama
-import torch
 
 init(autoreset=True)
 console = Console()
@@ -29,12 +28,15 @@ SQL_THREAD_LOCK = threading.Lock()
 # SQL QUERY AGENT
 # ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_path):
+    def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
         self.db_path = str(db_path)
+        self.model_name = model_name
 
+        # Optimized for RTX 5060 Ti 16GB VRAM
         self.llm = ChatOllama(
-            model="qwen2.5-coder:7b-instruct",
+            model=self.model_name,
             temperature=0,
+            num_ctx=16384,
         )
 
         # Install extensions ONCE
@@ -78,7 +80,7 @@ class SQLQueryAgent:
 
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
-                initial_response = self.llm.invoke(system_context)
+                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}").content
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -95,8 +97,7 @@ class SQLQueryAgent:
                     Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
 
                 # 3. Execution (The World-Class Batch Update)
-                device_label = "GPU" if torch.cuda.is_available() else "CPU"
-                print(f"{Fore.BLUE}🖥️ Running on {device_label}...{Style.RESET_ALL}")
+                print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
 
                 # Split SQL by semicolon, filter out empty strings
                 sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]
@@ -135,7 +136,6 @@ class SQLQueryAgent:
                 )
 
                 final_chat = self.llm.invoke(voice_prompt).content
-
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI

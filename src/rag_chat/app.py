@@ -17,20 +17,11 @@ from colorama import Fore, Style, init
 init(autoreset=True)
 
 # ---------------------------------------------------------
-# Path Configurations (FIXED FOR ABSOLUTE 'src' IMPORTS)
+# Path Configurations (Cross-OS compatible)
 # ---------------------------------------------------------
-CURRENT_FILE = Path(__file__).resolve() # K_RAG/src/rag_chat/app.py
-SRC_DIR = CURRENT_FILE.parent.parent    # K_RAG/src/
-PROJECT_ROOT = SRC_DIR.parent           # K_RAG/
-
-# We add PROJECT_ROOT (K_RAG) so that 'from src.utils...' works
-# We add SRC_DIR (src) so that 'from agents...' or 'import rag_engine' works
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(1, str(SRC_DIR))
-
-print(f"DEBUG: Project Root is {PROJECT_ROOT}")
+ROOT = Path(__file__).parent.parent
+sys.path.append(str(ROOT))
+sys.path.append(str(ROOT.parent))
 
 HOME_STORAGE = Path.home() / ".k_rag_storage"
 DATA_DIR = HOME_STORAGE / "data"
@@ -94,23 +85,16 @@ def save_settings(data):
 current_cfg = load_settings()
 
 # ---------------------------------------------------------
-# Engine Imports (Corrected for your tree structure)
+# Engine Imports
 # ---------------------------------------------------------
 try:
-    # rag_engine.py is inside /src/
-    import rag_engine
     from rag_engine import CollegeRAG
-    print("✅ Found rag_engine")
-except ImportError as e:
-    print(f"❌ Failed to import rag_engine: {e}")
+except ImportError:
     CollegeRAG = None
 
 try:
-    # sql_agent.py is inside /src/agents/
     from agents.sql_agent import StructuredDataAgent
-    print("✅ Found StructuredDataAgent")
-except ImportError as e:
-    print(f"❌ Failed to import StructuredDataAgent: {e}")
+except ImportError:
     StructuredDataAgent = None
 
 # ---------------------------------------------------------
@@ -124,52 +108,53 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 rag = None
 sql_system = None
 
-# Create a simple flag to prevent double-init within the same process
-_ENGINES_INITIALIZED = False
-
 
 def initialize_engines():
-    global rag, sql_system, _ENGINES_INITIALIZED
+    """
+    Initializes heavy GPU engines only once.
+    Passes the socketio instance to engines so animations work.
+    """
+    global rag, sql_system
 
-    # If we already did this in THIS process, stop.
-    if _ENGINES_INITIALIZED:
-        return
+    # THE MAGIC GUARD: Prevents double-loading and VRAM crashes
+    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    is_debug_disabled = not app.debug
 
-    # Check if we are the 'Worker' child process
-    # Flask-SocketIO sometimes uses 'true' (lowercase) or 'True'
-    is_worker = os.environ.get("WERKZEUG_RUN_MAIN") in ['true', 'True']
+    if is_reloader_child or is_debug_disabled:
+        print(f"{Fore.GREEN}🚀 [Worker] Initializing heavy engines on RTX 5060 Ti...{Style.RESET_ALL}")
 
-    # If debug is OFF, we always init. If debug is ON, only the worker inits.
-    if not app.debug or is_worker:
-        print(f"{Fore.GREEN}🚀 [Worker] INITIALIZING ENGINES...{Style.RESET_ALL}")
-
-        # 1. Init RAG
+        # 1. Init RAG engine with SocketIO support
         if CollegeRAG and rag is None:
             try:
-                rag = CollegeRAG(str(DATA_DIR), socketio=socketio)
-                print("✅ RAG Registered")
+                rag = CollegeRAG(
+                    str(DATA_DIR),
+                    llm_model=current_cfg["llm_model"],
+                    temperature=current_cfg["temperature"],
+                    socketio=socketio  # <--- PASS MICROPHONE TO RAG
+                )
+                print("✅ [Worker] RAG engine synchronized")
             except Exception as e:
-                print(f"❌ RAG Error: {e}")
+                print(f"❌ RAG init failed: {e}")
 
-        # 2. Init SQL
+        # 2. Init SQL Agent with SocketIO support
         if StructuredDataAgent and sql_system is None:
             try:
-                sql_system = StructuredDataAgent(socketio=socketio)
+                # Assuming StructuredDataAgent can also accept socketio
+                sql_system = StructuredDataAgent(socketio=socketio) # <--- PASS MICROPHONE TO SQL
                 sql_system.start_monitoring()
-                print("✅ SQL Agent Registered")
+                print("✅ [Worker] SQL Agent initialized")
             except Exception as e:
-                print(f"❌ SQL Error: {e}")
-
-        _ENGINES_INITIALIZED = True
+                # If your SQL agent doesn't take socketio yet,
+                # fallback to old way so it doesn't crash
+                sql_system = StructuredDataAgent()
+                sql_system.start_monitoring()
+                print("✅ [Worker] SQL Agent initialized (No Socket Support)")
     else:
-        print(f"{Fore.YELLOW}🛡️ [Watcher] Waiting for Worker process...{Style.RESET_ALL}")
+        # Parent process just stays quiet and watches for code changes
+        print(f"{Fore.YELLOW}🛡️ [Watcher] Reloader active. Waiting for code changes...{Style.RESET_ALL}")
 
-
-# Instead of calling it at the top level, we call it INSIDE the first request
-# or right before the app starts to ensure the environment is ready.
-@app.before_request
-def startup_init():
-    initialize_engines()
+# Trigger engine initialization
+initialize_engines()
 
 # ---------------------------------------------------------
 # Helper Functions
