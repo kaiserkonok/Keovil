@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.syntax import Syntax
-from src.utils.model_engine import ModelEngine
+from langchain_ollama import ChatOllama
 import torch
 
 init(autoreset=True)
@@ -31,19 +31,17 @@ SQL_THREAD_LOCK = threading.Lock()
 class SQLQueryAgent:
     def __init__(self, db_path):
         self.db_path = str(db_path)
-        self.engine = None
+
+        self.llm = ChatOllama(
+            model="qwen2.5-coder:7b-instruct",
+            temperature=0,
+        )
 
         # Install extensions ONCE
         duckdb.execute("INSTALL excel")
         duckdb.execute("INSTALL spatial")
 
     def ask(self, query: str):
-        # Load engine only when needed (Lazy Loading)
-        print(f"Engine: {self.engine}")
-        if self.engine is None:
-            console.print("[bold cyan]🚀 Connecting to Shared Model Engine...[/bold cyan]")
-            self.engine = ModelEngine()
-
         with duckdb.connect(self.db_path) as con:
             con.execute("LOAD excel")
             con.execute("LOAD spatial")
@@ -80,7 +78,7 @@ class SQLQueryAgent:
 
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
-                initial_response = self.engine.generate(system_context, query)
+                initial_response = self.llm.invoke(system_context)
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -136,7 +134,8 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.engine.generate("You are a Senior Data Analyst.", voice_prompt)
+                final_chat = self.llm.invoke(voice_prompt).content
+
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI

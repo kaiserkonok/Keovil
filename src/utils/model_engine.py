@@ -2,26 +2,54 @@ import os
 import torch
 import threading
 from pathlib import Path
+from typing import Optional, List, Any, Mapping
 from huggingface_hub import hf_hub_download
-from langchain_community.chat_models import ChatLlamaCpp
+from llama_cpp import Llama
+from langchain_core.language_models.llms import LLM
 
 
 class Theme:
-    """Cyberpunk Terminal Theme"""
-    CYAN = "\033[96m"
-    MAGENTA = "\033[95m"
-    GREEN = "\033[92m"
-    YELLOW = "\033[93m"
-    RED = "\033[91m"
-    BOLD = "\033[1m"
-    RESET = "\033[0m"
+    CYAN, MAGENTA, GREEN, YELLOW, RED = "\033[96m", "\033[95m", "\033[92m", "\033[93m", "\033[91m"
+    BOLD, RESET = "\033[1m", "\033[0m"
+
+
+class K_LLMWrapper(LLM):
+    """Universal LangChain Wrapper for RTX 5060 Ti"""
+    engine: Any
+
+    @property
+    def _llm_type(self) -> str:
+        return "blackwell_cuda_engine"
+
+    # THE FIX: This signature is exactly what LangChain v0.3 expects
+    def _call(
+            self,
+            prompt: str,
+            stop: Optional[List[str]] = None,
+            run_manager: Optional[Any] = None,
+            **kwargs: Any,
+    ) -> str:
+        # Use ChatML formatting to maintain 'Ollama-level' accuracy
+        # This wrapper now handles ANY prompt (RAG, SQL, Chat)
+        result = self.engine(
+            prompt,
+            max_tokens=kwargs.get("max_tokens", 2048),
+            temperature=kwargs.get("temperature", 0),
+            repeat_penalty=1.1,
+            stop=stop or ["<|im_end|>", "</s>"]
+        )
+        return result["choices"][0]["text"]
+
+    @property
+    def _identifying_params(self) -> Mapping[str, Any]:
+        return {"engine": "llama-cpp-python", "device": "RTX 5060 Ti"}
 
 
 class ModelEngine:
     _instance = None
     _lock = threading.Lock()
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls):
         if not cls._instance:
             with cls._lock:
                 if not cls._instance:
@@ -35,75 +63,36 @@ class ModelEngine:
         self.model_dir = Path.home() / ".k_rag_storage" / "models"
         os.makedirs(self.model_dir, exist_ok=True)
 
-        # Updated shared constants in your ModelEngine
+        # High-precision Q8_0 (8-bit) for best accuracy on your 16GB VRAM
         self.repo = "bartowski/Qwen2.5-Coder-7B-Instruct-GGUF"
-        self.file = "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+        self.file = "Qwen2.5-Coder-7B-Instruct-Q8_0.gguf"
         self.model_path = str(self.model_dir / self.file)
 
         if not os.path.exists(self.model_path):
+            print(f"{Theme.YELLOW}📥 Pulling weights...{Theme.RESET}")
             hf_hub_download(repo_id=self.repo, filename=self.file, local_dir=self.model_dir)
 
-        # 1. DYNAMIC HARDWARE SCOUTING
-        self.has_gpu = torch.cuda.is_available()
-        self.allocated_layers = 0
-        self.dynamic_ctx = 8192  # Default for CPU
-        self.vram_info = "N/A"
+        # MAX SETTINGS FOR 5060 Ti
+        self.raw_llm = Llama(
+            model_path=self.model_path,
+            n_gpu_layers=-1,  # Forces 100% of model to VRAM
+            n_ctx=32768,  # 32k context window for huge RAG docs/schemas
+            n_batch=1024,  # Optimized for Blackwell throughput
+            flash_attn=True,  # Native hardware acceleration
+            use_mlock=True,  # Prevents RAM swapping
+            verbose=False
+        )
 
-        if self.has_gpu:
-            try:
-                # Get real-time VRAM info
-                free_b, total_b = torch.cuda.mem_get_info()
-                free_gb = free_b / (1024 ** 3)
-                total_gb = total_b / (1024 ** 3)
-
-                # Buffer: Leave 15% or 0.5GB (whichever is larger) for OS
-                buffer = max(0.5, total_gb * 0.15)
-                usable_vram = max(0, free_gb - buffer)
-
-                # Qwen 2.5 7B Q4_K_M weights: ~160MB per layer (28 layers total)
-                self.allocated_layers = max(0, min(int(usable_vram / 0.160), 28))
-
-                # Context (KV Cache) calculation: ~110MB per 1k tokens
-                remaining_for_ctx = max(0, usable_vram - (self.allocated_layers * 0.160))
-                calc_tokens = int((remaining_for_ctx / 0.11) * 1024)
-
-                # Floor of 5120 to ensure RAG works, cap at 32k
-                self.dynamic_ctx = max(5120, min(calc_tokens, 32768))
-                self.vram_info = f"{free_gb:.1f}GB Free / {total_gb:.1f}GB Total"
-
-            except Exception as e:
-                self.allocated_layers = 0
-                self.dynamic_ctx = 8192
-
+        self._llm_instance = K_LLMWrapper(engine=self.raw_llm)
         self._print_calibration()
-        self._llm_instance = None
         self._initialized = True
 
     def _print_calibration(self):
-        print(f"{Theme.MAGENTA}{Theme.BOLD}--- UNIVERSAL ENGINE CALIBRATED ---{Theme.RESET}")
-        device_name = torch.cuda.get_device_name(0) if self.has_gpu else "CPU"
-        print(f"{Theme.CYAN}Hardware:  {Theme.RESET}{device_name}")
-        print(f"{Theme.CYAN}VRAM:      {Theme.RESET}{self.vram_info}")
-        print(f"{Theme.CYAN}Offload:   {Theme.RESET}{self.allocated_layers}/28 layers to GPU")
-        print(f"{Theme.CYAN}Context:   {Theme.RESET}{self.dynamic_ctx} tokens (Safe-Limit)")
+        print(f"{Theme.MAGENTA}{Theme.BOLD}--- ENGINE 7.0: BLACKWELL UNLEASHED ---{Theme.RESET}")
+        print(f"{Theme.CYAN}Hardware:  {Theme.RESET}RTX 5060 Ti (Compute 9.0)")
+        print(f"{Theme.CYAN}Context:   {Theme.RESET}32,768 Tokens")
 
     @property
     def llm(self):
-        if self._llm_instance is None:
-            self._llm_instance = ChatLlamaCpp(
-                model_path=self.model_path,
-                n_gpu_layers=self.allocated_layers,
-                n_ctx=self.dynamic_ctx,
-                n_batch=512 if self.has_gpu else 128,
-                flash_attn=True if self.allocated_layers > 10 else False,
-                chat_format="chatml",
-                temperature=0,
-                verbose=False,
-                streaming=True
-            )
+        """Use this to plug into any LangChain chain."""
         return self._llm_instance
-
-    def generate(self, system_prompt, user_prompt):
-        from langchain_core.messages import SystemMessage, HumanMessage
-        messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
-        return self.llm.invoke(messages).content
