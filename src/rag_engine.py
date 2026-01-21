@@ -72,7 +72,7 @@ class RewriteLogger(StdOutCallbackHandler):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, llm_model='llama3.2:latest', temperature=0, socketio=None):
+    def __init__(self, data_dir=None, top_k=5, llm_model='qwen2.5-coder:7b-instruct', temperature=0, socketio=None):
         home = Path.home()
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
@@ -110,8 +110,11 @@ class CollegeRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
-        self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
-        self.query_llm = OllamaLLM(model='qwen2.5:7b-instruct', temperature=0)
+        self.llm = OllamaLLM(model="qwen2.5-coder:7b-instruct", streaming=True, temperature=temperature)
+        self.query_llm = OllamaLLM(
+            model="qwen2.5-coder:7b-instruct",
+            temperature=0  # HARDCODED - Never changes
+        )
 
         # History-Aware Retriever Setup
         contextualize_q_system_prompt = (

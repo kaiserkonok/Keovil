@@ -11,6 +11,7 @@ from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
+import traceback
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
 from colorama import Fore, Style, init
 
@@ -66,21 +67,35 @@ def init_chat_db():
 init_chat_db()
 
 # ---------------------------------------------------------
-# Settings Management
+# Settings Management (Optimized for RTX 5060 Ti)
 # ---------------------------------------------------------
 def load_settings():
-    defaults = {"llm_model": "qwen2.5:7b-instruct", "temperature": 0.8}
+    # We force the Coder model for best performance in SQL and RAG
+    defaults = {
+        "llm_model": "qwen2.5-coder:7b-instruct",
+        "temperature": 0.0,
+        "num_ctx": 16384  # High context for college documents
+    }
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, "r") as f:
-                return {**defaults, **json.load(f)}
+                saved = json.load(f)
+                # Ensure we don't accidentally load an old 'dumb' model name
+                saved["llm_model"] = "qwen2.5-coder:7b-instruct"
+                return {**defaults, **saved}
         except Exception:
             return defaults
     return defaults
 
 def save_settings(data):
+    # Sanitize data before saving to ensure accuracy
+    sanitized_data = {
+        "llm_model": "qwen2.5-coder:7b-instruct", # Hard-locked
+        "temperature": min(float(data.get("temperature", 0.0)), 0.5), # Cap at 0.5
+        "num_ctx": 16384
+    }
     with open(SETTINGS_FILE, "w") as f:
-        json.dump(data, f)
+        json.dump(sanitized_data, f)
 
 current_cfg = load_settings()
 
@@ -122,6 +137,7 @@ def initialize_engines():
 
     if is_reloader_child or is_debug_disabled:
         print(f"{Fore.GREEN}🚀 [Worker] Initializing heavy engines on RTX 5060 Ti...{Style.RESET_ALL}")
+        print(f"DEBUG: Using config: {current_cfg}")  # Verify the settings being loaded
 
         # 1. Init RAG engine with SocketIO support
         if CollegeRAG and rag is None:
@@ -130,27 +146,35 @@ def initialize_engines():
                     str(DATA_DIR),
                     llm_model=current_cfg["llm_model"],
                     temperature=current_cfg["temperature"],
-                    socketio=socketio  # <--- PASS MICROPHONE TO RAG
+                    socketio=socketio
                 )
                 print("✅ [Worker] RAG engine synchronized")
             except Exception as e:
-                print(f"❌ RAG init failed: {e}")
+                print(f"\n{Fore.RED}{'=' * 60}")
+                print(f"❌ RAG INITIALIZATION CRITICAL ERROR")
+                print(f"ERROR TYPE: {type(e).__name__}")
+                print(f"MESSAGE: {e}")
+                print(f"{'=' * 60}{Style.RESET_ALL}")
+
+                # THIS IS THE KEY: It prints the full path to the bug
+                traceback.print_exc()
+
+                print(f"{Fore.RED}{'=' * 60}{Style.RESET_ALL}\n")
 
         # 2. Init SQL Agent with SocketIO support
         if StructuredDataAgent and sql_system is None:
             try:
-                # Assuming StructuredDataAgent can also accept socketio
-                sql_system = StructuredDataAgent(socketio=socketio) # <--- PASS MICROPHONE TO SQL
+                # Force SQL to 0.0 for accuracy regardless of user settings
+                sql_system = StructuredDataAgent(socketio=socketio)
+                if hasattr(sql_system, 'llm'):
+                    sql_system.llm.temperature = 0.0
+
                 sql_system.start_monitoring()
-                print("✅ [Worker] SQL Agent initialized")
+                print("✅ [Worker] SQL Agent initialized (Precise Mode)")
             except Exception as e:
-                # If your SQL agent doesn't take socketio yet,
-                # fallback to old way so it doesn't crash
-                sql_system = StructuredDataAgent()
-                sql_system.start_monitoring()
-                print("✅ [Worker] SQL Agent initialized (No Socket Support)")
+                print(f"❌ SQL init failed: {e}")
+                # Optional: add traceback here too if SQL starts failing
     else:
-        # Parent process just stays quiet and watches for code changes
         print(f"{Fore.YELLOW}🛡️ [Watcher] Reloader active. Waiting for code changes...{Style.RESET_ALL}")
 
 # Trigger engine initialization
@@ -300,17 +324,27 @@ def delete_session():
 # ---------------------------------------------------------
 @app.route("/api/settings", methods=["GET", "POST"])
 def manage_settings():
-    global rag
+    global rag, sql_system
     if request.method == "GET":
         return jsonify(load_settings())
+
     data = request.json
     save_settings(data)
+
+    new_cfg = load_settings()
+
     if rag:
-        from langchain_ollama import OllamaLLM
-        rag.llm = OllamaLLM(
-            model=data["llm_model"],
-            temperature=float(data["temperature"])
-        )
+        # Only the RAG gets the 'User' temperature for flexibility
+        rag.llm.temperature = new_cfg["temperature"]
+        print(f"{Fore.CYAN}[System] RAG Intelligence updated: {new_cfg['temperature']}")
+
+    if sql_system:
+        # WE DO NOT USE new_cfg["temperature"] here.
+        # We keep SQL at 0.0 ALWAYS for accuracy.
+        if hasattr(sql_system, 'llm'):
+            sql_system.llm.temperature = 0.0
+        print(f"{Fore.YELLOW}[System] SQL Logic locked at 0.0 for accuracy")
+
     return jsonify({"ok": True})
 
 @app.route("/api/explorer/files")
