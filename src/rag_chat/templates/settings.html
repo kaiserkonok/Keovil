@@ -13,44 +13,55 @@
         .neon-border::after { content: ''; position: absolute; bottom: -2px; left: 0; width: 0; height: 2px; background: #8b5cf6; transition: width 0.3s ease; }
         .neon-border:focus-within::after { width: 100%; }
         input[type="range"] { accent-color: #8b5cf6; }
+
+        /* Custom styling for the disabled select to keep the aesthetic */
+        select:disabled { opacity: 0.7; cursor: not-allowed; -webkit-appearance: none; }
     </style>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
 
     <div class="mb-10 text-center">
         <h1 class="text-4xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-fuchsia-500">SYSTEM PREFERENCES</h1>
-        <p class="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Adjust Lora's Brain & Creativity</p>
+        <p class="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Optimize Lora's Brain & Logic</p>
     </div>
 
     <div class="w-full max-w-lg glass-panel rounded-[2rem] p-10 shadow-2xl shadow-violet-900/10">
         <div class="space-y-10">
 
             <div class="neon-border">
-                <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">Neural Model</label>
-                <select id="modelSelect" class="w-full bg-transparent text-xl font-light py-2 focus:outline-none cursor-pointer">
-                    <option class="bg-zinc-900" value="qwen2.5:0.5b">Qwen 2.5 (0.5B)</option>
-                    <option class="bg-zinc-900" value="qwen2.5:3b">Qwen 2.5 (3B)</option>
-                    <option class="bg-zinc-900" value="qwen2.5:7b-instruct">Qwen 2.5 (7B)</option>
-                    <option class="bg-zinc-900" value="qwen2.5:14b-instruct-q4_K_M">Qwen 2.5 (14B)</option>
-                    <option class="bg-zinc-900" value="llama3.2:latest">llama3.2:latest</option>
+                <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest mb-4">Neural Core (Optimized)</label>
+                <select id="modelSelect" disabled class="w-full bg-transparent text-xl font-light py-2 focus:outline-none">
+                    <option class="bg-zinc-900" value="qwen2.5-coder:7b-instruct">Qwen 2.5 Coder (7B-Instruct)</option>
                 </select>
+                <p class="text-[10px] text-violet-400/50 mt-2 uppercase tracking-widest italic">Hardware Locked: RTX 5060 Ti 16GB</p>
             </div>
 
             <div>
                 <div class="flex justify-between items-end mb-4">
-                    <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Creativity (Temp)</label>
-                    <span id="tempValue" class="text-3xl font-light text-violet-400">0.1</span>
+                    <label class="block text-xs font-bold text-zinc-400 uppercase tracking-widest">Intelligence Mode</label>
+                    <span id="modeLabel" class="text-2xl font-light text-violet-400">Precise</span>
                 </div>
-                <input type="range" id="tempRange" min="0" max="1" step="0.05" value="0.1" class="w-full h-1 bg-zinc-800 rounded-full appearance-none">
-                <div class="flex justify-between text-[10px] font-bold text-zinc-600 mt-3 uppercase tracking-tighter">
-                    <span>Precision</span>
-                    <span>Hallucination</span>
+                <input type="range" id="tempRange" min="0" max="0.5" step="0.25" value="0" class="w-full h-1 bg-zinc-800 rounded-full appearance-none cursor-pointer">
+
+                <div class="flex justify-between text-[10px] font-bold text-zinc-600 mt-4 uppercase tracking-tighter">
+                    <div class="text-center">
+                        <span class="block text-violet-500">SQL & Data</span>
+                        <span>0.0</span>
+                    </div>
+                    <div class="text-center">
+                        <span class="block">Balanced</span>
+                        <span>0.25</span>
+                    </div>
+                    <div class="text-center">
+                        <span class="block text-fuchsia-500">Creative</span>
+                        <span>0.5</span>
+                    </div>
                 </div>
             </div>
 
             <div class="pt-6">
                 <button onclick="updateSettings()" id="saveBtn" class="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-violet-500 hover:text-white transition-all active:scale-95 shadow-xl">
-                    INITIALIZE UPDATES
+                    SYNC NEURAL ENGINE
                 </button>
                 <a href="/" class="block text-center mt-6 text-zinc-500 hover:text-white text-sm transition-colors tracking-tight">Return to Dashboard</a>
             </div>
@@ -60,30 +71,47 @@
 
     <script>
         const tempRange = document.getElementById('tempRange');
-        const tempValue = document.getElementById('tempValue');
+        const modeLabel = document.getElementById('modeLabel');
         const modelSelect = document.getElementById('modelSelect');
         const saveBtn = document.getElementById('saveBtn');
 
+        const modeMap = {
+            "0": "Strict Logic",
+            "0.25": "Balanced",
+            "0.5": "Creative"
+        };
+
         // Fetch current settings on load
         async function fetchSettings() {
-            const res = await fetch('/api/settings');
-            const data = await res.json();
-            modelSelect.value = data.llm_model;
-            tempRange.value = data.temperature;
-            tempValue.innerText = data.temperature;
+            try {
+                const res = await fetch('/api/settings');
+                const data = await res.json();
+
+                // We keep the internal value for the API, but map it to the slider
+                tempRange.value = data.temperature;
+                updateModeLabel(data.temperature);
+            } catch (err) {
+                console.error("Failed to fetch settings:", err);
+            }
+        }
+
+        function updateModeLabel(val) {
+            // Find closest mode name
+            modeLabel.innerText = modeMap[val] || "Custom";
         }
 
         tempRange.addEventListener('input', (e) => {
-            tempValue.innerText = e.target.value;
+            updateModeLabel(e.target.value);
         });
 
         async function updateSettings() {
             const originalText = saveBtn.innerText;
-            saveBtn.innerText = "PROCESSING...";
+            saveBtn.innerText = "RECONFIGURING...";
             saveBtn.disabled = true;
 
             const payload = {
-                llm_model: modelSelect.value,
+                // Hardcoded to ensure the user doesn't break the backend config
+                llm_model: "qwen2.5-coder:7b-instruct",
                 temperature: parseFloat(tempRange.value)
             };
 
@@ -95,9 +123,10 @@
                 });
 
                 if (res.ok) {
-                    saveBtn.innerText = "SYSTEM UPDATED";
+                    saveBtn.innerText = "ENGINE OPTIMIZED";
                     saveBtn.classList.replace('bg-white', 'bg-emerald-500');
                     saveBtn.classList.replace('text-black', 'text-white');
+
                     setTimeout(() => {
                         saveBtn.innerText = originalText;
                         saveBtn.classList.replace('bg-emerald-500', 'bg-white');
@@ -106,8 +135,13 @@
                     }, 2000);
                 }
             } catch (err) {
-                saveBtn.innerText = "ERROR OCCURRED";
-                saveBtn.disabled = false;
+                saveBtn.innerText = "SYNC FAILED";
+                saveBtn.classList.replace('bg-white', 'bg-red-500');
+                setTimeout(() => {
+                    saveBtn.innerText = originalText;
+                    saveBtn.classList.replace('bg-red-500', 'bg-white');
+                    saveBtn.disabled = false;
+                }, 2000);
             }
         }
 

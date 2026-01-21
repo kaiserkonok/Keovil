@@ -1,3 +1,5 @@
+import eventlet
+eventlet.monkey_patch()
 import os
 import sys
 import shutil
@@ -9,7 +11,10 @@ from flask import (
     Flask, render_template, request, jsonify, send_file,
     Response, stream_with_context
 )
+import traceback
+from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
 from colorama import Fore, Style, init
+
 init(autoreset=True)
 
 # ---------------------------------------------------------
@@ -62,21 +67,35 @@ def init_chat_db():
 init_chat_db()
 
 # ---------------------------------------------------------
-# Settings Management
+# Settings Management (Optimized for RTX 5060 Ti)
 # ---------------------------------------------------------
 def load_settings():
-    defaults = {"llm_model": "qwen2.5:7b-instruct", "temperature": 0.8}
+    # We force the Coder model for best performance in SQL and RAG
+    defaults = {
+        "llm_model": "qwen2.5-coder:7b-instruct",
+        "temperature": 0.0,
+        "num_ctx": 16384  # High context for college documents
+    }
     if SETTINGS_FILE.exists():
         try:
             with open(SETTINGS_FILE, "r") as f:
-                return {**defaults, **json.load(f)}
+                saved = json.load(f)
+                # Ensure we don't accidentally load an old 'dumb' model name
+                saved["llm_model"] = "qwen2.5-coder:7b-instruct"
+                return {**defaults, **saved}
         except Exception:
             return defaults
     return defaults
 
 def save_settings(data):
+    # Sanitize data before saving to ensure accuracy
+    sanitized_data = {
+        "llm_model": "qwen2.5-coder:7b-instruct", # Hard-locked
+        "temperature": min(float(data.get("temperature", 0.0)), 0.5), # Cap at 0.5
+        "num_ctx": 16384
+    }
     with open(SETTINGS_FILE, "w") as f:
-        json.dump(data, f)
+        json.dump(sanitized_data, f)
 
 current_cfg = load_settings()
 
@@ -99,45 +118,64 @@ except ImportError:
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
-
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 # Globals for engines
 rag = None
 sql_system = None
 
+
 def initialize_engines():
     """
     Initializes heavy GPU engines only once.
-    Protects VRAM while allowing Flask live-reload to work.
+    Passes the socketio instance to engines so animations work.
     """
     global rag, sql_system
 
-    # Only initialize in the main worker process, not the reloader's watcher process
-    is_main_process = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    # THE MAGIC GUARD: Prevents double-loading and VRAM crashes
+    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     is_debug_disabled = not app.debug
 
-    if is_main_process or is_debug_disabled:
-        # 1. Init RAG engine
+    if is_reloader_child or is_debug_disabled:
+        print(f"{Fore.GREEN}🚀 [Worker] Initializing heavy engines on RTX 5060 Ti...{Style.RESET_ALL}")
+        print(f"DEBUG: Using config: {current_cfg}")  # Verify the settings being loaded
+
+        # 1. Init RAG engine with SocketIO support
         if CollegeRAG and rag is None:
             try:
                 rag = CollegeRAG(
                     str(DATA_DIR),
                     llm_model=current_cfg["llm_model"],
-                    temperature=current_cfg["temperature"]
+                    temperature=current_cfg["temperature"],
+                    socketio=socketio
                 )
-                print("✅ [Worker] RAG engine synchronized and initialized")
+                print("✅ [Worker] RAG engine synchronized")
             except Exception as e:
-                print(f"❌ RAG init failed: {e}")
+                print(f"\n{Fore.RED}{'=' * 60}")
+                print(f"❌ RAG INITIALIZATION CRITICAL ERROR")
+                print(f"ERROR TYPE: {type(e).__name__}")
+                print(f"MESSAGE: {e}")
+                print(f"{'=' * 60}{Style.RESET_ALL}")
 
-        # 2. Init SQL Agent
+                # THIS IS THE KEY: It prints the full path to the bug
+                traceback.print_exc()
+
+                print(f"{Fore.RED}{'=' * 60}{Style.RESET_ALL}\n")
+
+        # 2. Init SQL Agent with SocketIO support
         if StructuredDataAgent and sql_system is None:
             try:
-                sql_system = StructuredDataAgent()
+                # Force SQL to 0.0 for accuracy regardless of user settings
+                sql_system = StructuredDataAgent(socketio=socketio)
+                if hasattr(sql_system, 'llm'):
+                    sql_system.llm.temperature = 0.0
+
                 sql_system.start_monitoring()
-                print("✅ [Worker] SQL Agent initialized")
+                print("✅ [Worker] SQL Agent initialized (Precise Mode)")
             except Exception as e:
-                print(f"❌ SQL Agent init failed: {e}")
+                print(f"❌ SQL init failed: {e}")
+                # Optional: add traceback here too if SQL starts failing
     else:
-        print("⏳ Waiting for Flask Reloader worker to spawn...")
+        print(f"{Fore.YELLOW}🛡️ [Watcher] Reloader active. Waiting for code changes...{Style.RESET_ALL}")
 
 # Trigger engine initialization
 initialize_engines()
@@ -151,6 +189,14 @@ def safe_rel_path(p: str | None) -> str:
 # ---------------------------------------------------------
 # UI ROUTES
 # ---------------------------------------------------------
+
+
+@socketio.on('connect')
+def handle_connect():
+    # Automatically put every tab in its own private room based on its ID
+    join_room(request.sid)
+    print(f"Tab connected and private room created: {request.sid}")
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -225,6 +271,8 @@ def api_chat():
         history_rows = cur.fetchall()
         rag_history = [("You" if r[0] == 'user' else "AI", r[1]) for r in history_rows]
 
+    socketio.emit('system_status', {"is_busy": True, "rag": {"state": "processing"}})
+
     ans = ""
     if rag:
         try:
@@ -233,6 +281,7 @@ def api_chat():
             conn.close()
             return jsonify({"error": str(e)}), 500
     else:
+        socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
         ans = "(RAG not initialized)"
 
     if not session_id:
@@ -253,6 +302,7 @@ def api_chat():
     )
     conn.commit()
     conn.close()
+    socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
     return jsonify({"response": ans, "session_id": session_id})
 
 @app.route("/api/chat/sessions/delete", methods=["POST"])
@@ -274,17 +324,27 @@ def delete_session():
 # ---------------------------------------------------------
 @app.route("/api/settings", methods=["GET", "POST"])
 def manage_settings():
-    global rag
+    global rag, sql_system
     if request.method == "GET":
         return jsonify(load_settings())
+
     data = request.json
     save_settings(data)
+
+    new_cfg = load_settings()
+
     if rag:
-        from langchain_ollama import OllamaLLM
-        rag.llm = OllamaLLM(
-            model=data["llm_model"],
-            temperature=float(data["temperature"])
-        )
+        # Only the RAG gets the 'User' temperature for flexibility
+        rag.llm.temperature = new_cfg["temperature"]
+        print(f"{Fore.CYAN}[System] RAG Intelligence updated: {new_cfg['temperature']}")
+
+    if sql_system:
+        # WE DO NOT USE new_cfg["temperature"] here.
+        # We keep SQL at 0.0 ALWAYS for accuracy.
+        if hasattr(sql_system, 'llm'):
+            sql_system.llm.temperature = 0.0
+        print(f"{Fore.YELLOW}[System] SQL Logic locked at 0.0 for accuracy")
+
     return jsonify({"ok": True})
 
 @app.route("/api/explorer/files")
@@ -424,13 +484,23 @@ def list_files_tree():
         return res
     return jsonify({"tree": get_tree_items(FILES_DIR)})
 
+
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
+    # We don't need the sid here anymore for status!
     data = request.json or {}
     query = data.get("query", "")
+
     if not query:
         return jsonify({"output": "Please enter a query."}), 400
-    response = sql_system.query(query) if sql_system else "SQL system not initialized."
+
+    try:
+        # Just crunch the numbers and return them
+        response = sql_system.query(query) if sql_system else "System Offline"
+    except Exception as e:
+        response = f"Error: {str(e)}"
+
+    # NO SOCKET EMIT HERE. Keep the "Megaphone" silent.
     return jsonify({"output": response})
 
 
@@ -529,13 +599,16 @@ def preview_data_file():
 
 @app.route("/api/ingest/status")
 def get_ingest_status():
-    """Returns the current status of the RAG ingestion process."""
-    if not rag:
-        return jsonify({"status": "idle", "files": []})
+    """Returns the current status and triggers a broadcast."""
+    rag_info = rag.get_status() if rag else {"state": "idle"}
+    sql_is_syncing = sql_system.is_syncing if sql_system else False
 
-    # We will define 'get_status()' in the next step inside rag_engine.py
-    return jsonify(rag.get_status())
+    return jsonify({
+        "is_busy": (rag_info.get("state") != "idle") or sql_is_syncing,
+        "rag": rag_info,
+        "sql_syncing": sql_is_syncing
+    })
 
 if __name__ == "__main__":
     # threaded=True is required for watchdog and web requests to run in parallel
-    app.run(debug=True, threaded=True, host="0.0.0.0", port=5000)
+    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True, log_output=True)

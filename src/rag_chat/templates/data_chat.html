@@ -3,11 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Structured Data Lab</title>
+    <title>Structured Data Lab | Kevil</title>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/tokyo-night-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
     <style>
         :root {
@@ -189,11 +190,64 @@
             position: sticky;
             top: 0;
             z-index: 10;
-            background: #21262d; /* Matches your current th background */
+            background: #21262d; /* Ensure this is solid! */
+            border-bottom: 2px solid var(--accent);
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: var(--accent);
+        }
+
+        .pulse-amber {
+            background: #e3b341;
+            box-shadow: 0 0 10px #e3b341;
+            animation: status-pulse 1.5s infinite;
+        }
+
+        .pulse-green {
+            background: #3fb950;
+            box-shadow: 0 0 10px #3fb950;
+            animation: status-pulse 1s infinite;
+        }
+
+        @keyframes status-pulse {
+            0% { transform: scale(1); opacity: 1; }
+            50% { transform: scale(1.3); opacity: 0.5; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Keep original colors, just add a subtle pulse */
+        .query-input:disabled {
+            cursor: wait; /* Shows the loading spinner cursor on hover */
+            border-color: var(--accent); /* Keep the accent color visible */
+            animation: borderPulse 2s infinite ease-in-out;
+            opacity: 0.8; /* Only a very slight fade */
+        }
+
+        @keyframes borderPulse {
+            0% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+            50% { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); }
+            100% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
         }
     </style>
 </head>
 <body>
+
+<div id="ingest-status-card" style="display:none; position:fixed; bottom:100px; right:30px; width:320px; background: rgba(22, 27, 34, 0.8); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; transition: all 0.3s ease;">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <div id="status-dot" class="status-indicator"></div>
+        <span id="status-title" style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); font-weight: 500;">ENGINE ACTIVE</span>
+    </div>
+    <div style="height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin: 8px 0;">
+        <div id="ingest-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease;"></div>
+    </div>
+    <span id="current-status-detail" style="font-size: 11px; font-family: 'Fira Code', monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">Initializing...</span>
+</div>
 
 <div class="notebook-container" id="notebook">
     <div class="header-area">
@@ -207,10 +261,11 @@
 </div>
 
 <div class="query-bar">
-    <input type="text" class="query-input" id="userInput" placeholder="Ask your data: 'What is the average age in family_age.csv?'" onkeypress="handleKey(event)" autofocus>
+    <input type="text" class="query-input" id="userInput" placeholder="Ask your data..." onkeypress="handleKey(event)" autofocus>
 </div>
 
 <script>
+    const userInput = document.getElementById('userInput');
     const md = window.markdownit({
         html: true,
         highlight: function (str, lang) {
@@ -223,14 +278,14 @@
 
     let cellCount = 1;
 
+    // REPLACE BOTH handleKey FUNCTIONS WITH THIS ONE:
     async function handleKey(e) {
-        if (e.key === 'Enter') {
-            const input = document.getElementById('userInput');
+        const input = document.getElementById('userInput');
+        // Don't send if: 1. Not Enter, 2. Empty, 3. Input is disabled (System Busy)
+        if (e.key === 'Enter' && input.value.trim() !== '' && !input.disabled) {
             const query = input.value;
-            if (!query.trim()) return;
-
-            addCell(query);
-            input.value = '';
+            input.value = ''; // Clear immediately for snappy feel
+            await addCell(query);
         }
     }
 
@@ -238,27 +293,29 @@
         const container = document.getElementById('notebook');
         const currentId = cellCount++;
 
+        // 1. LOCAL LOCK: This only happens in THIS browser tab
+        userInput.disabled = true;
+
         const cellHtml = `
             <div class="cell" id="cell-${currentId}">
                 <div class="cell-label">In [${currentId}]:</div>
                 <div class="cell-content">
                     <div class="input-area">${query}</div>
                     <div class="output-area" id="out-${currentId}">
-                        <span style="color: var(--accent); opacity: 0.8; font-family: 'Fira Code'; font-size: 13px;" class="thinking">Executing SQL Logic...</span>
+                        <span class="thinking" style="color: var(--accent); font-family: 'Fira Code'; font-size: 13px;">Executing Database Logic...</span>
                     </div>
                 </div>
-            </div>
-        `;
+            </div>`;
         container.insertAdjacentHTML('beforeend', cellHtml);
-
         document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         try {
             const response = await fetch('/api/sql_query', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: query })
             });
+
             const data = await response.json();
 
             const outputDiv = document.getElementById(`out-${currentId}`);
@@ -267,22 +324,83 @@
                 <div class="markdown-body">${md.render(data.output)}</div>
             `;
 
-            outputDiv.querySelectorAll('pre code').forEach((el) => {
-                hljs.highlightElement(el);
-            });
-
-            setTimeout(() => {
-                outputDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }, 150);
+            outputDiv.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
 
         } catch (err) {
-            document.getElementById(`out-${currentId}`).innerHTML = `
-                <div style="color: #ff7b72; padding: 10px; border: 1px solid #ff7b72; border-radius: 5px; font-family: 'Fira Code'; font-size: 13px;">
-                    <strong>Execution Error:</strong> ${err}
-                </div>
-            `;
+            document.getElementById(`out-${currentId}`).innerHTML = `<div style="color: #ff7b72;">Error: ${err.message}</div>`;
+        } finally {
+            // 2. LOCAL UNLOCK: Re-enable the box for this user only
+            userInput.disabled = false;
+            userInput.focus();
         }
     }
+    // Initialize Socket.IO
+    const socket = io();
+
+    socket.on('connect', () => {
+        console.log("Connected to Lora SQL Engine");
+    });
+
+    socket.on('disconnect', () => {
+        userInput.placeholder = "Connection lost. Reconnecting...";
+        userInput.disabled = true;
+    });
+
+    // LISTEN FOR BROADCASTS
+socket.on('system_status', function(data) {
+    const card = document.getElementById('ingest-status-card');
+    const dot = document.getElementById('status-dot');
+    const bar = document.getElementById('ingest-progress-bar');
+    const title = document.getElementById('status-title');
+    const detail = document.getElementById('current-status-detail');
+
+    // These are GLOBAL events (Indexing a CSV, Vectorizing PDFs)
+    const isSqlSync = data.sql_syncing === true;
+    const isRagSync = data.rag && data.rag.state === 'processing';
+
+    // 1. THE STATUS CARD (Global Animations)
+    if (isSqlSync || isRagSync) {
+        card.style.display = 'block';
+        card.style.opacity = '1';
+
+        if (isSqlSync) {
+            dot.className = 'status-indicator pulse-amber';
+            title.innerText = "SQL RE-INDEXING";
+            detail.innerText = "RTX 5060 Ti is analyzing tables...";
+            bar.style.width = "40%";
+        } else {
+            dot.className = 'status-indicator pulse-green';
+            title.innerText = "VECTORIZING DOCUMENTS";
+            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+            if (data.rag.total_files > 0) {
+                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
+                bar.style.width = pc + "%";
+            } else {
+                bar.style.width = "100%";
+            }
+        }
+
+        // DISABLE INPUT because the whole DB is changing
+        userInput.disabled = true;
+        userInput.placeholder = "Database is updating...";
+
+    } else {
+        // Smooth fade out when idle
+        card.style.opacity = '0';
+        setTimeout(() => {
+            if(card.style.opacity === '0') {
+                card.style.display = 'none';
+
+                // ONLY re-enable if we aren't currently waiting for a private Query response
+                // (This is the magic part - it won't step on addCell's toes)
+                if (!document.querySelector('.thinking')) {
+                    userInput.disabled = false;
+                    userInput.placeholder = "Ask your data...";
+                }
+            }
+        }, 300);
+    }
+});
 </script>
 
 </body>

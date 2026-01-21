@@ -1,314 +1,367 @@
 import os
-import pandas as pd
-import sqlite3
+import duckdb
 import threading
 import re
 import time
 from pathlib import Path
-from sqlalchemy import create_engine, text
-from langchain_community.utilities import SQLDatabase
-from langchain_ollama import ChatOllama
+
+import pandas as pd
+from langchain_ollama import OllamaLLM
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from tqdm import tqdm
+
+# Beautiful terminal output
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.syntax import Syntax
 
 init(autoreset=True)
+console = Console()
 
+# Thread-safe lock
+SQL_THREAD_LOCK = threading.Lock()
+
+
+# ==================================================
+# SQL QUERY AGENT
+# ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_uri: str, model_name: str = 'qwen2.5-coder:7b-instruct'):
-        self.db_uri = db_uri.replace('\\', '/')
+    def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
+        self.db_path = str(db_path)
         self.model_name = model_name
-        self.engine = create_engine(self.db_uri, pool_pre_ping=True)
-        self.db = None
-        self.llm = None
-        self._lock = threading.Lock()
-        self.refresh_agent()
 
-    def refresh_agent(self):
-        with self._lock:
-            try:
-                self.db = SQLDatabase(self.engine)
-                # Optimized for your RTX 5060 Ti 16GB VRAM
-                self.llm = ChatOllama(
-                    model=self.model_name,
-                    temperature=0,
-                    num_ctx=16384,
-                    timeout=180
-                )
-                print(f"{Fore.CYAN}🔄 SQL Engine & Schema Re-Initialized.{Style.RESET_ALL}")
-            except Exception as e:
-                print(f"{Fore.RED}✖ SQL Agent init failed: {e}{Style.RESET_ALL}")
+        # Optimized for RTX 5060 Ti 16GB VRAM
+        self.llm = OllamaLLM(
+            model=self.model_name,
+            temperature=0,
+            num_ctx=16384,
+        )
+
+        # Install extensions ONCE
+        duckdb.execute("INSTALL excel")
+        duckdb.execute("INSTALL spatial")
 
     def ask(self, query: str):
-        with self._lock:
-            if not self.db: return "SQL system not initialized."
+        with duckdb.connect(self.db_path) as con:
+            con.execute("LOAD excel; LOAD spatial;")
+
+            # 1. Get ALL table names for the "Router" phase
+            tables_raw = con.execute("SHOW TABLES").fetchall()
+            if not tables_raw:
+                return "Database is empty."
+
+            all_table_names = [t[0] for t in tables_raw]
+
+            # --- STEP A: IDENTIFY RELEVANT TABLES ---
+            router_prompt = (
+                "You are a database router. Given these tables, identify which are needed to answer the question.\n"
+                f"TABLES: {', '.join(all_table_names)}\n"
+                f"USER QUESTION: {query}\n"
+                "Output ONLY the table names as a comma-separated list. If none, say NONE."
+            )
+
+            router_output = self.llm.invoke(router_prompt).strip()
+            # Clean up the output (remove extra text LLMs sometimes add)
+            relevant_names = [name.strip() for name in router_output.split(',') if name.strip() in all_table_names]
+            print(relevant_names)
+
+            # Fallback: If router fails, give the first 3 tables to prevent total failure
+            if not relevant_names:
+                relevant_names = all_table_names
+
+            # --- STEP B: GRAB SPECIFIC SCHEMAS (THE FIX) ---
+            focused_schema = []
+            for t_name in relevant_names:
+                cols = con.execute(f"DESCRIBE {t_name}").fetchall()
+                col_info = "\n      ".join([f"- {c[0]} ({c[1]})" for c in cols])
+                focused_schema.append(f"TABLE: {t_name}\n      {col_info}")
+
+            schema_context = "\n\n".join(focused_schema)
+
+            print(schema_context)
+
+            # --- STEP C: GENERATE SQL WITH FOCUSED CONTEXT ---
+            system_context = (
+                "You are a Senior Data Analyst using DuckDB.\n"
+                "Use the following FOCUSED SCHEMA to write your query:\n"
+                f"{schema_context}\n\n"
+                "INSTRUCTIONS:\n"
+                "- Start with 'Thought: <reasoning>'.\n"
+                "- Output exact SQL in a ```sql block.\n"
+                "- If no data is needed (greeting), just reply normally."
+            )
+
             try:
-                schema = self.db.get_table_info()
+                console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
+                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}")
 
-                # --- YOUR ORIGINAL BRAIN PROMPT ---
-                system_context = f"""
-                You are a Senior Data Analyst.
-                DATABASE SCHEMA:
-                {schema}
+                # Extract Thought
+                thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
+                thought_process = thought_match.group(1).strip() if thought_match else "Analyzing..."
+                console.print(Panel(thought_process, title="AI Reasoning", border_style="blue"))
 
-                INSTRUCTIONS:
-                - ALWAYS start with a 'Thought:' section.
-                - If the request requires data, provide the SQLite query in a ```sql block.
-                - **CRITICAL**: Do NOT use "Meta-Commands" or "Dot-Commands" (e.g., .tables, .schema). 
-                - Use the **Standard System Catalog** instead: 
-                  - To list tables: `SELECT name FROM sqlite_master WHERE type='table';`
-                  - To see table structure: `PRAGMA table_info('table_name');`
-                - If multiple tables are needed, separate queries with a semicolon.
-                """
-
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser Request: {query}").content
-
-                thought_process = ""
-                thought_match = re.search(r"Thought:(.*?)SQL:", initial_response, re.DOTALL | re.IGNORECASE)
-                if not thought_match:
-                    thought_match = re.search(r"Thought:(.*)", initial_response, re.DOTALL | re.IGNORECASE)
-
-                if thought_match:
-                    thought_process = thought_match.group(1).strip()
-                    print(f"\n{Fore.MAGENTA}🧠 THINKING: {thought_process}{Style.RESET_ALL}")
-
+                # Extract SQL
                 sql_match = re.search(r"```sql\n(.*?)\n```", initial_response, re.DOTALL)
-
-                all_results_html = []
-                data_for_chat_summary = []
-
-                if sql_match:
-                    sql_raw = sql_match.group(1).strip()
-                    queries = [q.strip() for q in sql_raw.split(';') if q.strip()]
-
-                    with self.engine.connect() as conn:
-                        for sql_query in queries:
-                            print(f"{Fore.BLUE}🖥️  EXECUTING:{Style.RESET_ALL} {sql_query}")
-                            res = conn.execute(text(sql_query))
-                            cols = list(res.keys())
-                            rows = res.fetchall()
-
-                            if rows:
-                                data_for_chat_summary.append({
-                                    "total_rows": len(rows),
-                                    "columns": cols,
-                                    "sample_data": [dict(zip(cols, r)) for r in rows[:15]]
-                                })
-
-                                md = "| " + " | ".join(cols) + " |\n| " + " | ".join(["---"] * len(cols)) + " |\n"
-                                for r in rows:
-                                    clean_row = [str(x).replace('|', '\\|') for x in r]
-                                    md += "| " + " | ".join(clean_row) + " |\n"
-
-                                all_results_html.append(f'<div class="df-scroll-container">\n\n{md}\n\n</div>')
-
                 if not sql_match:
                     return initial_response
 
-                # --- YOUR ORIGINAL VOICE PROMPT ---
-                final_prompt = f"""
-                User: {query}
-                Your Logic: {thought_process}
-                Data Found: {data_for_chat_summary}
+                sql_raw = sql_match.group(1).strip()
+                console.print(
+                    Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
 
-                Based on the results above, give a natural, human-like response to the user.
-                Explain what you found and any patterns you noticed. Don't expose the sql query.
-                If there are many rows, mention the total count.
-                """
+                # 3. Execution (The World-Class Batch Update)
+                print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
 
-                final_chat = self.llm.invoke(final_prompt).content
-                print(f"{Fore.GREEN}🤖 RESPONSE READY.{Style.RESET_ALL}")
+                # Split SQL by semicolon, filter out empty strings
+                sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]
 
-                # --- YOUR ORIGINAL OUTPUT FORMAT ---
-                output = f"{final_chat}\n\n"
-                if all_results_html:
-                    output += "### 📊 Data Records\n" + "\n\n".join(all_results_html)
+                all_results = []
+                combined_df_html = ""
+
+                for i, stmt in enumerate(sql_statements):
+                    res_df = con.execute(stmt).df()
+
+                    # Store a preview for the Voice Agent
+                    # We use a key like 'Table_N' or try to parse the table name from the SQL
+                    table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
+                    tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
+
+                    all_results.append({
+                        "source": tag,
+                        "rows": len(res_df),
+                        "data": res_df.head(5).to_dict()  # Small preview per statement
+                    })
+
+                    # Build the HTML output for the UI
+                    table_md = res_df.to_markdown(index=False)
+                    combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
+
+                # 4. Stage 2: The "Voice" Synthesis
+                # We send the aggregate results to the voice
+                voice_prompt = (
+                    f"User Query: {query}\n"
+                    f"Context/Logic: {thought_process}\n"
+                    f"Execution Results: {all_results}\n\n"
+                    "As a Senior Data Analyst, interpret the multiple result sets provided to answer the User Query. "
+                    "1. Synthesize the data from all tables into one cohesive answer.\n"
+                    "2. If the user asked for a comparison or 'top rows from all', summarize the findings.\n"
+                    "3. Do NOT mention technical SQL details."
+                )
+
+                final_chat = self.llm.invoke(voice_prompt)
+                console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
+
+                # 5. Format for UI
+                output = (
+                    f"{final_chat}\n\n"
+                    f"### 📊 Data Records\n"
+                    f"{combined_df_html}"
+                )
 
                 return output
 
             except Exception as e:
-                print(f"{Fore.RED}⚠️ Error in ask(): {str(e)}{Style.RESET_ALL}")
-                return f"I ran into an issue while processing that: {str(e)}"
+                console.print(f"[bold red]⚠️ SQL Error: {e}[/bold red]")
+                return f"I ran into an issue executing the SQL: {str(e)}"
 
 
+# ==================================================
+# FILE WATCHER (Ingestion Logic)
+# ==================================================
 class IngestionHandler(FileSystemEventHandler):
     def __init__(self, manager):
         self.manager = manager
-        self.valid_exts = (".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")
         self._timer = None
 
     def process(self, event):
         if event.is_directory: return
-        fname = os.path.basename(event.src_path)
-        if fname in ["main.db", "sync_state.db", "main.db-journal", "main.db-wal"]: return
-
-        if any(event.src_path.lower().endswith(x) for x in self.valid_exts):
-            if hasattr(self, '_timer') and self._timer: self._timer.cancel()
-            self._timer = threading.Timer(2.0, self.manager.sync_database)
+        # Cleaned up extensions and added .sqlite
+        valid_extensions = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
+        if event.src_path.lower().endswith(valid_extensions):
+            if self._timer: self._timer.cancel()
+            self._timer = threading.Timer(1.5, self.manager.sync_database)
             self._timer.start()
 
-    def on_created(self, event): self.process(event)
-    def on_deleted(self, event): self.process(event)
-    def on_moved(self, event): self.process(event)
+    def on_created(self, event):
+        self.process(event)
+
+    def on_modified(self, event):
+        self.process(event)
+
+    def on_deleted(self, event):
+        self.process(event)
 
 
+# ==================================================
+# STRUCTURED DATA AGENT (The Core Manager)
+# ==================================================
 class StructuredDataAgent:
-    def __init__(self, db_path=None, watch_dir=None):
-        home = str(Path.home())
-        base = os.path.join(home, ".k_rag_storage")
+    def __init__(self, socketio=None, watch_dir=None):
+        home = Path.home()
+        base = home / ".k_rag_storage"
 
-        self.watch_dir = os.path.abspath(watch_dir or os.path.join(base, "data"))
-        self.db_path = os.path.abspath(os.path.join(base, "database", "main.db"))
-        self.state_db_path = os.path.abspath(os.path.join(base, "database", "sync_state.db"))
+        self.socketio = socketio
+        self.watch_dir = Path(watch_dir or base / "data").resolve()
+        self.db_path = (base / "database" / "analyst.duckdb").resolve()
+        self.state_db = (base / "database" / "sync_state.duckdb").resolve()
 
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        os.makedirs(self.watch_dir, exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.watch_dir.mkdir(parents=True, exist_ok=True)
 
-        self.db_uri = f"sqlite:///{self.db_path}"
-        self.agent = SQLQueryAgent(self.db_uri)
-        self.state_engine = create_engine(f"sqlite:///{self.state_db_path}")
-        self.sync_lock = threading.Lock()
+        with duckdb.connect(str(self.state_db)) as sc:
+            sc.execute("""
+                       CREATE TABLE IF NOT EXISTS file_history
+                       (
+                           path
+                           TEXT
+                           PRIMARY
+                           KEY,
+                           mtime
+                           DOUBLE,
+                           size
+                           BIGINT
+                       )
+                       """)
+
+        self.agent = SQLQueryAgent(self.db_path)
         self.observer = Observer()
         self.is_syncing = False
-        self._init_metadata()
-
-    def _init_metadata(self):
-        with self.state_engine.begin() as conn:
-            conn.execute(text("""
-                CREATE TABLE IF NOT EXISTS file_history (
-                    file_path TEXT PRIMARY KEY,
-                    last_modified REAL,
-                    file_size INTEGER
-                )
-            """))
-
-    def _should_sync(self, file_path):
-        if not os.path.exists(file_path): return False
-        try:
-            mtime = os.path.getmtime(file_path)
-            fsize = os.path.getsize(file_path)
-        except OSError: return False
-
-        with self.state_engine.connect() as conn:
-            result = conn.execute(
-                text("SELECT last_modified, file_size FROM file_history WHERE file_path = :path"),
-                {"path": file_path}
-            ).fetchone()
-            if result:
-                if result[0] == mtime and result[1] == fsize: return False
-            return True
-
-    def _update_metadata(self, file_path):
-        mtime = os.path.getmtime(file_path)
-        fsize = os.path.getsize(file_path)
-        with self.state_engine.begin() as conn:
-            conn.execute(text("""
-                INSERT OR REPLACE INTO file_history (file_path, last_modified, file_size)
-                VALUES (:path, :mtime, :fsize)
-            """), {"path": file_path, "mtime": mtime, "fsize": fsize})
 
     def sync_database(self):
-        with self.sync_lock:
-            if self.is_syncing: return
-            self.is_syncing = True
+        if not SQL_THREAD_LOCK.acquire(blocking=False): return
 
-            try:
-                print(f"{Fore.YELLOW}🔄 Syncing Folder (Smart Differential Sync)...")
-                active_tables = []
-                chunk_size = 100000
+        if self.socketio:
+            self.socketio.emit('system_status', {'sql_syncing': True})
+
+        try:
+            self.is_syncing = True
+            sync_table = Table(title="🔄 Hierarchical Smart Sync", show_header=True, header_style="bold cyan")
+            sync_table.add_column("Resource Path")
+            sync_table.add_column("Status", justify="right")
+
+            with duckdb.connect(str(self.db_path)) as con, duckdb.connect(str(self.state_db)) as state_con:
+                con.execute("LOAD excel; LOAD spatial; INSTALL sqlite; LOAD sqlite;")
+
+                valid_exts = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
+                active_views = set()
 
                 for root, _, files in os.walk(self.watch_dir):
-                    for f_name in files:
-                        fp = os.path.join(root, f_name)
-                        ext = f_name.lower()
+                    for fname in files:
+                        if fname.startswith("~$") or not fname.lower().endswith(valid_exts): continue
 
-                        if not any(ext.endswith(x) for x in [".csv", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3"]): continue
-                        if f_name in ["main.db", "sync_state.db"]: continue
+                        fp = Path(root, fname).resolve()
+                        mtime = fp.stat().st_mtime
+                        size = fp.stat().st_size
 
-                        t_name = os.path.splitext(f_name)[0].replace(" ", "_").replace("-", "_").lower()
+                        rel_path = fp.relative_to(self.watch_dir)
+                        base_identity = str(rel_path).lower()
+                        for char in [os.sep, ".", " ", "-"]:
+                            base_identity = base_identity.replace(char, "_")
 
-                        if not self._should_sync(fp):
-                            print(f"{Fore.CYAN}⏩ Skipping (No Changes): {f_name}")
-                            if ext.endswith((".csv", ".xlsx", ".xls")):
-                                active_tables.append(t_name)
-                            elif ext.endswith((".db", ".sqlite", ".sqlite3")):
-                                try:
-                                    with sqlite3.connect(fp) as temp_conn:
-                                        tbls = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", temp_conn)
-                                        active_tables.extend([t for t in tbls['name'] if not t.startswith('sqlite_')])
-                                except: pass
+                        # --- GUARD 1: Safe History Check ---
+                        res = state_con.execute("SELECT mtime, size FROM file_history WHERE path = ?",
+                                                [str(fp)]).fetchall()
+                        prev = res[0] if res else None  # Avoids index error if fetchone() was weird
+
+                        is_excel = fp.suffix.lower() in (".xlsx", ".xls")
+                        is_unchanged = prev is not None and len(prev) >= 2 and prev[0] == mtime and prev[1] == size
+
+                        if not is_excel and is_unchanged:
+                            active_views.add(base_identity)
                             continue
 
-                        active_tables.append(t_name)
+                        # Ingestion Logic
+                        ext = fp.suffix.lower()
+                        if ext == ".csv":
+                            con.execute(
+                                f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM read_csv_auto('{fp}')")
+                            active_views.add(base_identity)
+                            sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
 
-                        if ext.endswith(".csv"):
-                            try:
-                                with self.agent.engine.begin() as conn:
-                                    conn.execute(text(f'DROP TABLE IF EXISTS "{t_name}"'))
-                                time.sleep(0.1)
-                                row_count = sum(1 for _ in open(fp, 'rb'))
-                                with tqdm(total=row_count, desc=f"Streaming {f_name}", unit="rows") as pbar:
-                                    for i, chunk in enumerate(pd.read_csv(fp, chunksize=chunk_size, on_bad_lines='skip', engine='c', low_memory=False, encoding_errors='replace')):
-                                        chunk.to_sql(t_name, self.agent.engine, if_exists='append', index=False)
-                                        pbar.update(len(chunk))
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ CSV Error {f_name}: {e}")
+                        elif ext == ".parquet":
+                            con.execute(f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM parquet_scan('{fp}')")
+                            active_views.add(base_identity)
+                            sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
 
-                        elif ext.endswith((".xlsx", ".xls")):
-                            try:
-                                df = pd.read_excel(fp)
-                                df.to_sql(t_name, self.agent.engine, if_exists="replace", index=False)
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ Excel Error {f_name}: {e}")
+                        elif is_excel:
+                            xls = pd.ExcelFile(fp)
+                            for sheet in xls.sheet_names:
+                                sheet_clean = sheet.lower().replace(' ', '_').replace('-', '_')
+                                view_name = f"{base_identity}_{sheet_clean}"
+                                con.execute(
+                                    f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
+                                active_views.add(view_name)
+                            sync_table.add_row(str(rel_path), f"[cyan]INDEXED ({len(xls.sheet_names)} sheets)[/cyan]")
 
-                        elif ext.endswith((".db", ".sqlite", ".sqlite3")):
-                            try:
-                                with sqlite3.connect(fp) as src_conn:
-                                    tbl_names = pd.read_sql("SELECT name FROM sqlite_master WHERE type='table'", src_conn)
-                                    db_tables = [t for t in tbl_names['name'] if not t.startswith('sqlite_')]
-                                    active_tables.extend(db_tables)
-                                    for t in db_tables:
-                                        total_rows = src_conn.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0]
-                                        with tqdm(total=total_rows, desc=f"Cloning {t}", unit="rows") as pbar:
-                                            first_chunk = True
-                                            for chunk in pd.read_sql(f'SELECT * FROM "{t}"', src_conn, chunksize=chunk_size):
-                                                mode = 'replace' if first_chunk else 'append'
-                                                chunk.to_sql(t, self.agent.engine, if_exists=mode, index=False)
-                                                first_chunk = False
-                                                pbar.update(len(chunk))
-                                self._update_metadata(fp)
-                            except Exception as e:
-                                print(f"{Fore.RED}✖ DB Error {f_name}: {e}")
 
-                # --- CLEANUP ---
-                with self.agent.engine.begin() as conn:
-                    existing = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';")).fetchall()
-                    for (et,) in existing:
-                        if et.startswith('sqlite_'): continue
-                        if et not in active_tables:
-                            conn.execute(text(f'DROP TABLE IF EXISTS "{et}"'))
-                            with self.state_engine.begin() as s_conn:
-                                s_conn.execute(text("DELETE FROM file_history WHERE file_path LIKE :pattern"), {"pattern": f"%{et}%"})
-                            print(f"{Fore.RED}🔥 Dropped orphaned table: {et}")
-                    if active_tables: conn.execute(text("VACUUM"))
+                        elif ext in (".db", ".sqlite", ".sqlite3"):
 
-                self.agent.refresh_agent()
-                print(f"{Fore.GREEN}✅ Sync Complete. {len(active_tables)} tables active.{Style.RESET_ALL}")
-            finally:
-                self.is_syncing = False
+                            # 1. Attach temporarily to see what's inside
 
-    def query(self, text_input: str):
-        return self.agent.ask(text_input)
+                            alias = f"temp_{base_identity}"
+
+                            con.execute(f"ATTACH '{fp}' AS {alias} (TYPE SQLITE, READ_ONLY)")
+
+                            # 2. Get all table names from the attached DB
+
+                            sqlite_tables = con.execute(
+                                f"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
+
+                            for (st_name,) in sqlite_tables:
+                                view_name = f"{base_identity}_{st_name}"
+
+                                # 3. Create a persistent view in MAIN that points to the file
+
+                                con.execute(
+                                    f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM sqlite_scan('{fp}', '{st_name}')")
+
+                                active_views.add(view_name)
+
+                            con.execute(f"DETACH {alias}")
+
+                            sync_table.add_row(str(rel_path),
+                                               f"[magenta]SQLITE INDEXED ({len(sqlite_tables)} tables)[/magenta]")
+
+                # --- GUARD 2: Safe Database Detach ---
+                db_list = con.execute("PRAGMA show_databases").fetchall()
+                for row in db_list:
+                    if len(row) > 1:  # Ensure the tuple actually has a second element
+                        db_alias = row[1]
+                        if db_alias not in ('main', 'temp') and db_alias not in active_views:
+                            con.execute(f"DETACH {db_alias}")
+                            sync_table.add_row(db_alias, "[red]DETACHED DB[/red]")
+
+                # --- GUARD 3: Safe View Drop ---
+                table_list = con.execute("SHOW TABLES").fetchall()
+                for row in table_list:
+                    if len(row) > 0:  # Ensure the tuple has at least one element
+                        view = row[0]
+                        if view not in active_views:
+                            con.execute(f"DROP VIEW IF EXISTS {view}")
+                            sync_table.add_row(view, "[red]DELETED VIEW[/red]")
+
+            if sync_table.row_count > 0:
+                console.print(sync_table)
+
+        except Exception as e:
+            # This will now print exactly WHICH line failed if it happens again
+            import traceback
+            console.print(f"[bold red]✖ Sync Error: {e}[/bold red]")
+            console.print(traceback.format_exc())
+        finally:
+            self.is_syncing = False
+            SQL_THREAD_LOCK.release()
+            if self.socketio:
+                self.socketio.emit('system_status', {'sql_syncing': False})
+            print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
 
     def start_monitoring(self):
         self.sync_database()
-        self.observer.schedule(IngestionHandler(self), self.watch_dir, recursive=True)
+        self.observer.schedule(IngestionHandler(self), str(self.watch_dir), recursive=True)
         self.observer.start()
-        print(f"{Fore.YELLOW}👀 Monitoring Directory: {self.watch_dir}")
+        console.print(Panel(f"Watching: {self.watch_dir}", title="Watcher Active", border_style="yellow"))
 
-    def stop(self):
-        self.observer.stop()
-        self.observer.join()
+    def query(self, text):
+        return self.agent.ask(text)

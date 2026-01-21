@@ -61,42 +61,34 @@ class ColBERTEngine:
             )
 
     def ingest_batches(self, documents_with_meta, batch_size=16):
-        """
-        Ingests documents into Qdrant.
-        Uses deterministic UUIDs based on content to prevent duplicates.
-        """
         for i in range(0, len(documents_with_meta), batch_size):
             batch = documents_with_meta[i: i + batch_size]
 
-            # Encode the text chunks
+            # 1. Keep the GPU Busy (Fastest Step)
             embeddings = self.model.encode([d.page_content for d in batch], is_query=False)
 
-            points = []
+            # 2. Prepare the points
+            all_points = []
             for j, emb in enumerate(embeddings):
-                # Create a deterministic seed for the ID
-                # Combining content + source ensures the same chunk always gets the same ID
                 uid_seed = f"{batch[j].page_content}{batch[j].metadata.get('source', '')}"
-
-                # Generate a stable UUID based on the MD5 hash of the seed
-                # This is more robust than integer hashing across different Python sessions
                 point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, hashlib.md5(uid_seed.encode()).hexdigest()))
-
-                points.append(
+                all_points.append(
                     q_models.PointStruct(
                         id=point_id,
                         vector={"colbert": emb.tolist()},
-                        payload={
-                            "text": batch[j].page_content,
-                            **batch[j].metadata
-                        }
+                        payload={"text": batch[j].page_content, **batch[j].metadata}
                     )
                 )
 
-            # Upsert into Qdrant (Update if ID exists, otherwise Insert)
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=points
-            )
+            # 3. SMART UPLOAD (The Professional Standard)
+            # We process in 16, but we upload in sub-chunks of 4 to avoid the 32MB limit.
+            upload_chunk_size = 4
+            for k in range(0, len(all_points), upload_chunk_size):
+                sub_batch = all_points[k: k + upload_chunk_size]
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=sub_batch
+                )
 
     def search(self, query, k=5):
         """Performs MaxSim retrieval using the query embedding."""

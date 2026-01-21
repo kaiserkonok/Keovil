@@ -13,6 +13,8 @@ from langchain_core.documents import Document
 from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.callbacks import StdOutCallbackHandler
+from langchain_core.runnables import RunnableConfig
 from langchain_ollama import OllamaLLM
 import intelligent_rag_chunker
 from utils.document_processor import DocumentProcessor
@@ -60,14 +62,28 @@ class NewFileHandler(PatternMatchingEventHandler):
         self.rag.remove_file(event.src_path)
 
 
+class RewriteLogger(StdOutCallbackHandler):
+    def on_chain_end(self, outputs, **kwargs):
+        # The history_aware_retriever output is usually the search query string
+        if isinstance(outputs, str):
+            print(f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}")
+
 # ----------------------
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, llm_model='llama3.2:latest', temperature=0):
+    def __init__(self, data_dir=None, top_k=5, llm_model='qwen2.5-coder:7b-instruct', temperature=0, socketio=None):
         home = Path.home()
         base_storage = home / ".k_rag_storage"
         self.data_dir = Path(data_dir or base_storage / "data").absolute()
+        self.socketio = socketio
+
+        self.status = {
+            "state": "idle",  # idle, processing, syncing
+            "current_file": "",
+            "progress": 0,
+            "total_files": 0
+        }
 
         # NEW: SQLite Manifest Initialization (replaces JSON manifest_path)
         self.db_dir = base_storage / "database"
@@ -94,8 +110,11 @@ class CollegeRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
-        self.llm = OllamaLLM(model=llm_model, streaming=True, temperature=temperature)
-        self.query_llm = OllamaLLM(model='qwen2.5:7b-instruct', temperature=0)
+        self.llm = OllamaLLM(model="qwen2.5-coder:7b-instruct", streaming=True, temperature=temperature)
+        self.query_llm = OllamaLLM(
+            model="qwen2.5-coder:7b-instruct",
+            temperature=0  # HARDCODED - Never changes
+        )
 
         # History-Aware Retriever Setup
         contextualize_q_system_prompt = (
@@ -129,13 +148,6 @@ class CollegeRAG:
         self.observer.start()
         print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching worker...{Colors.ENDC}")
 
-        self.status = {
-            "state": "idle",  # idle, processing, syncing
-            "current_file": "",
-            "progress": 0,
-            "total_files": 0
-        }
-
     def get_status(self):
         """Returns the current state for the UI."""
         # Check if there are files waiting in the queue
@@ -146,6 +158,21 @@ class CollegeRAG:
             return {"state": "waiting", "message": f"Waiting for quiet period... ({pending_count} files queued)"}
 
         return self.status
+
+    def broadcast_status(self):
+        if not self.socketio:
+            return
+        try:
+            # We add a specific 'reason' so the frontend can distinguish
+            # between vectorizing and just thinking.
+            self.socketio.emit('system_status', {
+                "is_busy": self.status["state"] != "idle",
+                "reason": self.status["state"],  # 'processing', 'waiting', or 'idle'
+                "sql_syncing": False,
+                "rag": self.get_status()
+            }, namespace='/')
+        except Exception as e:
+            print(f"Socket Error: {e}")
 
     # ----------------------
     # NEW: SQLite Database Logic
@@ -212,6 +239,22 @@ class CollegeRAG:
     def _initial_sync(self):
         """Reconciles filesystem with vector store using SQLite for speed."""
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
+
+        # NEW: Check if the vector store is actually empty
+        # If Qdrant is empty, we must clear the librarian's notebook (SQLite)
+        try:
+            # We ask the engine for information about the collection
+            collection_info = self.engine.client.get_collection(self.engine.collection_name)
+            if collection_info.points_count == 0:
+                print(f"{Colors.WARNING}[Sync] Vector store is empty! Forcing full re-sync...{Colors.ENDC}")
+                conn = sqlite3.connect(self.manifest_db)
+                conn.execute("DELETE FROM file_hashes")
+                conn.commit()
+                conn.close()
+        except Exception as e:
+            # If the collection doesn't even exist yet, that's fine too
+            print(f"{Colors.OKCYAN}[Sync] Starting fresh...{Colors.ENDC}")
+
         SUPPORTED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.pptx', '.md'}
 
         db_state = self._get_stored_hashes()
@@ -279,6 +322,7 @@ class CollegeRAG:
         self.status["state"] = "processing"
         self.status["total_files"] = len(new_files)
         self.status["progress"] = 0
+        self.broadcast_status()  # <--- SHOUT: "I started!"
 
         try:
             with self.lock:
@@ -319,12 +363,14 @@ class CollegeRAG:
             self.status["state"] = "idle"
             self.status["progress"] = 100
             self.status["current_file"] = ""
+            self.broadcast_status()  # <--- SHOUT: "I'm finished!"
 
     def remove_file(self, fpath):
         # Update status so the UI shows the "Purging" card
         self.status["state"] = "processing"
         self.status["current_file"] = f"Purging: {os.path.basename(fpath)}"
         self.status["progress"] = 50  # Start at 50% for visual effect
+        self.broadcast_status()  # <--- Add this
 
         try:
             with self.lock:
@@ -342,6 +388,7 @@ class CollegeRAG:
             self.status["progress"] = 100
             self.status["state"] = "idle"
             self.status["current_file"] = ""
+            self.broadcast_status()  # <--- Add this
 
     def _format_chat_history(self, chat_history):
         formatted_chat = ""
@@ -362,7 +409,10 @@ class CollegeRAG:
         print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH (History-Aware) {'=' * 20}{Colors.ENDC}")
 
         try:
-            docs = self.history_aware_retriever.invoke({"input": query, "chat_history": lc_history})
+            docs = self.history_aware_retriever.invoke(
+                {"input": query, "chat_history": lc_history},
+                config=RunnableConfig(callbacks=[RewriteLogger()])
+            )
         except Exception as e:
             print(f"{Colors.FAIL}[Error] Retrieval failed: {e}{Colors.ENDC}")
             return "I encountered an error."
