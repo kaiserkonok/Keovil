@@ -110,10 +110,18 @@ class CollegeRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
-        self.llm = OllamaLLM(model="qwen2.5-coder:7b-instruct", streaming=True, temperature=temperature)
+        ollama_base = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+
+        self.llm = OllamaLLM(
+            model="qwen2.5-coder:7b-instruct",
+            temperature=temperature,
+            base_url=ollama_base  # <--- Pass the address here
+        )
+
         self.query_llm = OllamaLLM(
             model="qwen2.5-coder:7b-instruct",
-            temperature=0  # HARDCODED - Never changes
+            temperature=0,
+            base_url=ollama_base  # <--- And here
         )
 
         # History-Aware Retriever Setup

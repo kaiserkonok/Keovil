@@ -7,6 +7,7 @@ from qdrant_client import QdrantClient, models as q_models
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from pydantic import Field
+import os
 import torch
 
 
@@ -33,7 +34,9 @@ class ColBERTRetriever(BaseRetriever):
 class ColBERTEngine:
     def __init__(self, collection_name="krag", device="cuda"):
         # Connect to Qdrant (works across all OS)
-        self.client = QdrantClient("http://localhost:6333")
+        q_host = os.getenv("QDRANT_HOST", "localhost")
+
+        self.client = QdrantClient(host=q_host, port=6333)
         self.collection_name = collection_name
 
         # Initialize ModernColBERT
