@@ -1,0 +1,17 @@
+# Folders
+.venv/
+__pycache__/
+.git/
+.k_rag_storage/
+faiss_store/
+qdrant_docker_data/
+ollama_docker_data/
+
+# NEW: Ignore these so they aren't "baked in"
+test/
+src/test_data/
+
+# Files
+.env
+*.db
+*.pyc
