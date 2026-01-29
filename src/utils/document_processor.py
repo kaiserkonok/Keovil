@@ -14,18 +14,28 @@ class DocumentProcessor:
     """
 
     def __init__(self, use_gpu: bool = True):
-        # Configure hardware acceleration for your RTX 5060 Ti
+        # 1. Use Threaded Options for batching (much faster for GPU)
+        from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions, EasyOcrOptions
+
         accel_options = AcceleratorOptions(
-            num_threads=8,
+            num_threads=8,  # Keep this for the CPU-bound parts
             device=AcceleratorDevice.CUDA if use_gpu else AcceleratorDevice.CPU
         )
 
-        pipeline_options = PdfPipelineOptions()
+        # 2. Force GPU at the Pipeline AND OCR level
+        pipeline_options = ThreadedPdfPipelineOptions()
         pipeline_options.accelerator_options = accel_options
         pipeline_options.do_ocr = True
         pipeline_options.do_table_structure = True
 
-        # Initialize the converter service
+        # KEY FIX: Docling doesn't always pass the GPU flag to the OCR engine automatically
+        pipeline_options.ocr_options = EasyOcrOptions(use_gpu=True)
+
+        # 3. Increase Batch Sizes (Critical for RTX 5060 Ti speed)
+        # Your 16GB VRAM can handle high parallelism
+        pipeline_options.ocr_batch_size = 32
+        pipeline_options.layout_batch_size = 32
+
         self.converter = DocumentConverter(
             format_options={
                 InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
@@ -55,6 +65,8 @@ class DocumentProcessor:
 
         if complex_queue:
             docs.extend(self._process_complex_files(complex_queue, chunker))
+
+        print('=' * 40 + f"\nDocument Processed Successfully!")
 
         return docs
 
