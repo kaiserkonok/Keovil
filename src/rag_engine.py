@@ -73,65 +73,83 @@ class RewriteLogger(StdOutCallbackHandler):
 # ----------------------
 class CollegeRAG:
     def __init__(self, data_dir=None, top_k=5, llm_model='qwen2.5-coder:7b-instruct', temperature=0, socketio=None):
-        home = Path.home()
-        base_storage = home / ".k_rag_storage"
-        self.data_dir = Path(data_dir or base_storage / "data").absolute()
-        self.socketio = socketio
+        # ---------------------------------------------------------
+        # 1. TOTAL ISOLATION LOGIC (SSD Side)
+        # ---------------------------------------------------------
+        self.mode = os.getenv("APP_MODE", "development")
 
+        # Define physical locations on your computer
+        if self.mode == "production":
+            host_root = Path.home() / ".kevil_krag_storage"
+            self.collection_name = "kevil_krag"
+        else:
+            host_root = Path.home() / ".k_rag_storage"
+            self.collection_name = "krag_dev"
+
+        # Support Docker override, otherwise use the host_root determined above
+        storage_env = os.getenv("STORAGE_BASE", str(host_root))
+        self.base_storage = Path(storage_env).absolute()
+
+        # Define standardized sub-paths
+        self.data_dir = self.base_storage / "data"
+        self.db_dir = self.base_storage / "database"
+        self.manifest_db = self.db_dir / "manifest.db"
+
+        # Ensure directories exist
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.db_dir.mkdir(parents=True, exist_ok=True)
+        self._init_manifest_db()
+
+        print(f"{Colors.OKCYAN}🚀 Mode: {self.mode.upper()} | Root: {self.base_storage}{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}📦 Collection: {self.collection_name}{Colors.ENDC}")
+
+        # ---------------------------------------------------------
+        # 2. STATE & ENGINE INITIALIZATION
+        # ---------------------------------------------------------
+        self.socketio = socketio
         self.status = {
-            "state": "idle",  # idle, processing, syncing
+            "state": "idle",
             "current_file": "",
             "progress": 0,
             "total_files": 0
         }
-
-        # NEW: SQLite Manifest Initialization (replaces JSON manifest_path)
-        self.db_dir = base_storage / "database"
-        self.db_dir.mkdir(parents=True, exist_ok=True)
-        self.manifest_db = self.db_dir / "manifest.db"
-        self._init_manifest_db()
-
-        os.makedirs(self.data_dir, exist_ok=True)
-
         self.top_k = top_k
         self.lock = threading.Lock()
-
-        # NEW: Debounce Queue variables
         self.pending_files = set()
         self.queue_lock = threading.Lock()
-
         self.chat_history = []
 
-        # Initialize Engines
+        # GPU Detection for your RTX 5060 Ti
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
         print(f"{Colors.HEADER}Initializing ColBERT Engine on: {Colors.BOLD}{device}{Colors.ENDC}")
 
-        self.engine = ColBERTEngine(collection_name="krag", device=device)
+        # Pass the isolated collection name here!
+        self.engine = ColBERTEngine(collection_name=self.collection_name, device=device)
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = intelligent_rag_chunker.IntelligentChunker()
 
+        # ---------------------------------------------------------
+        # 3. LLM & RETRIEVER SETUP
+        # ---------------------------------------------------------
         ollama_base = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
         self.llm = OllamaLLM(
-            model="qwen2.5-coder:7b-instruct",
+            model=llm_model,
             temperature=temperature,
-            base_url=ollama_base  # <--- Pass the address here
+            base_url=ollama_base
         )
-
         self.query_llm = OllamaLLM(
-            model="qwen2.5-coder:7b-instruct",
+            model=llm_model,
             temperature=0,
-            base_url=ollama_base  # <--- And here
+            base_url=ollama_base
         )
 
-        # History-Aware Retriever Setup
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
             "which might reference context in the chat history, "
             "formulate a standalone search query. Do NOT answer the question, "
             "just reformulate it if needed and otherwise return it as is."
         )
-
         contextualize_q_prompt = ChatPromptTemplate.from_messages([
             ("system", contextualize_q_system_prompt),
             MessagesPlaceholder("chat_history"),
@@ -144,17 +162,16 @@ class CollegeRAG:
             contextualize_q_prompt
         )
 
-        # 3. Startup Sync (Now using SQLite)
+        # ---------------------------------------------------------
+        # 4. BACKGROUND WORKERS & WATCHDOG
+        # ---------------------------------------------------------
         self._initial_sync()
-
-        # 4. Start Background Batch Worker
         threading.Thread(target=self._batch_worker, daemon=True).start()
 
-        # 5. Start Watchdog
         self.observer = Observer()
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
-        print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching worker...{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{Colors.ENDC}")
 
     def get_status(self):
         """Returns the current state for the UI."""
@@ -248,10 +265,8 @@ class CollegeRAG:
         """Reconciles filesystem with vector store using SQLite for speed."""
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
 
-        # NEW: Check if the vector store is actually empty
-        # If Qdrant is empty, we must clear the librarian's notebook (SQLite)
+        # (Keep your Qdrant empty-check logic as is, it's good)
         try:
-            # We ask the engine for information about the collection
             collection_info = self.engine.client.get_collection(self.engine.collection_name)
             if collection_info.points_count == 0:
                 print(f"{Colors.WARNING}[Sync] Vector store is empty! Forcing full re-sync...{Colors.ENDC}")
@@ -260,29 +275,31 @@ class CollegeRAG:
                 conn.commit()
                 conn.close()
         except Exception as e:
-            # If the collection doesn't even exist yet, that's fine too
             print(f"{Colors.OKCYAN}[Sync] Starting fresh...{Colors.ENDC}")
 
         SUPPORTED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.pptx', '.md'}
-
         db_state = self._get_stored_hashes()
 
+        # --- THE FIX: Use relative_to(self.base_storage) ---
         current_files = {
-            str(p.absolute()): p for p in self.data_dir.rglob('*')
+            str(p.relative_to(self.base_storage)): p for p in self.data_dir.rglob('*')
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
         }
 
         # A. Cleanup deletions
-        for path in list(db_state.keys()):
-            if path not in current_files:
-                self.remove_file(path)
+        for rel_path in list(db_state.keys()):
+            if rel_path not in current_files:
+                # We must reconstruct the full path so remove_file can find it on disk if needed
+                full_path = self.base_storage / rel_path
+                self.remove_file(str(full_path))
 
         # B. Process new/modified
         to_process = []
-        for p_str in current_files:
-            f_hash = self._get_file_hash(p_str)
-            if db_state.get(p_str) != f_hash:
-                to_process.append(p_str)
+        for rel_path, abs_path in current_files.items():
+            f_hash = self._get_file_hash(str(abs_path))
+            # Now we compare the portable rel_path against the SQLite DB
+            if db_state.get(rel_path) != f_hash:
+                to_process.append(str(abs_path))
 
         if to_process:
             print(f"{Colors.OKBLUE}[Sync] Found {len(to_process)} new/modified files.{Colors.ENDC}")
@@ -352,13 +369,19 @@ class CollegeRAG:
 
                 if raw_docs:
                     self.status["current_file"] = "Aggregating chunks..."
+
+                    for doc in raw_docs:
+                        # Convert the absolute source to a relative one for the vector DB
+                        abs_src = Path(doc.metadata["source"])
+                        doc.metadata["source"] = str(abs_src.relative_to(self.base_storage))
+
                     final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
 
                     self.status["current_file"] = "Storing in Database..."
                     self.engine.ingest_batches(final_docs, batch_size=32)
 
                     # Update manifest in SQLite
-                    updates = {p: self._get_file_hash(p) for p in valid_paths}
+                    updates = {str(Path(p).relative_to(self.base_storage)): self._get_file_hash(p) for p in valid_paths}
                     self._update_manifest_batch(updates)
                     print(f"{Colors.OKGREEN}[Ingest] Success updated manifest in DB.{Colors.ENDC}")
                 else:
@@ -382,11 +405,13 @@ class CollegeRAG:
 
         try:
             with self.lock:
-                p_str = str(Path(fpath).absolute())
-                self.engine.delete_by_source(p_str)
+                p_abs = Path(fpath).absolute()
+                p_rel = str(p_abs.relative_to(self.base_storage))
+
+                self.engine.delete_by_source(p_rel)  # Use p_rel
                 # Remove from SQLite
                 conn = sqlite3.connect(self.manifest_db)
-                conn.execute("DELETE FROM file_hashes WHERE path = ?", (p_str,))
+                conn.execute("DELETE FROM file_hashes WHERE path = ?", (p_rel,))
                 conn.commit()
                 conn.close()
                 print(f"{Colors.WARNING}[Remove] Purged: {os.path.basename(fpath)}{Colors.ENDC}")
