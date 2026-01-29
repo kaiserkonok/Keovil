@@ -1,5 +1,12 @@
+import torch
+def dummy_compile(fn=None, **kwargs):
+    if fn is not None: return fn
+    return lambda x: x
+torch.compile = dummy_compile
+
 import eventlet
 eventlet.monkey_patch()
+
 import os
 import sys
 import shutil
@@ -13,29 +20,43 @@ from flask import (
 )
 import traceback
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
-from colorama import Fore, Style, init
+from colorama import Fore, Style, init, Back
 
 init(autoreset=True)
 
 # ---------------------------------------------------------
-# Path Configurations (Cross-OS compatible)
+# Path Configurations (Total Isolation: Dev vs. Prod)
 # ---------------------------------------------------------
-ROOT = Path(__file__).parent.parent
-sys.path.append(str(ROOT))
-sys.path.append(str(ROOT.parent))
+# 1. Determine the Mode
+APP_MODE = os.getenv("APP_MODE", "development")
 
-HOME_STORAGE = Path.home() / ".k_rag_storage"
+# 2. Assign completely different Root Folders on your SSD
+if APP_MODE == "production":
+    host_root = Path.home() / ".kevil_krag_storage"
+else:
+    host_root = Path.home() / ".k_rag_storage"
+
+# 3. Support Docker Portability
+STORAGE_STR = os.getenv("STORAGE_BASE", str(host_root))
+HOME_STORAGE = Path(STORAGE_STR).absolute()
+
+# 4. Standardized sub-folders (relative to the isolated HOME_STORAGE)
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
 SETTINGS_FILE = HOME_STORAGE / "settings.json"
-CHAT_DB = DB_DIR / "chat_history.db"
+
+# Mode-specific chat history to prevent cross-talk
+CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
-# Global variable for all explorer routes
+# Global for explorer
 FILES_DIR = DATA_DIR
+
+print(f"{Fore.CYAN}🚀 SILO ACTIVE: {APP_MODE.upper()}")
+print(f"📍 STORAGE PATH: {HOME_STORAGE}{Style.RESET_ALL}")
 
 # ---------------------------------------------------------
 # Chat History Database Initialization
@@ -100,16 +121,21 @@ def save_settings(data):
 current_cfg = load_settings()
 
 # ---------------------------------------------------------
-# Engine Imports
+# Engine Imports - Clean & Direct
 # ---------------------------------------------------------
-try:
-    from rag_engine import CollegeRAG
-except ImportError:
-    CollegeRAG = None
+# app.py is in src/rag_chat/app.py. We need to add 'src' to the path.
+src_root = Path(__file__).resolve().parent.parent
+
+if str(src_root) not in sys.path:
+    sys.path.insert(0, str(src_root))
 
 try:
+    from rag_engine import CollegeRAG
     from agents.sql_agent import StructuredDataAgent
-except ImportError:
+    print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
+except ImportError as e:
+    print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
+    CollegeRAG = None
     StructuredDataAgent = None
 
 # ---------------------------------------------------------
@@ -119,66 +145,106 @@ app = Flask(__name__, static_folder="static", template_folder="templates")
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+
+import threading
+
 # Globals for engines
 rag = None
 sql_system = None
+# FIX: Change Lock() to RLock() to allow nested calls (Recursion)
+ENGINE_INIT_LOCK = threading.RLock()
 
 
 def initialize_engines():
     """
-    Initializes heavy GPU engines only once.
-    Passes the socketio instance to engines so animations work.
+    Initializes heavy GPU engines with full interactive feedback.
+    Optimized for RTX 5060 Ti performance.
     """
     global rag, sql_system
 
-    # THE MAGIC GUARD: Prevents double-loading and VRAM crashes
-    is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-    is_debug_disabled = not app.debug
+    # Dynamic URL: Docker vs Localhost
+    OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
 
-    if is_reloader_child or is_debug_disabled:
-        print(f"{Fore.GREEN}🚀 [Worker] Initializing heavy engines on RTX 5060 Ti...{Style.RESET_ALL}")
-        print(f"DEBUG: Using config: {current_cfg}")  # Verify the settings being loaded
+    if rag is not None and sql_system is not None:
+        return
 
-        # 1. Init RAG engine with SocketIO support
-        if CollegeRAG and rag is None:
+    with ENGINE_INIT_LOCK:
+        if rag is not None and sql_system is not None:
+            return
+
+        def update_status(msg, state="loading", progress=0):
+            # Back to those high-vis colors you like
+            prefix = f"{Fore.BLACK}{Back.CYAN} ENGINE {Style.RESET_ALL}"
+            print(f"{prefix} {Fore.WHITE}{msg} {Fore.CYAN}[{progress}%]")
+
+            socketio.emit('system_init_status', {
+                "message": msg,
+                "state": state,
+                "progress": progress
+            })
+
+        is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+        is_debug_disabled = not app.debug
+
+        if is_reloader_child or is_debug_disabled or APP_MODE == "development":
+            # Interactive feedback starts here
+            update_status("Detecting GPU Hardware...", progress=5)
+
+            # --- 1. Ollama Hardware Handshake ---
             try:
-                rag = CollegeRAG(
-                    str(DATA_DIR),
-                    llm_model=current_cfg["llm_model"],
-                    temperature=current_cfg["temperature"],
-                    socketio=socketio
-                )
-                print("✅ [Worker] RAG engine synchronized")
+                import requests
+                model_name = current_cfg["llm_model"]
+                update_status(f"Verifying {model_name} layers...", progress=15)
+
+                r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
+
+                if r.status_code != 200:
+                    update_status("Model missing. Initiating high-speed pull...", progress=30)
+                    requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
+
+                update_status("Neural weights verified.", progress=45)
             except Exception as e:
-                print(f"\n{Fore.RED}{'=' * 60}")
-                print(f"❌ RAG INITIALIZATION CRITICAL ERROR")
-                print(f"ERROR TYPE: {type(e).__name__}")
-                print(f"MESSAGE: {e}")
-                print(f"{'=' * 60}{Style.RESET_ALL}")
+                print(f"{Fore.RED}Ollama Link Error: {e}")
+                update_status("Ollama Connection Pending...", progress=45)
 
-                # THIS IS THE KEY: It prints the full path to the bug
-                traceback.print_exc()
+            # --- 2. RAG & VRAM Allocation ---
+            if CollegeRAG and rag is None:
+                try:
+                    update_status("Allocating VRAM & Loading ColBERT...", progress=65)
+                    rag = CollegeRAG(
+                        data_dir=str(DATA_DIR),
+                        llm_model=current_cfg["llm_model"],
+                        temperature=current_cfg["temperature"],
+                        socketio=socketio
+                    )
+                    update_status("Knowledge Engine Synchronized.", progress=85)
+                except Exception as e:
+                    update_status(f"RAG Error: {str(e)}", state="error")
 
-                print(f"{Fore.RED}{'=' * 60}{Style.RESET_ALL}\n")
+            # --- 3. SQL Agent Boot ---
+            if StructuredDataAgent and sql_system is None:
+                try:
+                    update_status("Waking up SQL Agent...", progress=95)
+                    sql_system = StructuredDataAgent(socketio=socketio)
+                    if hasattr(sql_system, 'agent') and hasattr(sql_system.agent, 'llm'):
+                        sql_system.agent.llm.temperature = 0.0
+                    sql_system.start_monitoring()
+                except Exception as e:
+                    update_status("SQL Agent Failure", state="error")
 
-        # 2. Init SQL Agent with SocketIO support
-        if StructuredDataAgent and sql_system is None:
-            try:
-                # Force SQL to 0.0 for accuracy regardless of user settings
-                sql_system = StructuredDataAgent(socketio=socketio)
-                if hasattr(sql_system, 'llm'):
-                    sql_system.llm.temperature = 0.0
+            # --- 4. The Handshake Fix ---
+            # We wait a split second to ensure the frontend is actually listening
+            import time
+            time.sleep(0.8)
+            update_status("System Fully Operational.", state="ready", progress=100)
 
-                sql_system.start_monitoring()
-                print("✅ [Worker] SQL Agent initialized (Precise Mode)")
-            except Exception as e:
-                print(f"❌ SQL init failed: {e}")
-                # Optional: add traceback here too if SQL starts failing
-    else:
-        print(f"{Fore.YELLOW}🛡️ [Watcher] Reloader active. Waiting for code changes...{Style.RESET_ALL}")
+        else:
+            print(f"{Fore.YELLOW}🛡️ [Watcher] Flask Reloader active.{Style.RESET_ALL}")
 
-# Trigger engine initialization
-initialize_engines()
+# Trigger initialization in the background so Flask starts INSTANTLY
+from threading import Thread
+Thread(target=initialize_engines, daemon=True).start()
 
 # ---------------------------------------------------------
 # Helper Functions
@@ -245,6 +311,7 @@ def get_chat_history_db(session_id):
     conn.close()
     return jsonify(msgs)
 
+
 @app.route("/api/chat", methods=["POST"])
 def api_chat():
     global rag
@@ -256,16 +323,29 @@ def api_chat():
     if not q or not uid:
         return jsonify({"error": "Missing query or user ID"}), 400
 
-    conn = sqlite3.connect(CHAT_DB)
+    # 1. Check if we need to initialize (With RLock, this is now safe)
+    if rag is None:
+        print(f"{Fore.YELLOW}⏳ GPU engine missing. Attempting to boot...{Style.RESET_ALL}")
+        with ENGINE_INIT_LOCK:
+            if rag is None:
+                initialize_engines()
 
+    # 2. Final check: If it's STILL None after initialization attempt
+    if rag is None:
+        print(f"{Fore.RED}❌ RAG failed to initialize after request.{Style.RESET_ALL}")
+        return jsonify({"response": "I'm sorry, the AI engine is currently offline. Please check the server console for errors."}), 503
+
+    # --- Proceed with normal Chat logic ---
+    conn = sqlite3.connect(CHAT_DB)
     rag_history = []
     if session_id:
         cur = conn.execute(
-            """SELECT role, content FROM (
-                SELECT role, content, timestamp FROM messages 
-                WHERE session_id = ? 
-                ORDER BY timestamp DESC LIMIT 10
-            ) ORDER BY timestamp ASC""",
+            """SELECT role, content
+               FROM (SELECT role, content, timestamp
+                     FROM messages
+                     WHERE session_id = ?
+                     ORDER BY timestamp DESC LIMIT 10)
+               ORDER BY timestamp ASC""",
             (session_id,)
         )
         history_rows = cur.fetchall()
@@ -273,36 +353,24 @@ def api_chat():
 
     socketio.emit('system_status', {"is_busy": True, "rag": {"state": "processing"}})
 
-    ans = ""
-    if rag:
-        try:
-            ans = rag.ask(q, chat_history=rag_history, stream=False)
-        except Exception as e:
-            conn.close()
-            return jsonify({"error": str(e)}), 500
-    else:
+    try:
+        ans = rag.ask(q, chat_history=rag_history, stream=False)
+
+        if not session_id:
+            title = q[:35] + "..." if len(q) > 35 else q
+            cur = conn.execute("INSERT INTO sessions (user_id, title) VALUES (?, ?)", (uid, title))
+            session_id = cur.lastrowid
+
+        conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", (session_id, q))
+        conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)", (session_id, ans))
+        conn.commit()
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    finally:
+        conn.close()
         socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
-        ans = "(RAG not initialized)"
 
-    if not session_id:
-        title = q[:35] + "..." if len(q) > 35 else q
-        cur = conn.execute(
-            "INSERT INTO sessions (user_id, title) VALUES (?, ?)",
-            (uid, title)
-        )
-        session_id = cur.lastrowid
-
-    conn.execute(
-        "INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)",
-        (session_id, q)
-    )
-    conn.execute(
-        "INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)",
-        (session_id, ans)
-    )
-    conn.commit()
-    conn.close()
-    socketio.emit('system_status', {"is_busy": False, "rag": {"state": "idle"}})
     return jsonify({"response": ans, "session_id": session_id})
 
 @app.route("/api/chat/sessions/delete", methods=["POST"])
@@ -610,5 +678,30 @@ def get_ingest_status():
     })
 
 if __name__ == "__main__":
-    # threaded=True is required for watchdog and web requests to run in parallel
-    socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True, log_output=True)
+    is_production = os.getenv("APP_MODE", "development") == "production"
+
+    print(f"\n{Style.BRIGHT}--- System Startup ---")
+
+    if is_production:
+        print(f"{Fore.GREEN}🚀 MODE: PRODUCTION (Reloader Disabled)")
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=5000,
+            debug=False,
+            use_reloader=False,
+            allow_unsafe_werkzeug=True,
+        )
+    else:
+        print(f"{Fore.YELLOW}🛠️ MODE: DEVELOPMENT (Reloader Enabled)")
+        # Note: In Dev, the reloader will cause the "System Startup"
+        # message to print twice. This is normal Flask behavior!
+        socketio.run(
+            app,
+            host='0.0.0.0',
+            port=5000,
+            debug=True,
+            use_reloader=True,
+            log_output=True,
+            allow_unsafe_werkzeug=True,
+        )
