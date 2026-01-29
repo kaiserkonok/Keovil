@@ -6,7 +6,9 @@
     <title>Home | Kevil Private Data Agent</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <style>
+        /* ... Your existing styles ... */
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;600;800&display=swap');
 
         :root {
@@ -23,7 +25,6 @@
             align-items: center;
         }
 
-        /* Subtle Grid Background */
         .bg-grid {
             background-image: linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px),
                               linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px);
@@ -31,7 +32,6 @@
             mask-image: radial-gradient(circle at center, black, transparent 90%);
         }
 
-        /* Glass Cards */
         .glass-card {
             background: var(--card-bg);
             border: 1px solid rgba(255, 255, 255, 0.05);
@@ -61,7 +61,6 @@
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
 
-        /* Settings Button Specifics */
         .settings-fab {
             background: rgba(255, 255, 255, 0.03);
             backdrop-filter: blur(10px);
@@ -75,9 +74,40 @@
             transform: rotate(90deg) scale(1.1);
             box-shadow: 0 0 20px rgba(168, 85, 247, 0.2);
         }
+
+        /* NEW BOOT STYLES */
+        #boot-overlay {
+            transition: opacity 0.8s cubic-bezier(0.4, 0, 0.2, 1), visibility 0.8s;
+        }
     </style>
 </head>
 <body class="relative overflow-hidden">
+    <div id="boot-overlay" class="fixed inset-0 z-[100] bg-[#050505] flex flex-col items-center justify-center">
+        <div class="absolute inset-0 bg-grid pointer-events-none opacity-40"></div>
+
+        <div class="relative w-80 text-center">
+            <div class="mb-10 relative inline-block">
+                <div class="absolute inset-0 bg-blue-600/20 blur-[40px] rounded-full animate-pulse"></div>
+                <div class="relative bg-zinc-900/50 border border-zinc-800 p-6 rounded-[2rem] backdrop-blur-xl">
+                    <i data-lucide="cpu" class="text-blue-400 w-12 h-12 animate-pulse"></i>
+                </div>
+            </div>
+
+            <h2 class="text-2xl font-black tracking-widest uppercase mb-2 shimmer-text">Initialising</h2>
+            <p id="init-status-text" class="text-zinc-500 text-[10px] font-mono mb-8 uppercase tracking-[0.2em]">Contacting Neural Core...</p>
+
+            <div class="w-full h-1 bg-zinc-900 rounded-full overflow-hidden border border-white/5 p-[1px]">
+                <div id="init-progress-bar" class="h-full bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-[length:200%_auto] animate-[shimmer_2s_linear_infinite] transition-all duration-700 shadow-[0_0_15px_rgba(59,130,246,0.5)]" style="width: 5%"></div>
+            </div>
+
+            <div class="mt-6 flex justify-between items-center text-[8px] text-zinc-600 font-bold tracking-widest uppercase">
+                <span>RTX 5060 Ti</span>
+                <span id="init-percent">05%</span>
+                <span>16GB VRAM</span>
+            </div>
+        </div>
+    </div>
+
     <div class="absolute inset-0 bg-grid pointer-events-none"></div>
     <div class="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-blue-600/10 blur-[120px] rounded-full"></div>
     <div class="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-purple-600/10 blur-[120px] rounded-full"></div>
@@ -101,7 +131,6 @@
         </header>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-
             <a href="/chat" class="glass-card p-10 rounded-[2.5rem] group">
                 <div class="icon-box w-14 h-14 rounded-2xl flex items-center justify-center mb-8 group-hover:border-blue-500/50 transition-colors">
                     <i data-lucide="message-circle" class="text-blue-400 w-7 h-7"></i>
@@ -140,7 +169,6 @@
                     Open Files <i data-lucide="arrow-right" class="w-4 h-4"></i>
                 </div>
             </a>
-
         </div>
 
         <div class="mt-20 flex flex-col md:flex-row justify-between items-center px-10 py-6 border-t border-zinc-900 text-[10px] text-zinc-600 font-bold tracking-[0.3em] uppercase">
@@ -160,6 +188,61 @@
 
     <script>
         lucide.createIcons();
+
+        const socket = io();
+        const overlay = document.getElementById('boot-overlay');
+        const statusText = document.getElementById('init-status-text');
+        const progressBar = document.getElementById('init-progress-bar');
+        const percentText = document.getElementById('init-percent');
+
+        // Helper function to dismiss overlay cleanly
+        function dismissOverlay() {
+            statusText.classList.replace('text-zinc-500', 'text-emerald-500');
+            progressBar.style.width = '100%';
+            percentText.innerText = '100%';
+
+            setTimeout(() => {
+                overlay.style.opacity = '0';
+                overlay.style.pointerEvents = 'none';
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                }, 800);
+            }, 500);
+        }
+
+        // 1. PROACTIVE CHECK: Kill the infinite load
+        // When the socket connects, we ask the server if engines are already running
+        socket.on('connect', () => {
+            console.log("Connected to Neural Core. Verifying engine state...");
+
+            // We use your existing ingest status endpoint to check if RAG is initialized
+            fetch('/api/ingest/status')
+                .then(res => res.json())
+                .then(data => {
+                    // If is_busy is false and engines are already defined on the backend
+                    // we assume the system is ready and dismiss the overlay.
+                    if (data.is_busy === false) {
+                        dismissOverlay();
+                    }
+                })
+                .catch(err => console.error("Handshake failed:", err));
+        });
+
+        // 2. REAL-TIME UPDATES: Keep the interactive vibe
+        socket.on('system_init_status', (data) => {
+            if (statusText) statusText.innerText = data.message;
+            if (progressBar) progressBar.style.width = data.progress + '%';
+            if (percentText) percentText.innerText = data.progress.toString().padStart(2, '0') + '%';
+
+            if (data.state === 'ready') {
+                dismissOverlay();
+            }
+
+            if (data.state === 'error') {
+                statusText.classList.replace('text-zinc-500', 'text-red-500');
+                progressBar.classList.add('from-red-600', 'to-red-400');
+            }
+        });
     </script>
 </body>
 </html>

@@ -30,22 +30,29 @@ SQL_THREAD_LOCK = threading.Lock()
 class SQLQueryAgent:
     def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
         self.db_path = str(db_path)
+        # Isolate extensions within the database folder to prevent cross-contamination
+        self.ext_dir = Path(db_path).parent / "duckdb_extensions"
+        self.ext_dir.mkdir(exist_ok=True)
         self.model_name = model_name
 
-        # Optimized for RTX 5060 Ti 16GB VRAM
+        # Optimized for 16GB VRAM (Higher ctx + Flash Attention if supported)
         self.llm = OllamaLLM(
             model=self.model_name,
             temperature=0,
             num_ctx=16384,
+            # Ensuring fast response by keeping the model focused
         )
 
-        # Install extensions ONCE
-        duckdb.execute("INSTALL excel")
-        duckdb.execute("INSTALL spatial")
+        # Persistence of extensions in the specific storage folder
+        with duckdb.connect(self.db_path) as con:
+            con.execute(f"SET extension_directory = '{self.ext_dir}';")
+            # Auto-installing inside the isolated folder
+            con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
 
     def ask(self, query: str):
         with duckdb.connect(self.db_path) as con:
-            con.execute("LOAD excel; LOAD spatial;")
+            con.execute(f"SET extension_directory = '{self.ext_dir}';")
+            con.execute("LOAD excel; LOAD spatial; LOAD sqlite;")
 
             # 1. Get ALL table names for the "Router" phase
             tables_raw = con.execute("SHOW TABLES").fetchall()
@@ -63,8 +70,13 @@ class SQLQueryAgent:
             )
 
             router_output = self.llm.invoke(router_prompt).strip()
-            # Clean up the output (remove extra text LLMs sometimes add)
-            relevant_names = [name.strip() for name in router_output.split(',') if name.strip() in all_table_names]
+
+            # --- FIX STARTS HERE ---
+            # This finds all words/names in the output and ignores junk like "Sure!" or "```"
+            found_words = re.findall(r'\b\w+\b', router_output)
+            relevant_names = [name for name in found_words if name in all_table_names]
+            # --- FIX ENDS HERE ---
+
             print(relevant_names)
 
             # Fallback: If router fails, give the first 3 tables to prevent total failure
@@ -199,17 +211,31 @@ class IngestionHandler(FileSystemEventHandler):
 # ==================================================
 class StructuredDataAgent:
     def __init__(self, socketio=None, watch_dir=None):
-        home = Path.home()
-        base = home / ".k_rag_storage"
+        # 1. TOTAL ISOLATION LOGIC
+        self.mode = os.getenv("APP_MODE", "development")
 
+        if self.mode == "production":
+            host_root = Path.home() / ".kevil_krag_storage"
+            db_suffix = "prod"
+        else:
+            host_root = Path.home() / ".k_rag_storage"
+            db_suffix = "dev"
+
+        storage_env = os.getenv("STORAGE_BASE", str(host_root))
+        self.base_storage = Path(storage_env).absolute()
         self.socketio = socketio
-        self.watch_dir = Path(watch_dir or base / "data").resolve()
-        self.db_path = (base / "database" / "analyst.duckdb").resolve()
-        self.state_db = (base / "database" / "sync_state.duckdb").resolve()
 
+        # 2. ISOLATED PATHS
+        self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
+        # Unique DB names for the specific mode
+        self.db_path = (self.base_storage / "database" / f"analyst_{db_suffix}.duckdb").resolve()
+        self.state_db = (self.base_storage / "database" / f"sync_state_{db_suffix}.duckdb").resolve()
+
+        # Ensure everything is ready
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.watch_dir.mkdir(parents=True, exist_ok=True)
 
+        # 3. INITIALIZE STATE DB
         with duckdb.connect(str(self.state_db)) as sc:
             sc.execute("""
                        CREATE TABLE IF NOT EXISTS file_history
@@ -225,9 +251,12 @@ class StructuredDataAgent:
                        )
                        """)
 
+        # 4. INITIALIZE AGENT (Passing the mode-specific path)
         self.agent = SQLQueryAgent(self.db_path)
         self.observer = Observer()
         self.is_syncing = False
+
+        console.print(f"[bold cyan]🚀 SQL Agent Mode: {self.mode.upper()}[/bold cyan]")
 
     def sync_database(self):
         if not SQL_THREAD_LOCK.acquire(blocking=False): return
@@ -241,7 +270,13 @@ class StructuredDataAgent:
             sync_table.add_column("Resource Path")
             sync_table.add_column("Status", justify="right")
 
+            # Inside StructuredDataAgent.sync_database
             with duckdb.connect(str(self.db_path)) as con, duckdb.connect(str(self.state_db)) as state_con:
+                # --- ADD THESE LINES FIRST ---
+                con.execute(f"SET extension_directory = '{self.agent.ext_dir}';")
+                con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
+                # -----------------------------
+
                 con.execute("LOAD excel; LOAD spatial; INSTALL sqlite; LOAD sqlite;")
 
                 valid_exts = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
@@ -261,9 +296,12 @@ class StructuredDataAgent:
                             base_identity = base_identity.replace(char, "_")
 
                         # --- GUARD 1: Safe History Check ---
+                        rel_path_str = str(fp.relative_to(self.watch_dir))
+
+                        # Change the query to look for rel_path_str
                         res = state_con.execute("SELECT mtime, size FROM file_history WHERE path = ?",
-                                                [str(fp)]).fetchall()
-                        prev = res[0] if res else None  # Avoids index error if fetchone() was weird
+                                                [rel_path_str]).fetchall()  # <--- UPDATED
+                        prev = res[0] if res else None
 
                         is_excel = fp.suffix.lower() in (".xlsx", ".xls")
                         is_unchanged = prev is not None and len(prev) >= 2 and prev[0] == mtime and prev[1] == size
@@ -323,6 +361,9 @@ class StructuredDataAgent:
 
                             sync_table.add_row(str(rel_path),
                                                f"[magenta]SQLITE INDEXED ({len(sqlite_tables)} tables)[/magenta]")
+
+                        state_con.execute("INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
+                                  [rel_path_str, mtime, size])
 
                 # --- GUARD 2: Safe Database Detach ---
                 db_list = con.execute("PRAGMA show_databases").fetchall()

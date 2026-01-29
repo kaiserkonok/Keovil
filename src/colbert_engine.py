@@ -7,7 +7,11 @@ from qdrant_client import QdrantClient, models as q_models
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.documents import Document
 from pydantic import Field
+import os
 import torch
+from colorama import Fore, Style, init
+
+init(autoreset=True)
 
 
 class ColBERTRetriever(BaseRetriever):
@@ -31,9 +35,12 @@ class ColBERTRetriever(BaseRetriever):
 
 
 class ColBERTEngine:
-    def __init__(self, collection_name="krag", device="cuda"):
-        # Connect to Qdrant (works across all OS)
-        self.client = QdrantClient("http://localhost:6333")
+    def __init__(self, collection_name, device="cuda"):
+        # Connect to Qdrant
+        q_host = os.getenv("QDRANT_HOST", "localhost")
+        self.client = QdrantClient(host=q_host, port=6333)
+
+        # This now receives 'krag_dev' or 'krag_prod' from CollegeRAG
         self.collection_name = collection_name
 
         # Initialize ModernColBERT
@@ -42,11 +49,18 @@ class ColBERTEngine:
             device=device,
             document_length=8192
         )
+
+        print(f"{Fore.MAGENTA} Device checking from colbert: {"GPU" if torch.cuda.is_available() else "CPU"}")
+
+        # Critical: Set up the specific isolated collection
         self._ensure_collection()
 
     def _ensure_collection(self):
         """Creates collection if it doesn't exist with MaxSim configuration."""
+        # Using try-except or existence check is fine,
+        # but this ensures the specific name is created
         if not self.client.collection_exists(self.collection_name):
+            print(f"Creating isolated collection: {self.collection_name}")
             self.client.create_collection(
                 collection_name=self.collection_name,
                 vectors_config={
