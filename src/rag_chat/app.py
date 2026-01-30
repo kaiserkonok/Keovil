@@ -4,8 +4,8 @@ def dummy_compile(fn=None, **kwargs):
     return lambda x: x
 torch.compile = dummy_compile
 
-import eventlet
-eventlet.monkey_patch()
+from gevent import monkey
+monkey.patch_all()
 
 import os
 import sys
@@ -19,6 +19,7 @@ from flask import (
     Response, stream_with_context
 )
 import traceback
+from threading import Thread
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
 from colorama import Fore, Style, init, Back
 
@@ -144,7 +145,8 @@ except ImportError as e:
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 
 import threading
@@ -166,29 +168,25 @@ def initialize_engines():
     # Dynamic URL: Docker vs Localhost
     OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
 
-    if rag is not None and sql_system is not None:
-        return
-
+    # 1. Double-check lock to prevent race conditions during boot
     with ENGINE_INIT_LOCK:
         if rag is not None and sql_system is not None:
             return
 
         def update_status(msg, state="loading", progress=0):
-            # Back to those high-vis colors you like
             prefix = f"{Fore.BLACK}{Back.CYAN} ENGINE {Style.RESET_ALL}"
             print(f"{prefix} {Fore.WHITE}{msg} {Fore.CYAN}[{progress}%]")
-
             socketio.emit('system_init_status', {
                 "message": msg,
                 "state": state,
                 "progress": progress
             })
 
+        # Reloader check (Standard Flask/Gevent behavior)
         is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
         is_debug_disabled = not app.debug
 
-        if is_reloader_child or is_debug_disabled or APP_MODE == "development":
-            # Interactive feedback starts here
+        if is_reloader_child or is_debug_disabled or APP_MODE == "production":
             update_status("Detecting GPU Hardware...", progress=5)
 
             # --- 1. Ollama Hardware Handshake ---
@@ -197,53 +195,67 @@ def initialize_engines():
                 model_name = current_cfg["llm_model"]
                 update_status(f"Verifying {model_name} layers...", progress=15)
 
+                # Check Ollama connection
                 r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
-
                 if r.status_code != 200:
-                    update_status("Model missing. Initiating high-speed pull...", progress=30)
+                    update_status("Model missing. Initiating pull...", progress=30)
                     requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-
                 update_status("Neural weights verified.", progress=45)
             except Exception as e:
-                print(f"{Fore.RED}Ollama Link Error: {e}")
+                print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
                 update_status("Ollama Connection Pending...", progress=45)
 
             # --- 2. RAG & VRAM Allocation ---
             if CollegeRAG and rag is None:
                 try:
                     update_status("Allocating VRAM & Loading ColBERT...", progress=65)
-                    rag = CollegeRAG(
+
+                    # We initialize into a local variable first to ensure
+                    # we don't set the global 'rag' to a half-broken object
+                    temp_rag = CollegeRAG(
                         data_dir=str(DATA_DIR),
                         llm_model=current_cfg["llm_model"],
                         temperature=current_cfg["temperature"],
                         socketio=socketio
                     )
+                    rag = temp_rag
                     update_status("Knowledge Engine Synchronized.", progress=85)
                 except Exception as e:
+                    # CRITICAL: This is where your DNS Error -3 is hiding.
+                    print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
+                    traceback.print_exc()
                     update_status(f"RAG Error: {str(e)}", state="error")
+                    rag = None  # Ensure it stays None so api_chat knows it's broken
 
             # --- 3. SQL Agent Boot ---
             if StructuredDataAgent and sql_system is None:
                 try:
                     update_status("Waking up SQL Agent...", progress=95)
-                    sql_system = StructuredDataAgent(socketio=socketio)
-                    if hasattr(sql_system, 'agent') and hasattr(sql_system.agent, 'llm'):
-                        sql_system.agent.llm.temperature = 0.0
-                    sql_system.start_monitoring()
+                    temp_sql = StructuredDataAgent(socketio=socketio)
+                    if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
+                        temp_sql.agent.llm.temperature = 0.0
+                    temp_sql.start_monitoring()
+                    sql_system = temp_sql
                 except Exception as e:
+                    print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
+                    traceback.print_exc()
                     update_status("SQL Agent Failure", state="error")
+                    sql_system = None
 
-            # --- 4. The Handshake Fix ---
-            # We wait a split second to ensure the frontend is actually listening
-            import time
-            time.sleep(0.8)
-            update_status("System Fully Operational.", state="ready", progress=100)
+            # --- 4. Final Handshake ---
+            if rag and sql_system:
+                import time
+                time.sleep(0.8)
+                update_status("System Fully Operational.", state="ready", progress=100)
+            else:
+                update_status("System Partial Failure.", state="error", progress=0)
 
         else:
             print(f"{Fore.YELLOW}🛡️ [Watcher] Flask Reloader active.{Style.RESET_ALL}")
 
-# Trigger initialization in the background so Flask starts INSTANTLY
-from threading import Thread
+
+# Trigger initialization
+# We keep this as a daemon thread so the Flask server starts instantly
 Thread(target=initialize_engines, daemon=True).start()
 
 # ---------------------------------------------------------
@@ -328,7 +340,21 @@ def api_chat():
         print(f"{Fore.YELLOW}⏳ GPU engine missing. Attempting to boot...{Style.RESET_ALL}")
         with ENGINE_INIT_LOCK:
             if rag is None:
-                initialize_engines()
+                try:
+                    # Capture the return or state change
+                    initialize_engines()
+
+                    if rag is None:
+                        print(
+                            f"{Fore.RED}⚠️ initialize_engines() finished but 'rag' global variable is still None! Check if you declared 'global rag' inside initialize_engines().{Style.RESET_ALL}")
+                    else:
+                        print(f"{Fore.GREEN}✅ Engine recovered successfully.{Style.RESET_ALL}")
+
+                except Exception as e:
+                    print(
+                        f"{Fore.RED}💥 CRITICAL: initialize_engines() crashed during request-time boot!{Style.RESET_ALL}")
+                    # THIS IS THE KEY: It will show you the Errno -3 or whatever is killing it
+                    traceback.print_exc()
 
     # 2. Final check: If it's STILL None after initialization attempt
     if rag is None:
