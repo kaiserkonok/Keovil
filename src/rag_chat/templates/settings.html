@@ -63,6 +63,11 @@
                 <button onclick="updateSettings()" id="saveBtn" class="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-violet-500 hover:text-white transition-all active:scale-95 shadow-xl">
                     SYNC NEURAL ENGINE
                 </button>
+                <div class="mt-12 pt-8 border-t border-white/5">
+                    <button onclick="deactivateNode()" class="w-full py-3 bg-zinc-900 border border-red-900/30 text-red-500 text-xs font-bold rounded-xl hover:bg-red-950/30 transition-all uppercase tracking-widest">
+                        Deactivate This Node
+                    </button>
+                </div>
                 <a href="/" class="block text-center mt-6 text-zinc-500 hover:text-white text-sm transition-colors tracking-tight">Return to Dashboard</a>
             </div>
 
@@ -146,6 +151,19 @@
         }
 
         fetchSettings();
+
+        async function deactivateNode() {
+            if (!confirm("CRITICAL: This will unbind the Master Key from this hardware. You will be locked out until re-activation. Proceed?")) return;
+
+            try {
+                const res = await fetch('/api/logout', { method: 'POST' });
+                if (res.ok) {
+                    window.location.href = '/activate'; // Send them back to the bouncer
+                }
+            } catch (err) {
+                alert("Logout failed: " + err);
+            }
+        }
     </script>
 </body>
 </html>
