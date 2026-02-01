@@ -261,6 +261,8 @@ def initialize_engines():
     # Dynamic URL: Docker vs Localhost
     OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
 
+    global rag, sql_system
+
     # 1. Double-check lock to prevent race conditions during boot
     with ENGINE_INIT_LOCK:
         if rag is not None and sql_system is not None:
