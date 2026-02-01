@@ -22,6 +22,10 @@ import traceback
 from threading import Thread
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
 from colorama import Fore, Style, init, Back
+import hashlib
+import platform
+import subprocess
+import requests
 
 init(autoreset=True)
 
@@ -58,6 +62,97 @@ FILES_DIR = DATA_DIR
 
 print(f"{Fore.CYAN}🚀 SILO ACTIVE: {APP_MODE.upper()}")
 print(f"📍 STORAGE PATH: {HOME_STORAGE}{Style.RESET_ALL}")
+
+# ---------------------------------------------------------
+# BOUNCER CONFIGURATION (Registry Handshake)
+# ---------------------------------------------------------
+FOUNDRY_LOCAL = "http://localhost:8000"
+FOUNDRY_PROD = "https://keovil.io"
+
+# Toggle this based on where your Django is running
+REGISTRY_URL = FOUNDRY_LOCAL if APP_MODE == "development" else FOUNDRY_PROD
+AUTH_FILE = HOME_STORAGE / ".kevil_auth"
+
+
+def get_chubby_hwid():
+    """
+    Generates a robust, cross-platform hardware signature
+    anchored to Motherboard UUID and CPU ID.
+    """
+    system = platform.system()
+    raw_id = ""
+
+    try:
+        if system == "Windows":
+            # Get Motherboard UUID & CPU ID via WMIC
+            m_uuid = subprocess.check_output("wmic csproduct get uuid", shell=True).decode().split('\n')[1].strip()
+            cpu_id = subprocess.check_output("wmic cpu get processorid", shell=True).decode().split('\n')[1].strip()
+            raw_id = f"WIN-{m_uuid}-{cpu_id}"
+        elif system == "Linux":
+            try:
+                # machine-id is the standard for non-root hardware identification
+                if os.path.exists("/etc/machine-id"):
+                    with open("/etc/machine-id", "r") as f:
+                        m_uuid = f.read().strip()
+                else:
+                    m_uuid = subprocess.check_output("cat /proc/sys/kernel/random/boot_id", shell=True).decode().strip()
+            except:
+                m_uuid = platform.node()
+            cpu_id = subprocess.check_output("grep -m 1 'model name' /proc/cpuinfo", shell=True).decode().strip()
+            raw_id = f"LINUX-{m_uuid}-{cpu_id}"
+
+        elif system == "Darwin":  # macOS
+            # IOPlatformUUID is the most reliable anchor on Mac
+            m_uuid = subprocess.check_output(
+                "ioreg -d2 -c IOPlatformExpertDevice | awk -F\\\" '/IOPlatformUUID/{print $(NF-1)}'",
+                shell=True).decode().strip()
+            cpu_id = subprocess.check_output("sysctl -n machdep.cpu.brand_string", shell=True).decode().strip()
+            raw_id = f"MAC-{m_uuid}-{cpu_id}"
+
+        # Hash to 32-char hex for a clean, non-intrusive hardware token
+        return hashlib.sha256(raw_id.encode()).hexdigest()[:32]
+
+    except Exception:
+        # Emergency Fallback: If hardware tables are totally locked
+        fallback = f"{platform.node()}-{platform.machine()}-{platform.processor()}"
+        return hashlib.md5(fallback.encode()).hexdigest()
+
+
+# Final Hardware Identity
+HWID = get_chubby_hwid()
+
+# In-memory cache to prevent constant API pinging (Speed optimization)
+is_verified_session = False
+
+
+def is_node_authorized():
+    """Checks if the local auth file exists and is valid on the Registry."""
+    global is_verified_session
+
+    # If already verified this session, skip the network call
+    if is_verified_session:
+        return True
+
+    if not AUTH_FILE.exists():
+        return False
+
+    try:
+        with open(AUTH_FILE, "r") as f:
+            saved_key = f.read().strip()
+
+        # Verify with Foundry (Django)
+        r = requests.post(f"{REGISTRY_URL}/api/verify/", json={
+            "master_key": saved_key,
+            "hwid": HWID,
+            "product_slug": "keovil"
+        }, timeout=5)
+
+        if r.json().get("status") == "authorized":
+            is_verified_session = True  # Success! Lock it in for this session
+            return True
+        return False
+    except:
+        return False
 
 # ---------------------------------------------------------
 # Chat History Database Initialization
@@ -148,7 +243,6 @@ app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
-
 import threading
 
 # Globals for engines
@@ -163,7 +257,6 @@ def initialize_engines():
     Initializes heavy GPU engines with full interactive feedback.
     Optimized for RTX 5060 Ti performance.
     """
-    global rag, sql_system
 
     # Dynamic URL: Docker vs Localhost
     OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
@@ -186,72 +279,68 @@ def initialize_engines():
         is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
         is_debug_disabled = not app.debug
 
-        if is_reloader_child or is_debug_disabled or APP_MODE == "production":
-            update_status("Detecting GPU Hardware...", progress=5)
+        update_status("Detecting GPU Hardware...", progress=5)
 
-            # --- 1. Ollama Hardware Handshake ---
+        # --- 1. Ollama Hardware Handshake ---
+        try:
+            import requests
+            model_name = current_cfg["llm_model"]
+            update_status(f"Verifying {model_name} layers...", progress=15)
+
+            # Check Ollama connection
+            r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
+            if r.status_code != 200:
+                update_status("Model missing. Initiating pull...", progress=30)
+                requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
+            update_status("Neural weights verified.", progress=45)
+        except Exception as e:
+            print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
+            update_status("Ollama Connection Pending...", progress=45)
+
+        # --- 2. RAG & VRAM Allocation ---
+        if CollegeRAG and rag is None:
             try:
-                import requests
-                model_name = current_cfg["llm_model"]
-                update_status(f"Verifying {model_name} layers...", progress=15)
+                update_status("Allocating VRAM & Loading ColBERT...", progress=65)
 
-                # Check Ollama connection
-                r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
-                if r.status_code != 200:
-                    update_status("Model missing. Initiating pull...", progress=30)
-                    requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-                update_status("Neural weights verified.", progress=45)
+                # We initialize into a local variable first to ensure
+                # we don't set the global 'rag' to a half-broken object
+                temp_rag = CollegeRAG(
+                    data_dir=str(DATA_DIR),
+                    llm_model=current_cfg["llm_model"],
+                    temperature=current_cfg["temperature"],
+                    socketio=socketio
+                )
+                rag = temp_rag
+                update_status("Knowledge Engine Synchronized.", progress=85)
             except Exception as e:
-                print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
-                update_status("Ollama Connection Pending...", progress=45)
+                # CRITICAL: This is where your DNS Error -3 is hiding.
+                print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
+                traceback.print_exc()
+                update_status(f"RAG Error: {str(e)}", state="error")
+                rag = None  # Ensure it stays None so api_chat knows it's broken
 
-            # --- 2. RAG & VRAM Allocation ---
-            if CollegeRAG and rag is None:
-                try:
-                    update_status("Allocating VRAM & Loading ColBERT...", progress=65)
+        # --- 3. SQL Agent Boot ---
+        if StructuredDataAgent and sql_system is None:
+            try:
+                update_status("Waking up SQL Agent...", progress=95)
+                temp_sql = StructuredDataAgent(socketio=socketio)
+                if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
+                    temp_sql.agent.llm.temperature = 0.0
+                temp_sql.start_monitoring()
+                sql_system = temp_sql
+            except Exception as e:
+                print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
+                traceback.print_exc()
+                update_status("SQL Agent Failure", state="error")
+                sql_system = None
 
-                    # We initialize into a local variable first to ensure
-                    # we don't set the global 'rag' to a half-broken object
-                    temp_rag = CollegeRAG(
-                        data_dir=str(DATA_DIR),
-                        llm_model=current_cfg["llm_model"],
-                        temperature=current_cfg["temperature"],
-                        socketio=socketio
-                    )
-                    rag = temp_rag
-                    update_status("Knowledge Engine Synchronized.", progress=85)
-                except Exception as e:
-                    # CRITICAL: This is where your DNS Error -3 is hiding.
-                    print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
-                    traceback.print_exc()
-                    update_status(f"RAG Error: {str(e)}", state="error")
-                    rag = None  # Ensure it stays None so api_chat knows it's broken
-
-            # --- 3. SQL Agent Boot ---
-            if StructuredDataAgent and sql_system is None:
-                try:
-                    update_status("Waking up SQL Agent...", progress=95)
-                    temp_sql = StructuredDataAgent(socketio=socketio)
-                    if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
-                        temp_sql.agent.llm.temperature = 0.0
-                    temp_sql.start_monitoring()
-                    sql_system = temp_sql
-                except Exception as e:
-                    print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
-                    traceback.print_exc()
-                    update_status("SQL Agent Failure", state="error")
-                    sql_system = None
-
-            # --- 4. Final Handshake ---
-            if rag and sql_system:
-                import time
-                time.sleep(0.8)
-                update_status("System Fully Operational.", state="ready", progress=100)
-            else:
-                update_status("System Partial Failure.", state="error", progress=0)
-
+        # --- 4. Final Handshake ---
+        if rag and sql_system:
+            import time
+            time.sleep(0.8)
+            update_status("System Fully Operational.", state="ready", progress=100)
         else:
-            print(f"{Fore.YELLOW}🛡️ [Watcher] Flask Reloader active.{Style.RESET_ALL}")
+            update_status("System Partial Failure.", state="error", progress=0)
 
 
 # Trigger initialization
@@ -267,6 +356,78 @@ def safe_rel_path(p: str | None) -> str:
 # ---------------------------------------------------------
 # UI ROUTES
 # ---------------------------------------------------------
+
+@app.before_request
+def gatekeeper():
+    """The High-Level Bouncer."""
+    # 1. Exempt routes (Don't lock the door if we're trying to put the key in)
+    exempt_paths = ['/static', '/activate', '/api/bootstrap']
+    if any(request.path.startswith(path) for path in exempt_paths):
+        return None
+
+    # 2. Check Identity
+    if not is_node_authorized():
+        # Passing HWID to template so user can see their 'Node Signature'
+        return render_template("activate.html", hwid=HWID)
+
+
+@app.route("/activate")
+def activate_ui():
+    """Renders the chunky activation screen."""
+    return render_template("activate.html", hwid=HWID)
+
+
+@app.route("/api/bootstrap", methods=["POST"])
+def bootstrap():
+    """Endpoint for the First-Run Handshake."""
+    key = request.json.get("master_key")
+    if not key:
+        return jsonify({"status": "error", "msg": "Master Key Required"}), 400
+
+    try:
+        # Attempt to bond the Node to the Registry
+        r = requests.post(f"{REGISTRY_URL}/api/verify/", json={
+            "master_key": key,
+            "hwid": HWID,
+            "product_slug": "keovil"
+        }, timeout=10)
+
+        res_data = r.json()
+
+        if res_data.get("status") == "authorized":
+            # Save the key locally in your isolated storage
+            with open(AUTH_FILE, "w") as f:
+                f.write(key)
+            return jsonify({"status": "success"})
+        else:
+            # Return specific error (e.g., 'Hardware lock active' or 'Invalid Key')
+            return jsonify({
+                "status": "error",
+                "msg": res_data.get("msg", "Registry denied handshake.")
+            }), 401
+
+    except requests.exceptions.ConnectionError:
+        return jsonify({"status": "error", "msg": "FOUNDRY_OFFLINE: Could not reach Kevil.io"}), 500
+    except Exception as e:
+        return jsonify({"status": "error", "msg": f"SYSTEM_ERROR: {str(e)}"}), 500
+
+
+@app.route("/api/logout", methods=["POST"])
+def logout():
+    """Wipes the local auth file and resets the session."""
+    global is_verified_session
+    try:
+        # 1. Kill the local file
+        if AUTH_FILE.exists():
+            AUTH_FILE.unlink(missing_ok=True)
+
+        # 2. Reset the in-memory cache
+        is_verified_session = False
+
+        print(f"{Fore.RED}🔴 NODE DEACTIVATED: Local auth file purged.{Style.RESET_ALL}")
+        return jsonify({"status": "success"})
+    except Exception as e:
+        return jsonify({"status": "error", "msg": str(e)}), 500
 
 
 @socketio.on('connect')
@@ -298,6 +459,7 @@ def data_lab():
 # ---------------------------------------------------------
 # CHAT SESSIONS & HISTORY API
 # ---------------------------------------------------------
+
 @app.route("/api/chat/sessions", methods=["GET"])
 def manage_sessions():
     uid = request.headers.get("X-User-ID")
