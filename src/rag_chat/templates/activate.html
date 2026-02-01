@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KEVIL // NODE_ACTIVATION</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&display=swap');
+        body {
+            background-color: #050505;
+            color: #e0e0e0;
+            font-family: 'JetBrains+Mono', monospace;
+        }
+        .chubby-panel {
+            border: 4px solid #1a1a1a;
+            background: #000000;
+            box-shadow: 20px 20px 0px #0a0a0a;
+        }
+        .status-dot {
+            height: 8px; width: 8px; border-radius: 50%; display: inline-block;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="max-w-xl w-full">
+        <div class="mb-8">
+            <h1 class="text-5xl font-black italic tracking-tighter text-white">ACCESS_LOCKED</h1>
+            <div class="flex items-center gap-2 mt-2">
+                <span class="status-dot bg-red-600 animate-pulse"></span>
+                <span class="text-xs uppercase tracking-[0.3em] text-zinc-500">Security Handshake Required</span>
+            </div>
+        </div>
+
+        <div class="chubby-panel p-8">
+            <div class="mb-8">
+                <label class="text-[10px] uppercase tracking-widest text-zinc-600 font-bold block mb-1">Hardware Signature</label>
+                <code class="text-sm text-cyan-500 break-all bg-zinc-950 p-2 border border-zinc-900 block">{{ hwid }}</code>
+            </div>
+
+            <div class="mb-6">
+                <label class="text-[10px] uppercase tracking-widest text-zinc-400 font-bold block mb-2">Master Key</label>
+                <input type="text" id="masterKey" placeholder="KEV-XXXX-XXXX..."
+                    class="w-full bg-zinc-900 border-2 border-zinc-800 p-4 text-white font-bold outline-none focus:border-cyan-600 transition-colors placeholder:text-zinc-700">
+            </div>
+
+            <button onclick="attemptHandshake()" id="btn"
+                class="w-full bg-white text-black font-black py-4 uppercase tracking-widest hover:bg-cyan-500 transition-all active:scale-[0.98]">
+                Initialize Handshake
+            </button>
+
+            <div id="feedback" class="mt-6 p-4 border-2 border-red-900 bg-red-950/20 text-red-500 text-xs hidden">
+                </div>
+        </div>
+
+        <p class="mt-8 text-center text-[10px] text-zinc-700 uppercase tracking-widest">
+            Identity Provisioning powered by Kevil Foundry
+        </p>
+    </div>
+
+    <script>
+        async function attemptHandshake() {
+            const btn = document.getElementById('btn');
+            const feedback = document.getElementById('feedback');
+            const key = document.getElementById('masterKey').value;
+
+            btn.innerText = "SYNCHRONIZING...";
+            btn.disabled = true;
+            feedback.classList.add('hidden');
+
+            try {
+                const response = await fetch('/api/bootstrap', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ master_key: key })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    btn.innerText = "AUTHORIZED";
+                    btn.classList.replace('bg-white', 'bg-green-500');
+                    setTimeout(() => window.location.href = "/", 1000);
+                } else {
+                    throw new Error(data.msg || "Authorization Denied");
+                }
+            } catch (err) {
+                feedback.innerText = `ERROR: ${err.message}`;
+                feedback.classList.remove('hidden');
+                btn.innerText = "INITIALIZE HANDSHAKE";
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
