@@ -67,7 +67,7 @@ print(f"📍 STORAGE PATH: {HOME_STORAGE}{Style.RESET_ALL}")
 # BOUNCER CONFIGURATION (Registry Handshake)
 # ---------------------------------------------------------
 FOUNDRY_LOCAL = "http://localhost:8000"
-FOUNDRY_PROD = "https://keovil.io"
+FOUNDRY_PROD = "https://kevil.io"
 
 # Toggle this based on where your Django is running
 REGISTRY_URL = FOUNDRY_LOCAL if APP_MODE == "development" else FOUNDRY_PROD
@@ -387,6 +387,7 @@ def bootstrap():
         return jsonify({"status": "error", "msg": "Master Key Required"}), 400
 
     try:
+        print(f"{Fore.MAGENTA}Registry URL: {REGISTRY_URL}")
         # Attempt to bond the Node to the Registry
         r = requests.post(f"{REGISTRY_URL}/api/verify/", json={
             "master_key": key,
