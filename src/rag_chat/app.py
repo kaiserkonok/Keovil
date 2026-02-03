@@ -1,11 +1,11 @@
+from gevent import monkey
+monkey.patch_all()
+
 import torch
 def dummy_compile(fn=None, **kwargs):
     if fn is not None: return fn
     return lambda x: x
 torch.compile = dummy_compile
-
-from gevent import monkey
-monkey.patch_all()
 
 import os
 import sys
@@ -545,7 +545,7 @@ def api_chat():
     socketio.emit('system_status', {"is_busy": True, "rag": {"state": "processing"}})
 
     try:
-        ans = rag.ask(q, chat_history=rag_history, stream=False)
+        ans = rag.ask(q, chat_history=rag_history)
 
         if not session_id:
             title = q[:35] + "..." if len(q) > 35 else q

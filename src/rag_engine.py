@@ -15,6 +15,8 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
+from langchain_classic.chains import create_retrieval_chain
+from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_ollama import OllamaLLM
 import intelligent_rag_chunker
 from utils.document_processor import DocumentProcessor
@@ -64,8 +66,11 @@ class NewFileHandler(PatternMatchingEventHandler):
 
 class RewriteLogger(StdOutCallbackHandler):
     def on_chain_end(self, outputs, **kwargs):
-        # The history_aware_retriever output is usually the search query string
-        if isinstance(outputs, str):
+        # Retrieve tags from the 'kwargs' which contain the run configuration
+        tags = kwargs.get("tags", [])
+
+        # Only print if this specific chain step was tagged as 'rewriter'
+        if "rewriter" in tags and isinstance(outputs, str):
             print(f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}")
 
 # ----------------------
@@ -160,7 +165,26 @@ class CollegeRAG:
             self.query_llm,
             self.engine.as_retriever(search_kwargs={"k": self.top_k}),
             contextualize_q_prompt
+        ).with_config({"tags": ["rewriter"]})
+
+        qa_system_prompt = (
+            "You are Lora, a private AI Assistant. "
+            "Answer the question **only using the given context**. "
+            "If names are misspelled, correct them using the context provided. "
+            "Keep answers concise and friendly. Current time: {time}\n\n"
+            "CONTEXT:\n{context}"
         )
+
+        qa_prompt = ChatPromptTemplate.from_messages([
+            ("system", qa_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+
+        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
+
+        # This links your Rewriter + Retriever + QA Generation into one unit
+        self.rag_chain = create_retrieval_chain(self.history_aware_retriever, question_answer_chain)
 
         # ---------------------------------------------------------
         # 4. BACKGROUND WORKERS & WATCHDOG
@@ -432,6 +456,8 @@ class CollegeRAG:
 
     def ask(self, query, chat_history=None, stream=False):
         history = chat_history if chat_history is not None else self.chat_history
+
+        # 1. Prepare history window
         lc_history = []
         for role, text in history[-6:]:
             if role == "You":
@@ -439,83 +465,34 @@ class CollegeRAG:
             else:
                 lc_history.append(AIMessage(content=text))
 
-        print(f"\n{Colors.HEADER}{'=' * 20} COLBERT SEARCH (History-Aware) {'=' * 20}{Colors.ENDC}")
+        input_params = {
+            "input": query,
+            "chat_history": lc_history,
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
 
-        try:
-            docs = self.history_aware_retriever.invoke(
-                {"input": query, "chat_history": lc_history},
-                config=RunnableConfig(callbacks=[RewriteLogger()])
-            )
-        except Exception as e:
-            print(f"{Colors.FAIL}[Error] Retrieval failed: {e}{Colors.ENDC}")
-            return "I encountered an error."
+        print(f"\n{Colors.HEADER}{'=' * 20} RAG PIPELINE (Standard) {'=' * 20}{Colors.ENDC}")
 
-        if not docs:
-            return "I don't have information on that yet."
+        # --- Non-Streaming Logic ---
+        result = self.rag_chain.invoke(input_params, config=RunnableConfig(callbacks=[RewriteLogger()]))
 
-        print(f"\n{Colors.HEADER}┌{'─' * 78}┐{Colors.ENDC}")
-        context_chunks = []
-        for i, doc in enumerate(docs):
-            src = os.path.basename(doc.metadata.get("source", "Unknown"))
-            print(f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {src}")
-            context_chunks.append(doc.page_content)
-            print(
-                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{doc.page_content[:150].replace('\n', ' ')}...{Colors.ENDC}")
-        print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
+        # Show the Match Box
+        if "context" in result:
+            self._print_match_box(result["context"])
 
-        context_text = "\n\n".join(context_chunks)
-        formatted_chat = self._format_chat_history(history[-6:])
-
-        prompt = f"""
-            You are Lora, a private AI Assistant.
-
-            Answer the question **only using the given context**. 
-            If someone does a typing mistake, like typing the same name with some different spelling, still give the correct answer with correct names. If you get context that is not related to the query, don't get confused with it. You might need to ignore it. 
-            Be friendly. Current date and time: {datetime.now()}
-
-            Use chat history to understand the conversation better and make your responses more natural and coherent.
-
-            CHAT HISTORY:
-            {formatted_chat}
-
-            CONTEXT:
-            {context_text}
-
-            QUESTION:
-            {query}
-
-            ANSWER:
-        """.strip()
-
-        if stream:
-            print(f"{Colors.BOLD}Lora:{Colors.ENDC} ", end="", flush=True)
-            ans = ""
-            for chunk in self.llm.stream(prompt):
-                print(chunk, end="", flush=True)
-                ans += chunk
-            if chat_history is None:
-                self.chat_history.append(("You", query))
-                self.chat_history.append(("AI", ans))
-            return ans
-
-        res = self.llm.invoke(prompt)
+        answer = result["answer"]
         if chat_history is None:
             self.chat_history.append(("You", query))
-            self.chat_history.append(("AI", res))
-        return res
+            self.chat_history.append(("AI", answer))
+        return answer
 
-
-if __name__ == "__main__":
-    rag = CollegeRAG()
-    print(f"\n{Colors.OKGREEN}System initialized. Type your question below (exit to quit).{Colors.ENDC}")
-
-    try:
-        while True:
-            question = input(f"{Colors.BOLD}You:{Colors.ENDC} ")
-            if question.lower() in ['exit', 'quit']: break
-            if not question.strip(): continue
-            rag.ask(question, stream=True)
-    except KeyboardInterrupt:
-        print(f"\n{Colors.WARNING}Shutting down...{Colors.ENDC}")
-        rag.observer.stop()
-        rag.observer.join()
+    def _print_match_box(self, docs):
+        """Helper to maintain your beautiful UI matching box."""
+        print(f"\n{Colors.HEADER}┌{'─' * 78}┐{Colors.ENDC}")
+        for i, doc in enumerate(docs):
+            # Handle cases where source is a relative path string
+            src = os.path.basename(doc.metadata.get("source", "Unknown"))
+            print(f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {src}")
+            content_preview = doc.page_content[:150].replace('\n', ' ')
+            print(f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{content_preview}...{Colors.ENDC}")
+        print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
