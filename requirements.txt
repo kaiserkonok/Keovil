@@ -31,6 +31,7 @@ comm==0.2.3
 contourpy==1.3.3
 cryptography==46.0.3
 cycler==0.12.1
+Cython==3.2.4
 dataclasses-json==0.6.7
 datasets==4.4.2
 debugpy==1.8.17
