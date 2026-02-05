@@ -73,6 +73,8 @@ FOUNDRY_PROD = "https://kevil.io"
 REGISTRY_URL = FOUNDRY_LOCAL if APP_MODE == "development" else FOUNDRY_PROD
 AUTH_FILE = HOME_STORAGE / ".kevil_auth"
 
+print(f"Auth file path: {AUTH_FILE}")
+
 
 def get_chubby_hwid():
     """
@@ -120,6 +122,8 @@ def get_chubby_hwid():
 
 # Final Hardware Identity
 HWID = get_chubby_hwid()
+
+print(f"Generated hardware id: {HWID}")
 
 # In-memory cache to prevent constant API pinging (Speed optimization)
 is_verified_session = False
@@ -219,7 +223,7 @@ current_cfg = load_settings()
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
 # ---------------------------------------------------------
-# app.py is in src/rag_chat/app.py. We need to add 'src' to the path.
+# server.py is in src/keovil_web/server.py. We need to add 'src' to the path.
 src_root = Path(__file__).resolve().parent.parent
 
 if str(src_root) not in sys.path:
