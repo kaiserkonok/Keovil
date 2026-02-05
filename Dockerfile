@@ -4,7 +4,7 @@ FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
 
-# 1. Install Python 3.12 and Build Tools
+# 1. Install Python 3.12 and Build Tools (Cached)
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa -y \
@@ -12,22 +12,29 @@ RUN apt-get update && apt-get install -y \
     python3.12 python3.12-dev python3.12-venv python3-pip build-essential curl binutils \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. VENV SETUP
+# 2. VENV SETUP (Cached)
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 3. Cache Heavy Libraries (Torch/CUDA)
+# 3. Cache Heavy Libraries (Torch/CUDA) - CRITICAL: Keep this high up!
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 
-# 4. Install remaining requirements
+# 4. Install remaining requirements (Cached)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip install --no-cache-dir Cython && \
     rm requirements.txt
 
+# --- CACHE BREAKER POINT: Changes below this line won't trigger re-downloading Torch ---
+
+# ⚡ Stop Python from writing .pyc files (Moved here to save cache)
+ENV PYTHONDONTWRITEBYTECODE=1
+
 # 5. Compile & Strip
 COPY . .
-# ⚡ Speed tweak: NPROC uses all available CPU cores for Cython compilation
+# Cleanup existing pycache from local machine before compiling
+RUN find . -type d -name "__pycache__" -exec rm -rf {} +
+
 RUN NPROC=$(nproc) python3 compile.py build_ext --inplace && \
     find ./src -name "*.so" -exec strip --strip-unneeded {} +
 
@@ -53,17 +60,17 @@ ENV PATH="/opt/venv/bin:$PATH"
 # 3. Copy Compiled Binaries
 COPY --from=builder /build/src ./src
 
-# 4. 🛡️ THE FINAL PURGE (Hardened)
-# We delete ALL .py files, then specifically restore the ONE entry point we need.
-# This ensures zero source-code leakage of your HWID/Registry logic.
-RUN find ./src -name "*.py" ! -path "*/keovil_web/app.py" ! -name "__init__.py" -delete && \
+# 4. 🛡️ THE FINAL PURGE (Total Stealth)
+RUN find ./src -name "__pycache__" -type d -exec rm -rf {} + && \
+    find ./src -name "*.py" ! -path "*/keovil_web/app.py" ! -name "__init__.py" -delete && \
     find ./src -name "__init__.py" -exec truncate -s 0 {} +
 
-# 5. Performance Tweaks (RTX 5060 Ti Optimized)
+# 5. Performance Tweaks & Python Settings
+ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONPATH=/app
 ENV DOCLING_DEVICE=cuda
 ENV CUDA_MODULE_LOADING=LAZY
 
 EXPOSE 5000
-# Matches your verified tree path
+
 CMD ["python3", "src/keovil_web/app.py"]
