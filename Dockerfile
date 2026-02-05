@@ -9,24 +9,27 @@ RUN apt-get update && apt-get install -y \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update && apt-get install -y \
-    python3.12 python3.12-dev python3-pip build-essential curl binutils \
+    python3.12 python3.12-dev python3.12-venv python3-pip build-essential curl binutils \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+# 2. VENV SETUP
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# 2. Compile Phase
-# 🛡️ FIX: Added flags to bypass the 'blinker' and system package lock
+# 3. Cache Heavy Libraries (Torch/CUDA)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# 4. Install remaining requirements
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir Cython && \
-    pip3 install --no-cache-dir --ignore-installed --break-system-packages -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir Cython && \
+    rm requirements.txt
 
+# 5. Compile & Strip
 COPY . .
-# Run secure compile.py (it now auto-deletes .c files locally)
-RUN python3 compile.py build_ext --inplace
-
-# 🛡️ THE STRIP: Remove debug symbols from the binaries to hide logic details
-RUN find ./src -name "*.so" -exec strip --strip-unneeded {} +
+# ⚡ Speed tweak: NPROC uses all available CPU cores for Cython compilation
+RUN NPROC=$(nproc) python3 compile.py build_ext --inplace && \
+    find ./src -name "*.so" -exec strip --strip-unneeded {} +
 
 
 # --- STAGE 2: THE VAULT (PRODUCTION) ---
@@ -35,36 +38,32 @@ FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# 1. Install Runtime Python 3.12
+# 1. Minimal Runtime Environment
 RUN apt-get update && apt-get install -y \
     software-properties-common \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update && apt-get install -y \
-    python3.12 python3-pip curl libgl1 libglib2.0-0 libgomp1 \
+    python3.12 libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
+# 2. THE LIFT & SHIFT
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-# 2. Re-install Heavy AI Libraries (Aligned to CUDA 12.4 for your RTX 5060 Ti)
-RUN pip3 install --no-cache-dir \
-    torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
-
-# 3. Copy only necessary artifacts
+# 3. Copy Compiled Binaries
 COPY --from=builder /build/src ./src
-COPY requirements.txt .
-# 🛡️ FIX: Added same flags here to ensure smooth runtime setup
-RUN pip3 install --no-cache-dir --ignore-installed --break-system-packages -r requirements.txt
 
-# 4. 🛡️ THE FINAL PURGE: Delete all source, and BLANK all __init__ files
-# This ensures that even if someone gets into the container, they find NO code.
-RUN find ./src -name "*.py" ! -name "app.py" ! -name "__init__.py" -delete && \
+# 4. 🛡️ THE FINAL PURGE (Hardened)
+# We delete ALL .py files, then specifically restore the ONE entry point we need.
+# This ensures zero source-code leakage of your HWID/Registry logic.
+RUN find ./src -name "*.py" ! -path "*/keovil_web/app.py" ! -name "__init__.py" -delete && \
     find ./src -name "__init__.py" -exec truncate -s 0 {} +
 
-# 5. Environment for Performance
-ENV PYTHONPATH=/app/src
+# 5. Performance Tweaks (RTX 5060 Ti Optimized)
+ENV PYTHONPATH=/app
 ENV DOCLING_DEVICE=cuda
 ENV CUDA_MODULE_LOADING=LAZY
 
 EXPOSE 5000
-CMD ["python3", "src/rag_chat/app.py"]
+# Matches your verified tree path
+CMD ["python3", "src/keovil_web/app.py"]

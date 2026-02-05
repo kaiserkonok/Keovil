@@ -26,9 +26,9 @@ services:
               count: 1
               capabilities: [gpu]
 
-  k-rag-app:
+  keovil:
     build: .
-    container_name: rag_app_container
+    container_name: keovil_container
     runtime: nvidia
     shm_size: '4gb'
     restart: unless-stopped
