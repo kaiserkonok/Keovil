@@ -9,6 +9,8 @@ from typing import List, Dict, Any, Union
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler, PatternMatchingEventHandler
 from datetime import datetime
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
 from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -18,9 +20,9 @@ from langchain_core.runnables import RunnableConfig
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_ollama import OllamaLLM
-import intelligent_rag_chunker
+import knowledge_splitter
 from utils.document_processor import DocumentProcessor
-from colbert_engine import ColBERTEngine
+from neural_db import ColBERTEngine
 import torch
 
 
@@ -72,6 +74,15 @@ class RewriteLogger(StdOutCallbackHandler):
         # Only print if this specific chain step was tagged as 'rewriter'
         if "rewriter" in tags and isinstance(outputs, str):
             print(f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}")
+
+
+def format_docs_safely(docs):
+    # This is the fix for the 'NoneType' error
+    if not docs:
+        return ""
+    # We ensure every document is converted to a string properly
+    return "\n\n".join(doc.page_content for doc in docs if doc is not None)
+
 
 # ----------------------
 # College RAG System
@@ -131,7 +142,7 @@ class CollegeRAG:
         # Pass the isolated collection name here!
         self.engine = ColBERTEngine(collection_name=self.collection_name, device=device)
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
-        self.chunker = intelligent_rag_chunker.IntelligentChunker()
+        self.chunker = knowledge_splitter.IntelligentChunker()
 
         # ---------------------------------------------------------
         # 3. LLM & RETRIEVER SETUP
@@ -184,7 +195,21 @@ class CollegeRAG:
         question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
 
         # This links your Rewriter + Retriever + QA Generation into one unit
-        self.rag_chain = create_retrieval_chain(self.history_aware_retriever, question_answer_chain)
+        self.rag_chain = (
+                RunnableParallel({
+                    "context_docs": self.history_aware_retriever,  # Keep the objects for the Match Box
+                    "input": lambda x: x["input"],
+                    "chat_history": lambda x: x["chat_history"],
+                    "time": lambda x: x["time"]
+                })
+                | RunnablePassthrough.assign(
+            context=lambda x: format_docs_safely(x["context_docs"])  # Convert objects to string here
+        )
+                | {
+                    "answer": qa_prompt | self.llm | StrOutputParser(),
+                    "docs": lambda x: x["context_docs"]  # Pass the docs through to the final output
+                }
+        )
 
         # ---------------------------------------------------------
         # 4. BACKGROUND WORKERS & WATCHDOG
@@ -455,15 +480,14 @@ class CollegeRAG:
         return formatted_chat
 
     def ask(self, query, chat_history=None, stream=False):
+        print(f"DEBUG: Retriever Object Type: {type(self.history_aware_retriever)}")
+        print(f"DEBUG: Engine Object Type: {type(self.engine)}")
+
         history = chat_history if chat_history is not None else self.chat_history
 
-        # 1. Prepare history window
         lc_history = []
         for role, text in history[-6:]:
-            if role == "You":
-                lc_history.append(HumanMessage(content=text))
-            else:
-                lc_history.append(AIMessage(content=text))
+            lc_history.append(HumanMessage(content=text) if role == "You" else AIMessage(content=text))
 
         input_params = {
             "input": query,
@@ -471,19 +495,24 @@ class CollegeRAG:
             "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
 
-        print(f"\n{Colors.HEADER}{'=' * 20} RAG PIPELINE (Standard) {'=' * 20}{Colors.ENDC}")
-
-        # --- Non-Streaming Logic ---
+        # USE THE CHAIN HERE
         result = self.rag_chain.invoke(input_params, config=RunnableConfig(callbacks=[RewriteLogger()]))
 
-        # Show the Match Box
-        if "context" in result:
-            self._print_match_box(result["context"])
-
+        # The chain now returns a dictionary with 'answer' and 'docs'
         answer = result["answer"]
+        docs = result["docs"]
+
+        if not docs:
+            print('no docs found')
+
+        # Show your Match Box using the docs the chain found
+        if docs:
+            self._print_match_box(docs)
+
         if chat_history is None:
             self.chat_history.append(("You", query))
             self.chat_history.append(("AI", answer))
+
         return answer
 
     def _print_match_box(self, docs):

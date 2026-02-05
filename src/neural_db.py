@@ -1,12 +1,13 @@
-# colbert_engine.py
+# neural_db.py
 import hashlib
 import uuid
-from typing import List, Any
+from typing import List, Any, Optional
 from pylate import models as pylate_models
 from qdrant_client import QdrantClient, models as q_models
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from pydantic import Field
+from pydantic import ConfigDict, Field # Make sure to import ConfigDict
 import os
 import torch
 from colorama import Fore, Style, init
@@ -15,23 +16,49 @@ init(autoreset=True)
 
 
 class ColBERTRetriever(BaseRetriever):
-    # Field allows LangChain to "see" these variables
-    engine: Any = Field(exclude=True)
+    engine: Any
     k: int = 5
 
-    def _get_relevant_documents(self, query: str) -> List[Document]:
-        """Bridge between LangChain and your ColBERT search."""
-        # This calls your existing search method
-        results = self.engine.search(query, k=self.k)
+    # This tells Pydantic to ignore the cyfunction that Cython creates
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        ignored_types=(type(lambda: None),)  # This usually catches cyfunctions
+    )
 
-        # Convert Qdrant points back into LangChain Documents
-        docs = []
-        for res in results:
-            docs.append(Document(
-                page_content=res.payload.get("text", ""),
-                metadata=res.payload
-            ))
-        return docs
+    # ADD THIS: This is the entry point LangChain actually uses
+    def invoke(self, input: str, config: Optional[Any] = None, **kwargs: Any) -> List[Document]:
+        print(f"{Fore.CYAN}[INVOKE] Manual hook triggered for query: {input}")
+        return self._get_relevant_documents(input, **kwargs)
+
+    def _get_relevant_documents(
+            self,
+            query: str,
+            *,
+            run_manager: Optional[CallbackManagerForRetrieverRun] = None,
+            **kwargs: Any
+    ) -> List[Document]:
+        print(f"{Fore.YELLOW}[DEBUG] Inside _get_relevant_documents for: {query}")
+
+        # Ensure search is actually called
+        raw_results = self.engine.search(query, k=self.k)
+
+        if not raw_results:
+            print(f"{Fore.RED}[DEBUG] Engine search returned NOTHING")
+            return []
+
+        python_friendly_docs = []
+        for res in raw_results:
+            # Cython-safe payload access
+            p_load = getattr(res, 'payload', {}) if hasattr(res, 'payload') else {}
+
+            doc = Document(
+                page_content=str(p_load.get("text", "No content")),
+                metadata={k: v for k, v in p_load.items() if k != "text"}
+            )
+            python_friendly_docs.append(doc)
+
+        print(f"{Fore.GREEN}[DEBUG] Returning {len(python_friendly_docs)} docs to chain.")
+        return python_friendly_docs
 
 
 class ColBERTEngine:
@@ -105,6 +132,7 @@ class ColBERTEngine:
                 )
 
     def search(self, query, k=5):
+        print('Searching in colbert database')
         """Performs MaxSim retrieval using the query embedding."""
         query_emb = self.model.encode([query], is_query=True)[0].tolist()
 
@@ -114,7 +142,10 @@ class ColBERTEngine:
             using="colbert",
             limit=k
         ).points
-        return results
+
+        print(f"length of results: {len(results)}")
+
+        return list(results)
 
     def as_retriever(self, search_kwargs=None):
         """Returns the LangChain-compatible retriever object."""
@@ -143,3 +174,16 @@ class ColBERTEngine:
     def get_points_count(self):
         """Helper to verify DB state."""
         return self.client.get_collection(self.collection_name).points_count
+
+
+# --- THE FINAL PATCH ---
+
+# 1. We re-link the method to ensure the C-compiled version is recognized
+ColBERTRetriever._get_relevant_documents = ColBERTRetriever._get_relevant_documents
+ColBERTRetriever._aget_relevant_documents = ColBERTRetriever._aget_relevant_documents
+
+# 2. We manually remove the "Missing" labels from the class registry
+ColBERTRetriever.__abstractmethods__ = frozenset(
+    [m for m in ColBERTRetriever.__abstractmethods__
+     if m not in ('_get_relevant_documents', '_aget_relevant_documents')]
+)

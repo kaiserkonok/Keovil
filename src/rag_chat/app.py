@@ -226,8 +226,8 @@ if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
 
 try:
-    from rag_engine import CollegeRAG
-    from agents.sql_agent import StructuredDataAgent
+    from knowledge_engine import CollegeRAG
+    from agents.db_agent import StructuredDataAgent
     print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
 except ImportError as e:
     print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
