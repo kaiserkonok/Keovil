@@ -49,10 +49,8 @@ services:
       - "5000:5000"
     volumes:
       - ${HOME}/.kevil_krag_storage:/root/.kevil_krag_storage
+      - ${HOME}/.keovil:/root/.keovil
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
-      # 🛡️ HWID STABILITY: Mount host identity to keep hardware signature persistent
-      - /etc/machine-id:/etc/machine-id:ro
-      - /var/lib/dbus/machine-id:/var/lib/dbus/machine-id:ro
     deploy:
       resources:
         reservations:
