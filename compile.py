@@ -9,6 +9,12 @@ Cython.Compiler.Options.emit_code_comments = False
 Cython.Compiler.Options.docstrings = False
 
 extensions = [
+    # Initlization files
+    Extension("src.__init__", ["src/__init__.py"]),
+    Extension("src.agents.__init__", ["src/agents/__init__.py"]),
+    Extension("src.utils.__init__", ["src/utils/__init__.py"]),
+    Extension("src.keovil_web.__init__", ["src/keovil_web/__init__.py"]),
+
     # Core Logic
     Extension("src.knowledge_engine", ["src/knowledge_engine.py"]),
     Extension("src.neural_db", ["src/neural_db.py"]),
