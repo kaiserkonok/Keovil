@@ -77,47 +77,62 @@ print(f"Auth file path: {AUTH_FILE}")
 
 
 def get_chubby_hwid():
-    """
-    Generates a robust, cross-platform hardware signature
-    anchored to Motherboard UUID and CPU ID.
-    """
-    system = platform.system()
-    raw_id = ""
+    import subprocess
+    import hashlib
+    import platform
+    import os
 
+    system = platform.system()
+    components = []
+
+    # --- STEP 1: THE PRIMARY ANCHOR (Motherboard / System UUID) ---
     try:
         if system == "Windows":
-            # Get Motherboard UUID & CPU ID via WMIC
-            m_uuid = subprocess.check_output("wmic csproduct get uuid", shell=True).decode().split('\n')[1].strip()
-            cpu_id = subprocess.check_output("wmic cpu get processorid", shell=True).decode().split('\n')[1].strip()
-            raw_id = f"WIN-{m_uuid}-{cpu_id}"
+            # Stable BIOS UUID
+            cmd = "wmic csproduct get uuid"
+            m_uuid = subprocess.check_output(cmd, shell=True).decode().split('\n')[1].strip()
+            components.append(m_uuid)
         elif system == "Linux":
-            try:
-                # machine-id is the standard for non-root hardware identification
-                if os.path.exists("/etc/machine-id"):
-                    with open("/etc/machine-id", "r") as f:
-                        m_uuid = f.read().strip()
-                else:
-                    m_uuid = subprocess.check_output("cat /proc/sys/kernel/random/boot_id", shell=True).decode().strip()
-            except:
-                m_uuid = platform.node()
-            cpu_id = subprocess.check_output("grep -m 1 'model name' /proc/cpuinfo", shell=True).decode().strip()
-            raw_id = f"LINUX-{m_uuid}-{cpu_id}"
+            # In Docker, /sys/class/dmi is the gold standard if mapped, otherwise machine-id
+            if os.path.exists("/sys/class/dmi/id/product_uuid"):
+                with open("/sys/class/dmi/id/product_uuid", "r") as f:
+                    components.append(f.read().strip())
+            elif os.path.exists("/etc/machine-id"):
+                with open("/etc/machine-id", "r") as f:
+                    components.append(f.read().strip())
+            else:
+                components.append(platform.node()) # Last resort hostname
+        elif system == "Darwin":
+            cmd = "ioreg -d2 -c IOPlatformExpertDevice | awk -F\\\" '/IOPlatformUUID/{print $(NF-1)}'"
+            components.append(subprocess.check_output(cmd, shell=True).decode().strip())
+    except:
+        components.append("BASE-NODE")
 
-        elif system == "Darwin":  # macOS
-            # IOPlatformUUID is the most reliable anchor on Mac
-            m_uuid = subprocess.check_output(
-                "ioreg -d2 -c IOPlatformExpertDevice | awk -F\\\" '/IOPlatformUUID/{print $(NF-1)}'",
-                shell=True).decode().strip()
-            cpu_id = subprocess.check_output("sysctl -n machdep.cpu.brand_string", shell=True).decode().strip()
-            raw_id = f"MAC-{m_uuid}-{cpu_id}"
+    # --- STEP 2: THE SECONDARY ANCHOR (The 5060 Ti / Silicon Fingerprint) ---
+    try:
+        # GPU UUID is the best secondary anchor for an AI app
+        gpu_uuid = subprocess.check_output(
+            "nvidia-smi --query-gpu=uuid --format=csv,noheader",
+            shell=True, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        components.append(gpu_uuid)
+    except:
+        # Fallback to CPU ID if GPU is not visible (e.g., during container setup)
+        try:
+            if system == "Windows":
+                cpu = subprocess.check_output("wmic cpu get processorid", shell=True).decode().split('\n')[1].strip()
+                components.append(cpu)
+            else:
+                # Get CPU Model Name from /proc/cpuinfo
+                cpu = subprocess.check_output("grep -m 1 'model name' /proc/cpuinfo", shell=True).decode().strip()
+                components.append(cpu)
+        except:
+            components.append(platform.processor())
 
-        # Hash to 32-char hex for a clean, non-intrusive hardware token
-        return hashlib.sha256(raw_id.encode()).hexdigest()[:32]
-
-    except Exception:
-        # Emergency Fallback: If hardware tables are totally locked
-        fallback = f"{platform.node()}-{platform.machine()}-{platform.processor()}"
-        return hashlib.md5(fallback.encode()).hexdigest()
+    # --- STEP 3: HASHING ---
+    # We join with a unique separator and add your secret salt
+    raw_id = "|".join(components) + "KEV-SALT-99-PROD"
+    return hashlib.sha256(raw_id.encode()).hexdigest()[:32]
 
 
 # Final Hardware Identity
