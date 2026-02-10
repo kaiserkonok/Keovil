@@ -1,76 +1,73 @@
+# --- STAGE 0: BINARY SOURCES ---
+FROM ollama/ollama:0.5.7 AS ollama_source
+FROM qdrant/qdrant:v1.12.1 AS qdrant_source
+
 # --- STAGE 1: THE FORGE (BUILDER) ---
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
-
 ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /build
 
-# 1. Install Python 3.12 and Build Tools (Cached)
+# 1. System Setup
 RUN apt-get update && apt-get install -y \
-    software-properties-common \
+    software-properties-common curl binutils \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update && apt-get install -y \
-    python3.12 python3.12-dev python3.12-venv python3-pip build-essential curl binutils \
+    python3.12 python3.12-dev python3.12-venv python3-pip build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. VENV SETUP (Cached)
+# 2. VENV SETUP
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 3. Cache Heavy Libraries (Torch/CUDA) - CRITICAL: Keep this high up!
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+# 3. THE "PERMANENT" CACHE LAYER (Ollama & Torch)
+COPY --from=ollama_source /bin/ollama /usr/bin/ollama
 
-# 4. Install remaining requirements (Cached)
+# This line is now CACHED on your machine (1887s saved!)
+RUN nohup ollama serve & sleep 5 && ollama pull qwen2.5-coder:7b-instruct
+
+# This line is now CACHED on your machine (957s saved!)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
+
+# 4. INSTALL ALL OTHER REQUIREMENTS (Using your file)
+# We do this BEFORE the ColBERT download so all dependencies are met.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir Cython && \
-    rm requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# --- CACHE BREAKER POINT: Changes below this line won't trigger re-downloading Torch ---
+# 5. DOWNLOAD COLBERT (Will now find sentence-transformers, numpy, etc.)
+RUN python3 -c "from pylate import models; models.ColBERT(model_name_or_path='lightonai/GTE-ModernColBERT-v1', device='cpu')"
 
-# ⚡ Stop Python from writing .pyc files (Moved here to save cache)
-ENV PYTHONDONTWRITEBYTECODE=1
-
-# 5. Compile & Strip
+# 6. COMPILE CODE
 COPY . .
-# Cleanup existing pycache from local machine before compiling
-RUN find . -type d -name "__pycache__" -exec rm -rf {} +
-
-RUN NPROC=$(nproc) python3 compile.py build_ext --inplace && \
-    find ./src -name "*.so" -exec strip --strip-unneeded {} +
-
+RUN NPROC=$(nproc) python3 compile.py build_ext --inplace
 
 # --- STAGE 2: THE VAULT (PRODUCTION) ---
 FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
-
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# 1. Minimal Runtime Environment
-RUN apt-get update && apt-get install -y \
-    software-properties-common \
+RUN apt-get update && apt-get install -y software-properties-common curl \
     && add-apt-repository ppa:deadsnakes/ppa -y \
     && apt-get update && apt-get install -y \
     python3.12 libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. THE LIFT & SHIFT
+# Copy binaries and venv
+COPY --from=ollama_source /bin/ollama /usr/bin/ollama
+COPY --from=ollama_source /lib/ollama /usr/lib/ollama
+COPY --from=qdrant_source /qdrant/qdrant /usr/bin/qdrant
 COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# 3. Copy Compiled Binaries
 COPY --from=builder /build/src ./src
+COPY --from=builder /root/.ollama /root/.ollama
+COPY --from=builder /root/.cache /root/.cache
 
-# 4. 🛡️ THE FINAL PURGE (Total Stealth)
-RUN find ./src -name "__pycache__" -type d -exec rm -rf {} + && \
-    find ./src -name "*.py" ! -path "*/keovil_web/app.py" ! -name "__init__.py" -delete && \
-    find ./src -name "__init__.py" -exec truncate -s 0 {} +
+ENV PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH=/app \
+    OLLAMA_HOST=127.0.0.1:11434 \
+    QDRANT_HOST=localhost \
+    OLLAMA_KEEP_ALIVE=-1 \
+    CUDA_MODULE_LOADING=LAZY
 
-# 5. Performance Tweaks & Python Settings
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONPATH=/app
-ENV DOCLING_DEVICE=cuda
-ENV CUDA_MODULE_LOADING=LAZY
-
-EXPOSE 5000
-
-CMD ["python3", "src/keovil_web/app.py"]
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
