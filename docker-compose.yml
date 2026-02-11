@@ -1,8 +1,10 @@
 services:
   keovil:
-    image: kevilai/keovil:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: keovil-local:latest
     container_name: keovil_container
-    runtime: nvidia
     deploy:
       resources:
         reservations:
@@ -18,10 +20,9 @@ services:
       - APP_MODE=production
       - OLLAMA_KEEP_ALIVE=-1
       - OLLAMA_FLASH_ATTENTION=1
-      - OLLAMA_INTEL_GPU=false
       - CUDA_MODULE_LOADING=LAZY
     volumes:
-      # All volumes from your working command:
+      # These match your 'docker run' exactly
       - ${HOME}/.keovil:/root/.keovil
       - ${HOME}/.keovil_storage:/root/.keovil_storage
       - ${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage
