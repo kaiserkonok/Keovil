@@ -37,9 +37,9 @@ APP_MODE = os.getenv("APP_MODE", "development")
 
 # 2. Assign completely different Root Folders on your SSD
 if APP_MODE == "production":
-    host_root = Path.home() / ".kevil_krag_storage"
+    host_root = Path.home() / ".keovil_storage"
 else:
-    host_root = Path.home() / ".k_rag_storage"
+    host_root = Path.home() / ".keovil_storage_dev"
 
 # 3. Support Docker Portability
 STORAGE_STR = os.getenv("STORAGE_BASE", str(host_root))
@@ -52,6 +52,7 @@ SETTINGS_FILE = HOME_STORAGE / "settings.json"
 
 # Mode-specific chat history to prevent cross-talk
 CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
+print(f"Chat Database: {CHAT_DB}")
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -177,7 +178,7 @@ def is_node_authorized():
 # Chat History Database Initialization
 # ---------------------------------------------------------
 def init_chat_db():
-    conn = sqlite3.connect(CHAT_DB)
+    conn = sqlite3.connect(str(CHAT_DB))
     curr = conn.cursor()
     curr.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
@@ -412,7 +413,7 @@ def bootstrap():
             "master_key": key,
             "hwid": HWID,
             "product_slug": "keovil"
-        }, timeout=10)
+        })
 
         res_data = r.json()
 
@@ -428,7 +429,8 @@ def bootstrap():
                 "msg": res_data.get("msg", "Registry denied handshake.")
             }), 401
 
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
+        print(e)
         return jsonify({"status": "error", "msg": "FOUNDRY_OFFLINE: Could not reach Kevil.io"}), 500
     except Exception as e:
         return jsonify({"status": "error", "msg": f"SYSTEM_ERROR: {str(e)}"}), 500
