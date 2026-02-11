@@ -1,6 +1,6 @@
 # --- STAGE 0: BINARY SOURCES ---
 FROM ollama/ollama:0.5.7 AS ollama_source
-FROM qdrant/qdrant:v1.12.1 AS qdrant_source
+FROM qdrant/qdrant:v1.16.2 AS qdrant_source
 
 # --- STAGE 1: THE FORGE (BUILDER) ---
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
@@ -24,7 +24,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 COPY --from=ollama_source /bin/ollama /usr/bin/ollama
 
 # This line is now CACHED on your machine (1887s saved!)
-RUN nohup ollama serve & sleep 5 && ollama pull qwen2.5-coder:7b-instruct
+RUN nohup ollama serve > /dev/null 2>&1 & \
+    echo "Waiting for Ollama to ignite..." && \
+    while ! curl -s http://localhost:11434/api/tags > /dev/null; do sleep 1; done && \
+    ollama pull qwen2.5-coder:7b-instruct
 
 # This line is now CACHED on your machine (957s saved!)
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu124
@@ -55,7 +58,14 @@ RUN apt-get update && apt-get install -y software-properties-common curl \
 # Copy binaries and venv
 COPY --from=ollama_source /bin/ollama /usr/bin/ollama
 COPY --from=ollama_source /lib/ollama /usr/lib/ollama
-COPY --from=qdrant_source /qdrant/qdrant /usr/bin/qdrant
+COPY --from=qdrant_source /qdrant /qdrant
+
+# Setup Qdrant links and paths
+RUN ln -s /qdrant/qdrant /usr/bin/qdrant && \
+    ln -s /qdrant/static /app/static && \
+    mkdir -p /qdrant/storage
+
+# Copy from builder (Notice: No backslashes on the lines above these)
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=builder /build/src ./src
 COPY --from=builder /root/.ollama /root/.ollama
