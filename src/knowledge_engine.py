@@ -96,11 +96,11 @@ class CollegeRAG:
 
         # Define physical locations on your computer
         if self.mode == "production":
-            host_root = Path.home() / ".kevil_krag_storage"
-            self.collection_name = "kevil_krag"
+            host_root = Path.home() / ".keovil_storage"
+            self.collection_name = "keovil"
         else:
-            host_root = Path.home() / ".k_rag_storage"
-            self.collection_name = "krag_dev"
+            host_root = Path.home() / ".keovil_storage_dev"
+            self.collection_name = "keovil_dev"
 
         # Support Docker override, otherwise use the host_root determined above
         storage_env = os.getenv("STORAGE_BASE", str(host_root))
