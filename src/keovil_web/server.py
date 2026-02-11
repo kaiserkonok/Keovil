@@ -1,11 +1,11 @@
+from gevent import monkey
+monkey.patch_all()
+
 import torch
 def dummy_compile(fn=None, **kwargs):
     if fn is not None: return fn
     return lambda x: x
 torch.compile = dummy_compile
-
-from gevent import monkey
-monkey.patch_all()
 
 import os
 import sys
@@ -37,9 +37,9 @@ APP_MODE = os.getenv("APP_MODE", "development")
 
 # 2. Assign completely different Root Folders on your SSD
 if APP_MODE == "production":
-    host_root = Path.home() / ".kevil_krag_storage"
+    host_root = Path.home() / ".keovil_storage"
 else:
-    host_root = Path.home() / ".k_rag_storage"
+    host_root = Path.home() / ".keovil_storage_dev"
 
 # 3. Support Docker Portability
 STORAGE_STR = os.getenv("STORAGE_BASE", str(host_root))
@@ -52,6 +52,7 @@ SETTINGS_FILE = HOME_STORAGE / "settings.json"
 
 # Mode-specific chat history to prevent cross-talk
 CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
+print(f"Chat Database: {CHAT_DB}")
 
 # Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,59 +68,78 @@ print(f"📍 STORAGE PATH: {HOME_STORAGE}{Style.RESET_ALL}")
 # BOUNCER CONFIGURATION (Registry Handshake)
 # ---------------------------------------------------------
 FOUNDRY_LOCAL = "http://localhost:8000"
-FOUNDRY_PROD = "https://keovil.io"
+FOUNDRY_PROD = "https://kevil.io"
 
 # Toggle this based on where your Django is running
 REGISTRY_URL = FOUNDRY_LOCAL if APP_MODE == "development" else FOUNDRY_PROD
 AUTH_FILE = HOME_STORAGE / ".kevil_auth"
 
+print(f"Auth file path: {AUTH_FILE}")
+
 
 def get_chubby_hwid():
-    """
-    Generates a robust, cross-platform hardware signature
-    anchored to Motherboard UUID and CPU ID.
-    """
-    system = platform.system()
-    raw_id = ""
+    import subprocess
+    import hashlib
+    import platform
+    import os
 
+    system = platform.system()
+    components = []
+
+    # --- STEP 1: THE PRIMARY ANCHOR (Motherboard / System UUID) ---
     try:
         if system == "Windows":
-            # Get Motherboard UUID & CPU ID via WMIC
-            m_uuid = subprocess.check_output("wmic csproduct get uuid", shell=True).decode().split('\n')[1].strip()
-            cpu_id = subprocess.check_output("wmic cpu get processorid", shell=True).decode().split('\n')[1].strip()
-            raw_id = f"WIN-{m_uuid}-{cpu_id}"
+            # Stable BIOS UUID
+            cmd = "wmic csproduct get uuid"
+            m_uuid = subprocess.check_output(cmd, shell=True).decode().split('\n')[1].strip()
+            components.append(m_uuid)
         elif system == "Linux":
-            try:
-                # machine-id is the standard for non-root hardware identification
-                if os.path.exists("/etc/machine-id"):
-                    with open("/etc/machine-id", "r") as f:
-                        m_uuid = f.read().strip()
-                else:
-                    m_uuid = subprocess.check_output("cat /proc/sys/kernel/random/boot_id", shell=True).decode().strip()
-            except:
-                m_uuid = platform.node()
-            cpu_id = subprocess.check_output("grep -m 1 'model name' /proc/cpuinfo", shell=True).decode().strip()
-            raw_id = f"LINUX-{m_uuid}-{cpu_id}"
+            # In Docker, /sys/class/dmi is the gold standard if mapped, otherwise machine-id
+            if os.path.exists("/sys/class/dmi/id/product_uuid"):
+                with open("/sys/class/dmi/id/product_uuid", "r") as f:
+                    components.append(f.read().strip())
+            elif os.path.exists("/etc/machine-id"):
+                with open("/etc/machine-id", "r") as f:
+                    components.append(f.read().strip())
+            else:
+                components.append(platform.node()) # Last resort hostname
+        elif system == "Darwin":
+            cmd = "ioreg -d2 -c IOPlatformExpertDevice | awk -F\\\" '/IOPlatformUUID/{print $(NF-1)}'"
+            components.append(subprocess.check_output(cmd, shell=True).decode().strip())
+    except:
+        components.append("BASE-NODE")
 
-        elif system == "Darwin":  # macOS
-            # IOPlatformUUID is the most reliable anchor on Mac
-            m_uuid = subprocess.check_output(
-                "ioreg -d2 -c IOPlatformExpertDevice | awk -F\\\" '/IOPlatformUUID/{print $(NF-1)}'",
-                shell=True).decode().strip()
-            cpu_id = subprocess.check_output("sysctl -n machdep.cpu.brand_string", shell=True).decode().strip()
-            raw_id = f"MAC-{m_uuid}-{cpu_id}"
+    # --- STEP 2: THE SECONDARY ANCHOR (The 5060 Ti / Silicon Fingerprint) ---
+    try:
+        # GPU UUID is the best secondary anchor for an AI app
+        gpu_uuid = subprocess.check_output(
+            "nvidia-smi --query-gpu=uuid --format=csv,noheader",
+            shell=True, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        components.append(gpu_uuid)
+    except:
+        # Fallback to CPU ID if GPU is not visible (e.g., during container setup)
+        try:
+            if system == "Windows":
+                cpu = subprocess.check_output("wmic cpu get processorid", shell=True).decode().split('\n')[1].strip()
+                components.append(cpu)
+            else:
+                # Get CPU Model Name from /proc/cpuinfo
+                cpu = subprocess.check_output("grep -m 1 'model name' /proc/cpuinfo", shell=True).decode().strip()
+                components.append(cpu)
+        except:
+            components.append(platform.processor())
 
-        # Hash to 32-char hex for a clean, non-intrusive hardware token
-        return hashlib.sha256(raw_id.encode()).hexdigest()[:32]
-
-    except Exception:
-        # Emergency Fallback: If hardware tables are totally locked
-        fallback = f"{platform.node()}-{platform.machine()}-{platform.processor()}"
-        return hashlib.md5(fallback.encode()).hexdigest()
+    # --- STEP 3: HASHING ---
+    # We join with a unique separator and add your secret salt
+    raw_id = "|".join(components) + "KEV-SALT-99-PROD"
+    return hashlib.sha256(raw_id.encode()).hexdigest()[:32]
 
 
 # Final Hardware Identity
 HWID = get_chubby_hwid()
+
+print(f"Generated hardware id: {HWID}")
 
 # In-memory cache to prevent constant API pinging (Speed optimization)
 is_verified_session = False
@@ -158,7 +178,7 @@ def is_node_authorized():
 # Chat History Database Initialization
 # ---------------------------------------------------------
 def init_chat_db():
-    conn = sqlite3.connect(CHAT_DB)
+    conn = sqlite3.connect(str(CHAT_DB))
     curr = conn.cursor()
     curr.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
@@ -219,15 +239,15 @@ current_cfg = load_settings()
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
 # ---------------------------------------------------------
-# app.py is in src/rag_chat/app.py. We need to add 'src' to the path.
+# server.py is in src/keovil_web/server.py. We need to add 'src' to the path.
 src_root = Path(__file__).resolve().parent.parent
 
 if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
 
 try:
-    from rag_engine import CollegeRAG
-    from agents.sql_agent import StructuredDataAgent
+    from knowledge_engine import CollegeRAG
+    from agents.db_agent import StructuredDataAgent
     print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
 except ImportError as e:
     print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
@@ -260,6 +280,8 @@ def initialize_engines():
 
     # Dynamic URL: Docker vs Localhost
     OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
+
+    global rag, sql_system
 
     # 1. Double-check lock to prevent race conditions during boot
     with ENGINE_INIT_LOCK:
@@ -385,12 +407,13 @@ def bootstrap():
         return jsonify({"status": "error", "msg": "Master Key Required"}), 400
 
     try:
+        print(f"{Fore.MAGENTA}Registry URL: {REGISTRY_URL}")
         # Attempt to bond the Node to the Registry
         r = requests.post(f"{REGISTRY_URL}/api/verify/", json={
             "master_key": key,
             "hwid": HWID,
             "product_slug": "keovil"
-        }, timeout=10)
+        })
 
         res_data = r.json()
 
@@ -406,7 +429,8 @@ def bootstrap():
                 "msg": res_data.get("msg", "Registry denied handshake.")
             }), 401
 
-    except requests.exceptions.ConnectionError:
+    except requests.exceptions.ConnectionError as e:
+        print(e)
         return jsonify({"status": "error", "msg": "FOUNDRY_OFFLINE: Could not reach Kevil.io"}), 500
     except Exception as e:
         return jsonify({"status": "error", "msg": f"SYSTEM_ERROR: {str(e)}"}), 500
@@ -542,7 +566,7 @@ def api_chat():
     socketio.emit('system_status', {"is_busy": True, "rag": {"state": "processing"}})
 
     try:
-        ans = rag.ask(q, chat_history=rag_history, stream=False)
+        ans = rag.ask(q, chat_history=rag_history)
 
         if not session_id:
             title = q[:35] + "..." if len(q) > 35 else q

@@ -215,10 +215,10 @@ class StructuredDataAgent:
         self.mode = os.getenv("APP_MODE", "development")
 
         if self.mode == "production":
-            host_root = Path.home() / ".kevil_krag_storage"
+            host_root = Path.home() / ".keovil_storage"
             db_suffix = "prod"
         else:
-            host_root = Path.home() / ".k_rag_storage"
+            host_root = Path.home() / ".keovil_storage_dev"
             db_suffix = "dev"
 
         storage_env = os.getenv("STORAGE_BASE", str(host_root))
