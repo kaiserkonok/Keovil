@@ -188,6 +188,49 @@
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-deep); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+        /* Sidebar Delete Button */
+.session-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.delete-btn {
+    opacity: 0;
+    color: var(--input-num);
+    font-size: 18px;
+    padding: 0 8px;
+    transition: all 0.2s ease;
+    border-radius: 4px;
+}
+
+.session-item:hover .delete-btn {
+    opacity: 1;
+}
+
+.delete-btn:hover {
+    color: #ff7b72; /* Tokyo Night Red */
+    background: rgba(255, 123, 114, 0.1);
+}
+
+/* Copy Code Button for Cells */
+.copy-btn {
+    float: right;
+    background: #21262d;
+    border: 1px solid var(--border);
+    color: var(--input-num);
+    padding: 4px 8px;
+    font-size: 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Inter', sans-serif;
+}
+
+.copy-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
     </style>
 </head>
 <body>
@@ -207,8 +250,15 @@
 <div class="main-content">
     <div class="notebook-container" id="notebook">
         <div class="header-area">
-            <a href="/" class="brand-link">&lt;Structured Data Lab /&gt;</a>
-            <div id="session-status" style="font-family: 'Fira Code'; font-size: 12px; color: var(--input-num);">Stateless</div>
+            <div style="display: flex; flex-direction: column;">
+                <a href="/" class="brand-link">&lt;Keovil /&gt;</a>
+                <div id="session-status" style="font-family: 'Fira Code'; font-size: 11px; color: var(--input-num); margin-top: 5px;">Stateless Engine</div>
+            </div>
+            <div class="header-actions">
+                <button class="new-chat-btn" style="padding: 6px 12px; font-size: 12px;" onclick="deleteCurrentSession()">
+                    Clear Notebook
+                </button>
+            </div>
         </div>
     </div>
 
@@ -217,11 +267,38 @@
     </div>
 </div>
 
+<div id="customModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px); z-index:2000; align-items:center; justify-content:center;">
+    <div style="background:var(--cell-bg); border:1px solid var(--border); padding:30px; border-radius:12px; width:90%; max-width:400px; box-shadow:0 20px 50px rgba(0,0,0,0.5); text-align:center;">
+        <div style="color:var(--accent); font-family:'Fira Code'; font-size:14px; margin-bottom:15px; text-transform:uppercase; letter-spacing:1px;">System Alert</div>
+        <div style="font-size:16px; margin-bottom:25px; color:var(--text-main);" id="modalMessage">Delete this analysis session?</div>
+        <div style="display:flex; gap:10px; justify-content:center;">
+            <button onclick="closeModal(false)" style="background:transparent; border:1px solid var(--border); color:var(--input-num); padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; transition:0.2s;">Cancel</button>
+            <button onclick="closeModal(true)" style="background:#ff7b72; border:none; color:white; padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; font-weight:600; transition:0.2s;">Confirm Delete</button>
+        </div>
+    </div>
+</div>
+
 <script>
     const userInput = document.getElementById('userInput');
     let currentSessionId = null;
     const userId = localStorage.getItem('kevil_user_id') || 'anonymous_user';
     let cellCount = 1;
+
+    let modalResolve;
+
+    function showConfirm(message) {
+        document.getElementById('modalMessage').innerText = message;
+        document.getElementById('customModal').style.display = 'flex';
+        // Return a promise that will be resolved when the user clicks a button
+        return new Promise((resolve) => {
+            modalResolve = resolve;
+        });
+    }
+
+    function closeModal(result) {
+        document.getElementById('customModal').style.display = 'none';
+        if (modalResolve) modalResolve(result);
+    }
 
     const md = window.markdownit({
         html: true,
@@ -300,14 +377,21 @@
             const response = await fetch(`/api/chat/sessions?type=sql`, { headers: { 'X-User-ID': userId } });
             const sessions = await response.json();
             list.innerHTML = '';
+
             sessions.forEach(s => {
                 const div = document.createElement('div');
+                // Maintain the active state styling
                 div.className = `session-item ${currentSessionId == s.id ? 'active' : ''}`;
-                div.innerText = s.title;
                 div.onclick = () => loadHistory(s.id);
+
+                // The "×" button uses the deleteSession function we just wrote
+                div.innerHTML = `
+                    <span style="flex-grow:1; overflow:hidden; text-overflow:ellipsis;">${s.title}</span>
+                    <span class="delete-btn" onclick="deleteSession('${s.id}', event)">×</span>
+                `;
                 list.appendChild(div);
             });
-        } catch (e) { console.error(e); }
+        } catch (e) { console.error("Could not refresh sessions:", e); }
     }
 
     async function loadHistory(id) {
@@ -365,6 +449,45 @@
         document.getElementById('session-status').innerText = "Stateless";
         loadSessions();
         userInput.focus();
+    }
+
+    async function deleteSession(id, event) {
+        if (event) event.stopPropagation();
+
+        // Use our sexy new modal instead of the poor window.confirm
+        const confirmed = await showConfirm("Are you sure you want to permanently delete this analysis session?");
+        if (!confirmed) return;
+
+        try {
+            const response = await fetch('/api/chat/sessions/delete', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-ID': userId
+                },
+                body: JSON.stringify({ session_id: id })
+            });
+
+            const data = await response.json();
+            if (data.ok) {
+                if (currentSessionId === id) {
+                    startNewChat();
+                }
+                loadSessions();
+            }
+        } catch (e) {
+            console.error("Error during deletion:", e);
+        }
+}
+
+    // Optional: Function for a "Clear All" button in the header if you want one
+    async function deleteCurrentSession() {
+        if (currentSessionId) {
+            await deleteSession(currentSessionId);
+        } else {
+            // Just a UI reset if it's a fresh, unsaved session
+            startNewChat();
+        }
     }
 
     window.onload = loadSessions;
