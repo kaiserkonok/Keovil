@@ -39,8 +39,6 @@ class SQLQueryAgent:
         self.llm = OllamaLLM(
             model=self.model_name,
             temperature=0,
-            num_ctx=16384,
-            # Ensuring fast response by keeping the model focused
         )
 
         # Persistence of extensions in the specific storage folder
@@ -49,7 +47,45 @@ class SQLQueryAgent:
             # Auto-installing inside the isolated folder
             con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
 
-    def ask(self, query: str):
+    def ask(self, query: str, chat_history: list = None):
+        """
+        History-aware SQL Agent.
+        chat_history: list of {'role': 'user'|'assistant', 'content': str}
+        """
+        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+
+        # --- STEP 0: CONTEXTUALIZATION (STANDALONE QUERY GENERATION) ---
+        # This prevents follow-up questions from breaking the SQL generator.
+        formatted_history = []
+        if chat_history:
+            for msg in chat_history[-10:]:  # Last 10 messages for context
+                if msg['role'] == 'user':
+                    formatted_history.append(HumanMessage(content=msg['content']))
+                else:
+                    # Strip the heavy HTML table data from history to keep LLM focused
+                    clean_content = msg['content'].split('### 📊 Data Records')[0].strip()
+                    formatted_history.append(AIMessage(content=clean_content))
+
+        if formatted_history:
+            context_prompt = ChatPromptTemplate.from_messages([
+                ("system",
+                 "You are a query refiner. Given the chat history and a follow-up question, rephrase the question into a STANDALONE query that includes all necessary context. Output ONLY the rephrased question."),
+                MessagesPlaceholder(variable_name="history"),
+                ("human", "{input}")
+            ])
+            try:
+                standalone_query = (context_prompt | self.llm).invoke({
+                    "history": formatted_history,
+                    "input": query
+                }).strip()
+                console.print(f"[dim cyan]Refined Query:[/dim cyan] [italic]{standalone_query}[/italic]")
+            except Exception as e:
+                standalone_query = query
+        else:
+            standalone_query = query
+
+        # --- DATABASE EXECUTION ---
         with duckdb.connect(self.db_path) as con:
             con.execute(f"SET extension_directory = '{self.ext_dir}';")
             con.execute("LOAD excel; LOAD spatial; LOAD sqlite;")
@@ -62,28 +98,23 @@ class SQLQueryAgent:
             all_table_names = [t[0] for t in tables_raw]
 
             # --- STEP A: IDENTIFY RELEVANT TABLES ---
+            # We use the standalone_query here for better routing accuracy
             router_prompt = (
                 "You are a database router. Given these tables, identify which are needed to answer the question.\n"
                 f"TABLES: {', '.join(all_table_names)}\n"
-                f"USER QUESTION: {query}\n"
+                f"USER QUESTION: {standalone_query}\n"
                 "Output ONLY the table names as a comma-separated list. If none, say NONE."
             )
 
             router_output = self.llm.invoke(router_prompt).strip()
 
-            # --- FIX STARTS HERE ---
-            # This finds all words/names in the output and ignores junk like "Sure!" or "```"
             found_words = re.findall(r'\b\w+\b', router_output)
             relevant_names = [name for name in found_words if name in all_table_names]
-            # --- FIX ENDS HERE ---
 
-            print(relevant_names)
-
-            # Fallback: If router fails, give the first 3 tables to prevent total failure
             if not relevant_names:
-                relevant_names = all_table_names
+                relevant_names = all_table_names[:3]
 
-            # --- STEP B: GRAB SPECIFIC SCHEMAS (THE FIX) ---
+            # --- STEP B: GRAB SPECIFIC SCHEMAS ---
             focused_schema = []
             for t_name in relevant_names:
                 cols = con.execute(f"DESCRIBE {t_name}").fetchall()
@@ -91,8 +122,6 @@ class SQLQueryAgent:
                 focused_schema.append(f"TABLE: {t_name}\n      {col_info}")
 
             schema_context = "\n\n".join(focused_schema)
-
-            print(schema_context)
 
             # --- STEP C: GENERATE SQL WITH FOCUSED CONTEXT ---
             system_context = (
@@ -107,7 +136,8 @@ class SQLQueryAgent:
 
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {query}")
+                # We provide the original query context but emphasize the standalone_query intent
+                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {standalone_query}")
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -123,10 +153,9 @@ class SQLQueryAgent:
                 console.print(
                     Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
 
-                # 3. Execution (The World-Class Batch Update)
+                # 3. Execution (Running on your RTX 5060 Ti via DuckDB)
                 print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
 
-                # Split SQL by semicolon, filter out empty strings
                 sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]
 
                 all_results = []
@@ -135,25 +164,22 @@ class SQLQueryAgent:
                 for i, stmt in enumerate(sql_statements):
                     res_df = con.execute(stmt).df()
 
-                    # Store a preview for the Voice Agent
-                    # We use a key like 'Table_N' or try to parse the table name from the SQL
                     table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
                     tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
 
                     all_results.append({
                         "source": tag,
                         "rows": len(res_df),
-                        "data": res_df.head(5).to_dict()  # Small preview per statement
+                        "data": res_df.head(5).to_dict()
                     })
 
-                    # Build the HTML output for the UI
                     table_md = res_df.to_markdown(index=False)
                     combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
 
                 # 4. Stage 2: The "Voice" Synthesis
-                # We send the aggregate results to the voice
                 voice_prompt = (
                     f"User Query: {query}\n"
+                    f"Refined Intent: {standalone_query}\n"
                     f"Context/Logic: {thought_process}\n"
                     f"Execution Results: {all_results}\n\n"
                     "As a Senior Data Analyst, interpret the multiple result sets provided to answer the User Query. "
@@ -404,5 +430,5 @@ class StructuredDataAgent:
         self.observer.start()
         console.print(Panel(f"Watching: {self.watch_dir}", title="Watcher Active", border_style="yellow"))
 
-    def query(self, text):
-        return self.agent.ask(text)
+    def query(self, text, chat_history=None):
+        return self.agent.ask(text, chat_history)

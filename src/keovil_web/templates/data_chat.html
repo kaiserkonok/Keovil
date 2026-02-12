@@ -266,6 +266,12 @@
 
 <script>
     const userInput = document.getElementById('userInput');
+
+    // --- NEW: SESSION & USER TRACKING ---
+    let currentSessionId = null;
+    const userId = localStorage.getItem('kevil_user_id') || 'anonymous_user';
+    // ------------------------------------
+
     const md = window.markdownit({
         html: true,
         highlight: function (str, lang) {
@@ -278,13 +284,11 @@
 
     let cellCount = 1;
 
-    // REPLACE BOTH handleKey FUNCTIONS WITH THIS ONE:
     async function handleKey(e) {
         const input = document.getElementById('userInput');
-        // Don't send if: 1. Not Enter, 2. Empty, 3. Input is disabled (System Busy)
         if (e.key === 'Enter' && input.value.trim() !== '' && !input.disabled) {
             const query = input.value;
-            input.value = ''; // Clear immediately for snappy feel
+            input.value = '';
             await addCell(query);
         }
     }
@@ -293,7 +297,6 @@
         const container = document.getElementById('notebook');
         const currentId = cellCount++;
 
-        // 1. LOCAL LOCK: This only happens in THIS browser tab
         userInput.disabled = true;
 
         const cellHtml = `
@@ -307,16 +310,30 @@
                 </div>
             </div>`;
         container.insertAdjacentHTML('beforeend', cellHtml);
-        document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        const cellElement = document.getElementById(`cell-${currentId}`);
+        cellElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
 
         try {
             const response = await fetch('/api/sql_query', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query })
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-User-ID': userId // Required for the backend Gatekeeper
+                },
+                body: JSON.stringify({
+                    query: query,
+                    session_id: currentSessionId // Send the current context
+                })
             });
 
             const data = await response.json();
+
+            // --- NEW: STORE THE SESSION ID ---
+            if (data.session_id) {
+                currentSessionId = data.session_id;
+            }
+            // ---------------------------------
 
             const outputDiv = document.getElementById(`out-${currentId}`);
             outputDiv.innerHTML = `
@@ -329,11 +346,11 @@
         } catch (err) {
             document.getElementById(`out-${currentId}`).innerHTML = `<div style="color: #ff7b72;">Error: ${err.message}</div>`;
         } finally {
-            // 2. LOCAL UNLOCK: Re-enable the box for this user only
             userInput.disabled = false;
             userInput.focus();
         }
     }
+
     // Initialize Socket.IO
     const socket = io();
 
@@ -346,61 +363,51 @@
         userInput.disabled = true;
     });
 
-    // LISTEN FOR BROADCASTS
-socket.on('system_status', function(data) {
-    const card = document.getElementById('ingest-status-card');
-    const dot = document.getElementById('status-dot');
-    const bar = document.getElementById('ingest-progress-bar');
-    const title = document.getElementById('status-title');
-    const detail = document.getElementById('current-status-detail');
+    socket.on('system_status', function(data) {
+        const card = document.getElementById('ingest-status-card');
+        const dot = document.getElementById('status-dot');
+        const bar = document.getElementById('ingest-progress-bar');
+        const title = document.getElementById('status-title');
+        const detail = document.getElementById('current-status-detail');
 
-    // These are GLOBAL events (Indexing a CSV, Vectorizing PDFs)
-    const isSqlSync = data.sql_syncing === true;
-    const isRagSync = data.rag && data.rag.state === 'processing';
+        const isSqlSync = data.sql_syncing === true;
+        const isRagSync = data.rag && data.rag.state === 'processing';
 
-    // 1. THE STATUS CARD (Global Animations)
-    if (isSqlSync || isRagSync) {
-        card.style.display = 'block';
-        card.style.opacity = '1';
+        if (isSqlSync || isRagSync) {
+            card.style.display = 'block';
+            card.style.opacity = '1';
 
-        if (isSqlSync) {
-            dot.className = 'status-indicator pulse-amber';
-            title.innerText = "SQL RE-INDEXING";
-            detail.innerText = "RTX 5060 Ti is analyzing tables...";
-            bar.style.width = "40%";
-        } else {
-            dot.className = 'status-indicator pulse-green';
-            title.innerText = "VECTORIZING DOCUMENTS";
-            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
-            if (data.rag.total_files > 0) {
-                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
-                bar.style.width = pc + "%";
+            if (isSqlSync) {
+                dot.className = 'status-indicator pulse-amber';
+                title.innerText = "SQL RE-INDEXING";
+                detail.innerText = "RTX 5060 Ti is analyzing tables...";
+                bar.style.width = "40%";
             } else {
-                bar.style.width = "100%";
-            }
-        }
-
-        // DISABLE INPUT because the whole DB is changing
-        userInput.disabled = true;
-        userInput.placeholder = "Database is updating...";
-
-    } else {
-        // Smooth fade out when idle
-        card.style.opacity = '0';
-        setTimeout(() => {
-            if(card.style.opacity === '0') {
-                card.style.display = 'none';
-
-                // ONLY re-enable if we aren't currently waiting for a private Query response
-                // (This is the magic part - it won't step on addCell's toes)
-                if (!document.querySelector('.thinking')) {
-                    userInput.disabled = false;
-                    userInput.placeholder = "Ask your data...";
+                dot.className = 'status-indicator pulse-green';
+                title.innerText = "VECTORIZING DOCUMENTS";
+                detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
+                if (data.rag.total_files > 0) {
+                    let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
+                    bar.style.width = pc + "%";
+                } else {
+                    bar.style.width = "100%";
                 }
             }
-        }, 300);
-    }
-});
+            userInput.disabled = true;
+            userInput.placeholder = "Database is updating...";
+        } else {
+            card.style.opacity = '0';
+            setTimeout(() => {
+                if(card.style.opacity === '0') {
+                    card.style.display = 'none';
+                    if (!document.querySelector('.thinking')) {
+                        userInput.disabled = false;
+                        userInput.placeholder = "Ask your data...";
+                    }
+                }
+            }, 300);
+        }
+    });
 </script>
 
 </body>

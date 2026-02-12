@@ -180,14 +180,31 @@ def is_node_authorized():
 def init_chat_db():
     conn = sqlite3.connect(str(CHAT_DB))
     curr = conn.cursor()
+
+    # 1. Create the table with the new column (for brand new setups)
     curr.execute('''
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             user_id TEXT,
             title TEXT, 
+            session_type TEXT DEFAULT 'rag', 
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+
+    # 2. MIGRATION: Check if session_type column exists in an existing DB
+    curr.execute("PRAGMA table_info(sessions)")
+    columns = [column[1] for column in curr.fetchall()]
+
+    if 'session_type' not in columns:
+        print(f"{Fore.YELLOW}🛠️ Migrating database: Adding 'session_type' column...")
+        curr.execute("ALTER TABLE sessions ADD COLUMN session_type TEXT DEFAULT 'rag'")
+        # Ensure any NULLs from the alter table are set to 'rag'
+        curr.execute("UPDATE sessions SET session_type = 'rag' WHERE session_type IS NULL")
+        conn.commit()
+        print(f"{Fore.GREEN}✅ Migration complete.")
+
+    # 3. Create messages table as usual
     curr.execute('''
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
@@ -487,12 +504,17 @@ def data_lab():
 @app.route("/api/chat/sessions", methods=["GET"])
 def manage_sessions():
     uid = request.headers.get("X-User-ID")
+    # Get the type from query params (e.g., /api/chat/sessions?type=sql)
+    stype = request.args.get("type", "rag")
+
     if not uid:
         return jsonify([])
+
     conn = sqlite3.connect(CHAT_DB)
+    # Added WHERE session_type = ?
     cur = conn.execute(
-        "SELECT id, title FROM sessions WHERE user_id = ? ORDER BY created_at DESC",
-        (uid,)
+        "SELECT id, title FROM sessions WHERE user_id = ? AND session_type = ? ORDER BY created_at DESC",
+        (uid, stype)
     )
     sessions = [{"id": r[0], "title": r[1]} for r in cur.fetchall()]
     conn.close()
@@ -570,7 +592,11 @@ def api_chat():
 
         if not session_id:
             title = q[:35] + "..." if len(q) > 35 else q
-            cur = conn.execute("INSERT INTO sessions (user_id, title) VALUES (?, ?)", (uid, title))
+            # UPDATE THE INSERT BELOW:
+            cur = conn.execute(
+                "INSERT INTO sessions (user_id, title, session_type) VALUES (?, ?, 'rag')",
+                (uid, title)
+            )
             session_id = cur.lastrowid
 
         conn.execute("INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)", (session_id, q))
@@ -767,21 +793,78 @@ def list_files_tree():
 
 @app.route("/api/sql_query", methods=["POST"])
 def api_sql_query():
-    # We don't need the sid here anymore for status!
     data = request.json or {}
-    query = data.get("query", "")
+    query = (data.get("query") or "").strip()
+    session_id = data.get("session_id")
+    uid = request.headers.get("X-User-ID")
 
-    if not query:
-        return jsonify({"output": "Please enter a query."}), 400
+    if not query or not uid:
+        return jsonify({"output": "Missing query or user ID."}), 400
 
+    # 1. Fetch history from the shared database (Filtering for SQL context only)
+    sql_history = []
+    conn = sqlite3.connect(CHAT_DB)
+    if session_id:
+        try:
+            # We fetch the last 10 messages to keep the context window efficient
+            cur = conn.execute(
+                """SELECT role, content
+                   FROM (SELECT role, content, timestamp
+                         FROM messages
+                         WHERE session_id = ?
+                         ORDER BY timestamp DESC LIMIT 10)
+                   ORDER BY timestamp ASC""",
+                (session_id,)
+            )
+            rows = cur.fetchall()
+            # Format as a list of dicts for the LangChain-based SQL agent
+            sql_history = [{"role": r[0], "content": r[1]} for r in rows]
+        except Exception as e:
+            print(f"{Fore.RED}⚠️ SQL History Fetch Error: {e}{Style.RESET_ALL}")
+
+    # 2. Execute the Query through the Agent
     try:
-        # Just crunch the numbers and return them
-        response = sql_system.query(query) if sql_system else "System Offline"
+        if sql_system:
+            # Pass both query and history. The agent uses this to create a 'standalone_query'
+            response = sql_system.query(query, chat_history=sql_history)
+        else:
+            response = "SQL System Offline"
     except Exception as e:
-        response = f"Error: {str(e)}"
+        traceback.print_exc()
+        response = f"I ran into an issue: {str(e)}"
 
-    # NO SOCKET EMIT HERE. Keep the "Megaphone" silent.
-    return jsonify({"output": response})
+    # 3. Handle Session Persistence
+    try:
+        # Create a new session if one doesn't exist
+        if not session_id:
+            title = query[:35] + "..." if len(query) > 35 else query
+            # CRITICAL: We tag this session as 'sql' to keep it isolated from RAG
+            cur = conn.execute(
+                "INSERT INTO sessions (user_id, title, session_type) VALUES (?, ?, 'sql')",
+                (uid, title)
+            )
+            session_id = cur.lastrowid
+
+        # Save the current exchange to the database
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES (?, 'user', ?)",
+            (session_id, query)
+        )
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content) VALUES (?, 'assistant', ?)",
+            (session_id, response)
+        )
+        conn.commit()
+    except Exception as e:
+        print(f"{Fore.RED}⚠️ Database Save Error: {e}{Style.RESET_ALL}")
+    finally:
+        conn.close()
+
+    # Return response and session_id so the frontend can track the thread
+    return jsonify({
+        "output": response,
+        "session_id": session_id
+    })
 
 
 # ---------------------------------------------------------
