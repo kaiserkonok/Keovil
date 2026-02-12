@@ -3,7 +3,7 @@ import sys
 from colorama import Fore, Style
 
 # 1. 🛡️ FIX: Absolute Root Discovery
-# This finds the 'K_RAG' (root) directory regardless of where you call it from
+# This finds the 'Keovil' (root) directory regardless of where you call it from
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../'))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
