@@ -77,7 +77,7 @@ class ColBERTEngine:
             document_length=8192
         )
 
-        print(f"{Fore.MAGENTA} Device checking from colbert: {"GPU" if torch.cuda.is_available() else "CPU"}")
+        print(f"{Fore.MAGENTA} Device checking from colbert: {'GPU' if torch.cuda.is_available() else 'CPU'}")
 
         # Critical: Set up the specific isolated collection
         self._ensure_collection()
