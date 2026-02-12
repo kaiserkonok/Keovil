@@ -18,32 +18,91 @@
             --accent: #58a6ff;
             --text-main: #e6edf3;
             --input-num: #8b949e;
+            --sidebar-width: 280px;
         }
 
         body {
             background-color: var(--bg-deep);
             color: var(--text-main);
             font-family: 'Inter', sans-serif;
-            margin: 0; padding: 20px;
-            scroll-behavior: smooth;
+            margin: 0; padding: 0;
+            display: flex;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        /* --- SIDEBAR DESIGN --- */
+        .sidebar {
+            width: var(--sidebar-width);
+            min-width: var(--sidebar-width);
+            background: #0d1117;
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            z-index: 1001;
+        }
+
+        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); }
+
+        .new-chat-btn {
+            width: 100%;
+            background: #21262d;
+            border: 1px solid var(--border);
+            color: var(--text-main);
+            padding: 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex; align-items: center; justify-content: center; gap: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .new-chat-btn:hover {
+            background: #30363d;
+            border-color: var(--accent);
+            box-shadow: 0 0 15px rgba(88, 166, 255, 0.1);
+        }
+
+        .session-container { flex-grow: 1; overflow-y: auto; padding: 15px; }
+        .sidebar-label {
+            font-family: 'Fira Code', monospace;
+            font-size: 11px; color: var(--input-num);
+            text-transform: uppercase; margin: 10px 5px; letter-spacing: 1px;
+        }
+
+        .session-item {
+            padding: 10px 12px; margin-bottom: 4px; border-radius: 6px;
+            cursor: pointer; font-size: 13px; color: var(--input-num);
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            transition: 0.2s; border: 1px solid transparent;
+        }
+
+        .session-item:hover { background: #161b22; color: var(--accent); }
+        .session-item.active {
+            background: #1f242c; color: var(--accent);
+            border-color: var(--border); font-weight: 500;
+        }
+
+        /* --- NOTEBOOK DESIGN --- */
+        .main-content {
+            flex-grow: 1; overflow-y: auto;
+            position: relative; display: flex; flex-direction: column; align-items: center;
         }
 
         .notebook-container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding-bottom: 200px;
+            width: 95%; max-width: 1000px;
+            padding: 40px 20px 200px 20px;
         }
 
         .header-area {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid var(--border);
-            margin-bottom: 30px;
-            padding-bottom: 15px;
+            display: flex; justify-content: space-between; align-items: center;
+            border-bottom: 1px solid var(--border); margin-bottom: 30px; padding-bottom: 15px;
         }
 
-        /* Integrated Logo/Home Button */
+        /* 2. THE BRAND LINK EFFECT (Restored) */
         .brand-link {
             color: var(--accent);
             font-weight: 300;
@@ -53,219 +112,117 @@
             transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
             letter-spacing: -0.5px;
             cursor: pointer;
-            outline: none;
         }
-
         .brand-link:hover {
             letter-spacing: 1.5px;
             text-shadow: 0 0 15px rgba(88, 166, 255, 0.7);
             color: #fff;
         }
 
-        .brand-link:active {
-            transform: scale(0.96);
-        }
-
-        /* Jupyter Cell Structure */
-        .cell {
-            display: flex;
-            margin-bottom: 30px;
-            animation: fadeIn 0.4s ease;
-        }
-
+        .cell { display: flex; margin-bottom: 30px; animation: fadeIn 0.4s ease; }
         .cell-label {
-            min-width: 80px;
-            font-family: 'Fira Code', monospace;
-            font-size: 14px;
-            color: var(--input-num);
-            padding-top: 10px;
-            text-align: right;
-            padding-right: 15px;
+            min-width: 75px; font-family: 'Fira Code', monospace;
+            font-size: 13px; color: var(--input-num);
+            padding-top: 12px; text-align: right; padding-right: 15px;
         }
+        .cell-content { flex-grow: 1; max-width: calc(100% - 90px); }
 
-        .cell-content { flex-grow: 1; position: relative; max-width: calc(100% - 95px); }
-
-        /* Input Area */
         .input-area {
-            background: #0d1117;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 12px;
-            font-family: 'Fira Code', monospace;
+            background: #0d1117; border: 1px solid var(--border);
+            border-radius: 6px; padding: 14px;
+            font-family: 'Fira Code', monospace; font-size: 14px; color: #d2a8ff;
             box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-            font-size: 14px;
-            color: #d2a8ff;
         }
 
-        /* Output Area */
-        .output-area {
-            margin-top: 15px;
-            font-size: 15px;
-            line-height: 1.6;
-            overflow-x: auto;
-        }
+        .output-area { margin-top: 15px; font-size: 15px; line-height: 1.6; }
 
-        /* Dataframe Tables Style */
-        table {
-            border-collapse: collapse;
-            width: 100%;
-            background: #0d1117;
-            border: 1px solid var(--border);
-            margin: 15px 0;
+        /* 3. THE TABLE EFFECT (Restored) */
+        .df-scroll-container {
+            max-height: 450px; overflow: auto;
+            border: 1px solid var(--border); border-radius: 6px;
+            margin-top: 15px; background: #0d1117;
         }
-        th {
-            background: #21262d;
-            color: var(--accent);
-            padding: 12px;
-            font-size: 13px;
-            text-align: left;
-            border: 1px solid var(--border);
+        .df-scroll-container table { border-collapse: collapse; width: 100%; margin: 0; }
+        .df-scroll-container th {
+            position: sticky; top: 0; z-index: 10;
+            background: #21262d; color: var(--accent);
+            padding: 12px; font-size: 13px; text-align: left;
+            border-bottom: 2px solid var(--accent);
         }
-        td {
-            padding: 10px 12px;
-            border: 1px solid var(--border);
-            font-family: 'Inter', sans-serif;
-            font-size: 14px;
-        }
-        tr:nth-child(even) { background: #161b22; }
-        tr:hover { background: #1f242c; }
+        .df-scroll-container td { padding: 10px 12px; border: 1px solid var(--border); font-size: 14px; }
+        .df-scroll-container tr:nth-child(even) { background: #161b22; }
+        .df-scroll-container tr:hover { background: #1f242c; }
 
-        /* Chat Input Bar */
+        /* --- QUERY BAR & INPUT GLOW --- */
         .query-bar {
-            position: fixed;
-            bottom: 0; left: 0; width: 100%;
-            background: rgba(10, 12, 16, 0.9);
-            padding: 25px 0;
-            border-top: 1px solid var(--border);
-            backdrop-filter: blur(12px);
-            z-index: 1000;
+            position: fixed; bottom: 0; right: 0;
+            width: calc(100% - var(--sidebar-width));
+            background: rgba(10, 12, 16, 0.95);
+            padding: 25px 0; border-top: 1px solid var(--border);
+            backdrop-filter: blur(12px); z-index: 1000;
+            transition: width 0.3s ease;
         }
 
         .query-input {
-            width: 85%; max-width: 900px;
+            width: 90%; max-width: 850px;
             display: block; margin: 0 auto;
-            background: #010409;
-            border: 1px solid var(--border);
-            color: white;
-            padding: 16px 24px;
-            border-radius: 12px;
-            outline: none;
-            font-size: 16px;
-            transition: all 0.3s ease;
+            background: #010409; border: 1px solid var(--border);
+            color: white; padding: 16px 24px; border-radius: 12px;
+            outline: none; font-size: 16px; transition: all 0.3s ease;
         }
 
+        /* 1. THE BLUISH OUTLINE EFFECT (Restored) */
         .query-input:focus {
             border-color: var(--accent);
-            box-shadow: 0 0 20px rgba(88, 166, 255, 0.1);
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.15);
         }
 
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @media (max-width: 900px) {
+            .sidebar { display: none; }
+            .query-bar { width: 100%; }
+        }
 
-        /* Custom Scrollbar */
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
+
+        /* Scrollbar Styling */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: var(--bg-deep); }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
-
-
-        /* Add this inside your <style> block */
-        .df-scroll-container {
-            max-height: 400px; /* Limits height exactly like Jupyter */
-            overflow-y: auto;
-            overflow-x: auto;
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            margin-top: 15px;
-            background: #0d1117;
-        }
-
-        /* Make sure the table inside doesn't have top margins that break the look */
-        .df-scroll-container table {
-            margin: 0;
-            border: none;
-            width: 100%;
-        }
-
-        /* Keep the headers sticky so you see them while scrolling */
-        .df-scroll-container th {
-            position: sticky;
-            top: 0;
-            z-index: 10;
-            background: #21262d; /* Ensure this is solid! */
-            border-bottom: 2px solid var(--accent);
-        }
-
-        @keyframes spin { to { transform: rotate(360deg); } }
-        @keyframes slideUp { to { transform: translateY(0); opacity: 1; } }
-        .status-indicator {
-            width: 10px;
-            height: 10px;
-            border-radius: 50%;
-            background: var(--accent);
-        }
-
-        .pulse-amber {
-            background: #e3b341;
-            box-shadow: 0 0 10px #e3b341;
-            animation: status-pulse 1.5s infinite;
-        }
-
-        .pulse-green {
-            background: #3fb950;
-            box-shadow: 0 0 10px #3fb950;
-            animation: status-pulse 1s infinite;
-        }
-
-        @keyframes status-pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.3); opacity: 0.5; }
-            100% { transform: scale(1); opacity: 1; }
-        }
-
-        /* Keep original colors, just add a subtle pulse */
-        .query-input:disabled {
-            cursor: wait; /* Shows the loading spinner cursor on hover */
-            border-color: var(--accent); /* Keep the accent color visible */
-            animation: borderPulse 2s infinite ease-in-out;
-            opacity: 0.8; /* Only a very slight fade */
-        }
-
-        @keyframes borderPulse {
-            0% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
-            50% { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); }
-            100% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
-        }
     </style>
 </head>
 <body>
 
-<div id="ingest-status-card" style="display:none; position:fixed; bottom:100px; right:30px; width:320px; background: rgba(22, 27, 34, 0.8); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); z-index: 9999; transition: all 0.3s ease;">
-    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
-        <div id="status-dot" class="status-indicator"></div>
-        <span id="status-title" style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); font-weight: 500;">ENGINE ACTIVE</span>
-    </div>
-    <div style="height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin: 8px 0;">
-        <div id="ingest-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease;"></div>
-    </div>
-    <span id="current-status-detail" style="font-size: 11px; font-family: 'Fira Code', monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">Initializing...</span>
-</div>
-
-<div class="notebook-container" id="notebook">
-    <div class="header-area">
-        <a href="/" class="brand-link" title="Return to Dashboard">
-            &lt;Structured Data Lab /&gt;
-        </a>
-        <button onclick="location.reload()" style="background:none; border: 1px solid var(--border); color: var(--input-num); padding: 5px 15px; border-radius: 5px; cursor: pointer; font-family: 'Fira Code'; font-size: 12px; transition: 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">
-            Clear Session
+<div class="sidebar">
+    <div class="sidebar-header">
+        <button class="new-chat-btn" onclick="startNewChat()">
+            <span>+</span> New Analysis
         </button>
     </div>
+    <div class="session-container">
+        <div class="sidebar-label">Recent History</div>
+        <div id="session-list"></div>
+    </div>
 </div>
 
-<div class="query-bar">
-    <input type="text" class="query-input" id="userInput" placeholder="Ask your data..." onkeypress="handleKey(event)" autofocus>
+<div class="main-content">
+    <div class="notebook-container" id="notebook">
+        <div class="header-area">
+            <a href="/" class="brand-link">&lt;Structured Data Lab /&gt;</a>
+            <div id="session-status" style="font-family: 'Fira Code'; font-size: 12px; color: var(--input-num);">Stateless</div>
+        </div>
+    </div>
+
+    <div class="query-bar">
+        <input type="text" class="query-input" id="userInput" placeholder="Ask your data..." onkeypress="handleKey(event)" autofocus>
+    </div>
 </div>
 
 <script>
     const userInput = document.getElementById('userInput');
+    let currentSessionId = null;
+    const userId = localStorage.getItem('kevil_user_id') || 'anonymous_user';
+    let cellCount = 1;
+
     const md = window.markdownit({
         html: true,
         highlight: function (str, lang) {
@@ -276,24 +233,18 @@
         }
     });
 
-    let cellCount = 1;
-
-    // REPLACE BOTH handleKey FUNCTIONS WITH THIS ONE:
     async function handleKey(e) {
-        const input = document.getElementById('userInput');
-        // Don't send if: 1. Not Enter, 2. Empty, 3. Input is disabled (System Busy)
-        if (e.key === 'Enter' && input.value.trim() !== '' && !input.disabled) {
-            const query = input.value;
-            input.value = ''; // Clear immediately for snappy feel
+        if (e.key === 'Enter' && userInput.value.trim() !== '' && !userInput.disabled) {
+            const query = userInput.value;
+            userInput.value = '';
             await addCell(query);
         }
     }
 
     async function addCell(query) {
         const container = document.getElementById('notebook');
+        const mainContent = document.querySelector('.main-content'); // Target the scrollable wrapper
         const currentId = cellCount++;
-
-        // 1. LOCAL LOCK: This only happens in THIS browser tab
         userInput.disabled = true;
 
         const cellHtml = `
@@ -302,106 +253,121 @@
                 <div class="cell-content">
                     <div class="input-area">${query}</div>
                     <div class="output-area" id="out-${currentId}">
-                        <span class="thinking" style="color: var(--accent); font-family: 'Fira Code'; font-size: 13px;">Executing Database Logic...</span>
+                        <span style="color:var(--accent); font-family:'Fira Code'; font-size:13px;">Executing Engine...</span>
                     </div>
                 </div>
             </div>`;
+
         container.insertAdjacentHTML('beforeend', cellHtml);
-        document.getElementById(`cell-${currentId}`).scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+        // Smooth scroll to the bottom of the main-content
+        mainContent.scrollTo({ top: mainContent.scrollHeight, behavior: 'smooth' });
 
         try {
             const response = await fetch('/api/sql_query', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: query })
+                headers: { 'Content-Type': 'application/json', 'X-User-ID': userId },
+                body: JSON.stringify({ query: query, session_id: currentSessionId })
             });
-
             const data = await response.json();
 
-            const outputDiv = document.getElementById(`out-${currentId}`);
-            outputDiv.innerHTML = `
-                <div style="color: var(--input-num); font-family: 'Fira Code'; font-size: 13px; margin-bottom:10px;">Out [${currentId}]:</div>
+            if (data.session_id) currentSessionId = data.session_id;
+
+            const outDiv = document.getElementById(`out-${currentId}`);
+            outDiv.innerHTML = `
+                <div style="color:var(--input-num); font-family:'Fira Code'; font-size:12px; margin-bottom:10px;">Out [${currentId}]:</div>
                 <div class="markdown-body">${md.render(data.output)}</div>
             `;
+            outDiv.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
 
-            outputDiv.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
+            // Scroll again after content is rendered (tables can be tall!)
+            setTimeout(() => {
+                mainContent.scrollTo({ top: mainContent.scrollHeight, behavior: 'smooth' });
+            }, 100);
 
+            loadSessions();
         } catch (err) {
-            document.getElementById(`out-${currentId}`).innerHTML = `<div style="color: #ff7b72;">Error: ${err.message}</div>`;
+            document.getElementById(`out-${currentId}`).innerText = "Error: " + err.message;
         } finally {
-            // 2. LOCAL UNLOCK: Re-enable the box for this user only
             userInput.disabled = false;
             userInput.focus();
         }
     }
-    // Initialize Socket.IO
-    const socket = io();
 
-    socket.on('connect', () => {
-        console.log("Connected to Lora SQL Engine");
-    });
-
-    socket.on('disconnect', () => {
-        userInput.placeholder = "Connection lost. Reconnecting...";
-        userInput.disabled = true;
-    });
-
-    // LISTEN FOR BROADCASTS
-socket.on('system_status', function(data) {
-    const card = document.getElementById('ingest-status-card');
-    const dot = document.getElementById('status-dot');
-    const bar = document.getElementById('ingest-progress-bar');
-    const title = document.getElementById('status-title');
-    const detail = document.getElementById('current-status-detail');
-
-    // These are GLOBAL events (Indexing a CSV, Vectorizing PDFs)
-    const isSqlSync = data.sql_syncing === true;
-    const isRagSync = data.rag && data.rag.state === 'processing';
-
-    // 1. THE STATUS CARD (Global Animations)
-    if (isSqlSync || isRagSync) {
-        card.style.display = 'block';
-        card.style.opacity = '1';
-
-        if (isSqlSync) {
-            dot.className = 'status-indicator pulse-amber';
-            title.innerText = "SQL RE-INDEXING";
-            detail.innerText = "RTX 5060 Ti is analyzing tables...";
-            bar.style.width = "40%";
-        } else {
-            dot.className = 'status-indicator pulse-green';
-            title.innerText = "VECTORIZING DOCUMENTS";
-            detail.innerText = `Ingesting: ${data.rag.current_file || 'Processing...'}`;
-            if (data.rag.total_files > 0) {
-                let pc = (data.rag.current_file_idx / data.rag.total_files) * 100;
-                bar.style.width = pc + "%";
-            } else {
-                bar.style.width = "100%";
-            }
-        }
-
-        // DISABLE INPUT because the whole DB is changing
-        userInput.disabled = true;
-        userInput.placeholder = "Database is updating...";
-
-    } else {
-        // Smooth fade out when idle
-        card.style.opacity = '0';
-        setTimeout(() => {
-            if(card.style.opacity === '0') {
-                card.style.display = 'none';
-
-                // ONLY re-enable if we aren't currently waiting for a private Query response
-                // (This is the magic part - it won't step on addCell's toes)
-                if (!document.querySelector('.thinking')) {
-                    userInput.disabled = false;
-                    userInput.placeholder = "Ask your data...";
-                }
-            }
-        }, 300);
+    async function loadSessions() {
+        const list = document.getElementById('session-list');
+        try {
+            const response = await fetch(`/api/chat/sessions?type=sql`, { headers: { 'X-User-ID': userId } });
+            const sessions = await response.json();
+            list.innerHTML = '';
+            sessions.forEach(s => {
+                const div = document.createElement('div');
+                div.className = `session-item ${currentSessionId == s.id ? 'active' : ''}`;
+                div.innerText = s.title;
+                div.onclick = () => loadHistory(s.id);
+                list.appendChild(div);
+            });
+        } catch (e) { console.error(e); }
     }
-});
-</script>
 
+    async function loadHistory(id) {
+        currentSessionId = id;
+        document.getElementById('session-status').innerText = `Session ID: ${id}`;
+        const container = document.getElementById('notebook');
+        const mainContent = document.querySelector('.main-content');
+
+        const header = container.querySelector('.header-area').outerHTML;
+        container.innerHTML = header;
+        cellCount = 1;
+
+        try {
+            const response = await fetch(`/api/chat/history/${id}`);
+            const messages = await response.json();
+            let lastOutId = null;
+
+            messages.forEach(msg => {
+                if(msg.role === 'user') {
+                    const idx = cellCount++;
+                    lastOutId = `out-hist-${idx}`;
+                    container.insertAdjacentHTML('beforeend', `
+                        <div class="cell">
+                            <div class="cell-label">In [${idx}]:</div>
+                            <div class="cell-content">
+                                <div class="input-area">${msg.content}</div>
+                                <div class="output-area" id="${lastOutId}"></div>
+                            </div>
+                        </div>`);
+                } else if(msg.role === 'assistant' && lastOutId) {
+                    const out = document.getElementById(lastOutId);
+                    out.innerHTML = `
+                        <div style="color:var(--input-num); font-family:'Fira Code'; font-size:12px; margin-bottom:10px;">Out:</div>
+                        <div class="markdown-body">${md.render(msg.content)}</div>
+                    `;
+                    out.querySelectorAll('pre code').forEach((el) => hljs.highlightElement(el));
+                }
+            });
+            loadSessions();
+
+            // Jump to bottom after history is populated
+            setTimeout(() => {
+                mainContent.scrollTo({ top: mainContent.scrollHeight, behavior: 'auto' });
+            }, 50);
+
+        } catch (e) { console.error(e); }
+    }
+
+    function startNewChat() {
+        currentSessionId = null;
+        cellCount = 1;
+        const container = document.getElementById('notebook');
+        const header = container.querySelector('.header-area').outerHTML;
+        container.innerHTML = header;
+        document.getElementById('session-status').innerText = "Stateless";
+        loadSessions();
+        userInput.focus();
+    }
+
+    window.onload = loadSessions;
+</script>
 </body>
 </html>
