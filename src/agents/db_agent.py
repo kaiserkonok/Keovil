@@ -1,6 +1,7 @@
 import os
 import duckdb
 import threading
+import hashlib
 import re
 import time
 from pathlib import Path
@@ -284,145 +285,138 @@ class StructuredDataAgent:
 
         console.print(f"[bold cyan]🚀 SQL Agent Mode: {self.mode.upper()}[/bold cyan]")
 
+    def _get_unique_name(self, fp: Path) -> str:
+        """Creates a unique, SQL-safe name. Understandable for LLM via stems."""
+        rel_path = fp.relative_to(self.watch_dir)
+        # Unique 4-char hash based on the folder path
+        path_hash = hashlib.md5(str(rel_path).encode()).hexdigest()[:4]
+        # Clean the filename (e.g., "Sales Data 2026" -> "sales_data_2026")
+        clean_stem = re.sub(r'[^a-zA-Z0-9]', '_', fp.stem).lower()
+        return f"v_{clean_stem}_{path_hash}"
+
+    def _needs_update(self, state_con, fp: Path) -> bool:
+        """Checks if the file on disk differs from our last sync."""
+        rel_path = str(fp.relative_to(self.watch_dir))
+        stats = fp.stat()
+        res = state_con.execute(
+            "SELECT mtime, size FROM file_history WHERE path = ?", [rel_path]
+        ).fetchone()
+        return res is None or res[0] != stats.st_mtime or res[1] != stats.st_size
+
+    def _cleanup_orphans(self, con, active_views):
+        """The Janitor: Removes DuckDB views that no longer have physical files."""
+        current_tables = [t[0] for t in con.execute("SHOW TABLES").fetchall()]
+        for table in current_tables:
+            if table not in active_views:
+                con.execute(f"DROP VIEW IF EXISTS {table}")
+                console.print(f"[red]🗑️ Dropped stale view: {table}[/red]")
+
+    def _track_multi_table_names(self, con, fp, v_name, ext, active_views):
+        """Purely tracks names for UNCHANGED files so they aren't deleted."""
+        if ext in (".db", ".sqlite", ".sqlite3"):
+            tables = con.execute(f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
+            for (t_name,) in tables:
+                active_views.add(f"{v_name}_{t_name.lower()}")
+        elif ext in (".xlsx", ".xls"):
+            # Use pandas just to get sheet names without loading data
+            xls = pd.ExcelFile(fp)
+            for sheet in xls.sheet_names:
+                sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
+                active_views.add(f"{v_name}_{sheet_clean}")
+
     def sync_database(self):
         if not SQL_THREAD_LOCK.acquire(blocking=False): return
-
-        if self.socketio:
-            self.socketio.emit('system_status', {'sql_syncing': True})
+        if self.socketio: self.socketio.emit('system_status', {'sql_syncing': True})
 
         try:
             self.is_syncing = True
-            sync_table = Table(title="🔄 Hierarchical Smart Sync", show_header=True, header_style="bold cyan")
-            sync_table.add_column("Resource Path")
-            sync_table.add_column("Status", justify="right")
+            active_views = set()
 
-            # Inside StructuredDataAgent.sync_database
-            with duckdb.connect(str(self.db_path)) as con, duckdb.connect(str(self.state_db)) as state_con:
-                # --- ADD THESE LINES FIRST ---
+            # Simplified Handlers (Excel handled separately for sheets)
+            HANDLERS = {".csv": "read_csv_auto", ".parquet": "parquet_scan"}
+
+            with duckdb.connect(str(self.db_path)) as con, \
+                    duckdb.connect(str(self.state_db)) as state_con:
+
                 con.execute(f"SET extension_directory = '{self.agent.ext_dir}';")
-                con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
-                # -----------------------------
-
-                con.execute("LOAD excel; LOAD spatial; INSTALL sqlite; LOAD sqlite;")
-
-                valid_exts = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
-                active_views = set()
+                con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite; LOAD excel; LOAD spatial; LOAD sqlite;")
 
                 for root, _, files in os.walk(self.watch_dir):
                     for fname in files:
-                        if fname.startswith("~$") or not fname.lower().endswith(valid_exts): continue
-
-                        fp = Path(root, fname).resolve()
-                        mtime = fp.stat().st_mtime
-                        size = fp.stat().st_size
-
-                        rel_path = fp.relative_to(self.watch_dir)
-                        base_identity = str(rel_path).lower()
-                        for char in [os.sep, ".", " ", "-"]:
-                            base_identity = base_identity.replace(char, "_")
-
-                        # --- GUARD 1: Safe History Check ---
-                        rel_path_str = str(fp.relative_to(self.watch_dir))
-
-                        # Change the query to look for rel_path_str
-                        res = state_con.execute("SELECT mtime, size FROM file_history WHERE path = ?",
-                                                [rel_path_str]).fetchall()  # <--- UPDATED
-                        prev = res[0] if res else None
-
-                        is_excel = fp.suffix.lower() in (".xlsx", ".xls")
-                        is_unchanged = prev is not None and len(prev) >= 2 and prev[0] == mtime and prev[1] == size
-
-                        if not is_excel and is_unchanged:
-                            active_views.add(base_identity)
+                        if fname.startswith("~$") or not fname.lower().endswith(
+                                (".csv", ".parquet", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")):
                             continue
 
-                        # Ingestion Logic
+                        fp = Path(root, fname).resolve()
+                        v_name = self._get_unique_name(fp)
                         ext = fp.suffix.lower()
-                        if ext == ".csv":
-                            con.execute(
-                                f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM read_csv_auto('{fp}')")
-                            active_views.add(base_identity)
-                            sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
 
-                        elif ext == ".parquet":
-                            con.execute(f"CREATE OR REPLACE VIEW {base_identity} AS SELECT * FROM parquet_scan('{fp}')")
-                            active_views.add(base_identity)
-                            sync_table.add_row(str(rel_path), "[green]UPDATED[/green]")
+                        # --- FAST PATH: Unchanged Files ---
+                        if not self._needs_update(state_con, fp):
+                            if ext in (".db", ".sqlite", ".sqlite3", ".xlsx", ".xls"):
+                                self._track_multi_table_names(con, fp, v_name, ext, active_views)
+                            else:
+                                active_views.add(v_name)
+                            continue
 
-                        elif is_excel:
+                        # --- SLOW PATH: Ingestion ---
+                        # A. Handle Standard Flat Files (CSV/Parquet)
+                        if ext in HANDLERS:
+                            con.execute(f"CREATE OR REPLACE VIEW {v_name} AS SELECT * FROM {HANDLERS[ext]}('{fp}')")
+                            # ADD COMMENT HERE
+                            con.execute(f"COMMENT ON TABLE {v_name} IS 'Source: {fp.name}'")
+                            active_views.add(v_name)
+
+                        # B. Handle Excel Sheets (Splitting)
+                        elif ext in (".xlsx", ".xls"):
                             xls = pd.ExcelFile(fp)
                             for sheet in xls.sheet_names:
-                                sheet_clean = sheet.lower().replace(' ', '_').replace('-', '_')
-                                view_name = f"{base_identity}_{sheet_clean}"
+                                sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
+                                sub_v = f"{v_name}_{sheet_clean}"
                                 con.execute(
-                                    f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
-                                active_views.add(view_name)
-                            sync_table.add_row(str(rel_path), f"[cyan]INDEXED ({len(xls.sheet_names)} sheets)[/cyan]")
+                                    f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
+                                # ADD COMMENT HERE
+                                con.execute(f"COMMENT ON TABLE {sub_v} IS 'Source: {fp.name} (Sheet: {sheet})'")
+                                active_views.add(sub_v)
 
-
+                        # C. Handle SQLite Tables
                         elif ext in (".db", ".sqlite", ".sqlite3"):
-
-                            # 1. Attach temporarily to see what's inside
-
-                            alias = f"temp_{base_identity}"
-
-                            con.execute(f"ATTACH '{fp}' AS {alias} (TYPE SQLITE, READ_ONLY)")
-
-                            # 2. Get all table names from the attached DB
-
                             sqlite_tables = con.execute(
-                                f"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchall()
-
-                            for (st_name,) in sqlite_tables:
-                                view_name = f"{base_identity}_{st_name}"
-
-                                # 3. Create a persistent view in MAIN that points to the file
-
+                                f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
+                            for (t_name,) in sqlite_tables:
+                                sub_v = f"{v_name}_{t_name.lower()}"
                                 con.execute(
-                                    f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM sqlite_scan('{fp}', '{st_name}')")
+                                    f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM sqlite_scan('{fp}', '{t_name}')")
+                                # ADD COMMENT HERE
+                                con.execute(f"COMMENT ON TABLE {sub_v} IS 'Source: {fp.name} (Table: {t_name})'")
+                                active_views.add(sub_v)
 
-                                active_views.add(view_name)
+                        # Record Success
+                        stats = fp.stat()
+                        state_con.execute(
+                            "INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
+                            [str(fp.relative_to(self.watch_dir)), stats.st_mtime, stats.st_size]
+                        )
 
-                            con.execute(f"DETACH {alias}")
-
-                            sync_table.add_row(str(rel_path),
-                                               f"[magenta]SQLITE INDEXED ({len(sqlite_tables)} tables)[/magenta]")
-
-                        state_con.execute("INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
-                                  [rel_path_str, mtime, size])
-
-                # --- GUARD 2: Safe Database Detach ---
-                db_list = con.execute("PRAGMA show_databases").fetchall()
-                for row in db_list:
-                    if len(row) > 1:  # Ensure the tuple actually has a second element
-                        db_alias = row[1]
-                        if db_alias not in ('main', 'temp') and db_alias not in active_views:
-                            con.execute(f"DETACH {db_alias}")
-                            sync_table.add_row(db_alias, "[red]DETACHED DB[/red]")
-
-                # --- GUARD 3: Safe View Drop ---
-                table_list = con.execute("SHOW TABLES").fetchall()
-                for row in table_list:
-                    if len(row) > 0:  # Ensure the tuple has at least one element
-                        view = row[0]
-                        if view not in active_views:
-                            con.execute(f"DROP VIEW IF EXISTS {view}")
-                            sync_table.add_row(view, "[red]DELETED VIEW[/red]")
-
-            if sync_table.row_count > 0:
-                console.print(sync_table)
+                self._cleanup_orphans(con, active_views)
 
         except Exception as e:
-            # This will now print exactly WHICH line failed if it happens again
-            import traceback
-            console.print(f"[bold red]✖ Sync Error: {e}[/bold red]")
-            console.print(traceback.format_exc())
+            # This catches things like 'File in use' or 'Invalid CSV format'
+            console.print(f"[bold red]✖ Sync Error:[/bold red] {e}")
+            if self.socketio:
+                self.socketio.emit('system_error', {'message': f"Sync failed: {str(e)}"})
+
         finally:
+            # THIS IS THE MOST CRITICAL PART
             self.is_syncing = False
+            # If we don't release this, the File Watcher will never be able to sync again!
             SQL_THREAD_LOCK.release()
+
             if self.socketio:
                 self.socketio.emit('system_status', {'sql_syncing': False})
-            print(f"{Fore.GREEN}✅ Sync Complete.{Style.RESET_ALL}")
+
+            console.print(f"[bold green]✅ Sync Finished. {len(active_views)} views active.[/bold green]")
+
 
     def start_monitoring(self):
         self.sync_database()
