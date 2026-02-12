@@ -231,6 +231,55 @@
     border-color: var(--accent);
     color: var(--accent);
 }
+
+
+/* Status Indicator Styles */
+.status-indicator {
+    width: 10px; height: 10px; border-radius: 50%; background: var(--accent);
+}
+.pulse-amber {
+    background: #e3b341; box-shadow: 0 0 10px #e3b341;
+    animation: status-pulse 1.5s infinite;
+}
+.pulse-green {
+    background: #3fb950; box-shadow: 0 0 10px #3fb950;
+    animation: status-pulse 1s infinite;
+}
+@keyframes status-pulse {
+    0% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.3); opacity: 0.5; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+/* Silent Input Lock Animation */
+.query-input:disabled {
+    cursor: wait;
+    border-color: var(--accent);
+    animation: borderPulse 2s infinite ease-in-out;
+    opacity: 0.8;
+}
+@keyframes borderPulse {
+    0% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+    50% { box-shadow: 0 0 15px rgba(88, 166, 255, 0.2); }
+    100% { box-shadow: 0 0 0px rgba(88, 166, 255, 0); }
+}
+
+/* Floating Status Card */
+#ingest-status-card {
+    display: none;
+    position: fixed;
+    bottom: 120px;
+    right: 40px;
+    width: 320px;
+    background: rgba(22, 27, 34, 0.85);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    z-index: 9999;
+}
+
     </style>
 </head>
 <body>
@@ -278,6 +327,17 @@
     </div>
 </div>
 
+<div id="ingest-status-card">
+    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 12px;">
+        <div id="status-dot" class="status-indicator"></div>
+        <span id="status-title" style="font-family: 'Fira Code', monospace; font-size: 12px; color: var(--accent); font-weight: 500;">SQL ENGINE ACTIVE</span>
+    </div>
+    <div style="height: 6px; background: #30363d; border-radius: 3px; overflow: hidden; margin: 8px 0;">
+        <div id="ingest-progress-bar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.4s ease;"></div>
+    </div>
+    <span id="current-status-detail" style="font-size: 11px; font-family: 'Fira Code', monospace; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block;">Syncing Views...</span>
+</div>
+
 <script>
     const userInput = document.getElementById('userInput');
     let currentSessionId = null;
@@ -285,6 +345,66 @@
     let cellCount = 1;
 
     let modalResolve;
+
+    const socket = io();
+    let isEngineBusy = false;
+
+    socket.on('system_status', function(data) {
+        const card = document.getElementById('ingest-status-card');
+        const dot = document.getElementById('status-dot');
+        const bar = document.getElementById('ingest-progress-bar');
+        const title = document.getElementById('status-title');
+        const detailText = document.getElementById('current-status-detail');
+
+        // 1. DETERMINE THE STATE
+        // Check if SQL is syncing OR if RAG is processing/waiting
+        const isSqlSyncing = data.sql_syncing === true;
+        const ragState = data.rag ? data.rag.state : 'idle';
+        const isVectorizing = (ragState === 'processing' || ragState === 'waiting' || data.reason === 'processing');
+
+        const isSystemBusy = isSqlSyncing || isVectorizing;
+
+        // 2. LOCK INPUT
+        // Lock if system is busy OR if the AI is currently generating an answer
+        userInput.disabled = isSystemBusy || isEngineBusy;
+
+        if (isSystemBusy) {
+            card.style.display = 'block';
+            userInput.placeholder = "System updating... please wait.";
+
+            // 3. UI PERSONALIZATION (Color & Text)
+            if (isSqlSyncing) {
+                dot.className = 'status-indicator pulse-amber';
+                title.innerText = "SQL ENGINE ACTIVE";
+                detailText.innerText = data.rag?.current_file || "Updating Database Views...";
+                bar.style.width = (data.rag?.progress || 100) + "%";
+            }
+            else if (isVectorizing) {
+                const isPurging = data.rag?.current_file?.includes("Purging");
+
+                if (ragState === 'waiting') {
+                    dot.className = 'status-indicator pulse-amber';
+                    title.innerText = "QUEUING BATCH...";
+                    detailText.innerText = "Waiting for quiet period...";
+                } else if (isPurging) {
+                    dot.className = 'status-indicator'; // Red-ish via style
+                    dot.style.background = "#ff7b72";
+                    title.innerText = "PURGING DATA...";
+                    detailText.innerText = data.rag.current_file;
+                } else {
+                    dot.className = 'status-indicator pulse-green';
+                    title.innerText = "VECTORIZING (GPU)...";
+                    detailText.innerText = data.rag?.current_file || "Processing Documents...";
+                }
+                bar.style.width = (data.rag?.progress || 0) + "%";
+            }
+        } else {
+            if (!isEngineBusy) {
+                card.style.display = 'none';
+                userInput.placeholder = "Ask your data...";
+            }
+        }
+    });
 
     function showConfirm(message) {
         document.getElementById('modalMessage').innerText = message;
@@ -322,6 +442,7 @@
         const container = document.getElementById('notebook');
         const mainContent = document.querySelector('.main-content'); // Target the scrollable wrapper
         const currentId = cellCount++;
+        isEngineBusy = true;
         userInput.disabled = true;
 
         const cellHtml = `
@@ -366,6 +487,7 @@
         } catch (err) {
             document.getElementById(`out-${currentId}`).innerText = "Error: " + err.message;
         } finally {
+            isEngineBusy = false;
             userInput.disabled = false;
             userInput.focus();
         }
@@ -478,7 +600,7 @@
         } catch (e) {
             console.error("Error during deletion:", e);
         }
-}
+    }
 
     // Optional: Function for a "Clear All" button in the header if you want one
     async function deleteCurrentSession() {

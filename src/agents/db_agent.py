@@ -326,14 +326,29 @@ class StructuredDataAgent:
 
     def sync_database(self):
         if not SQL_THREAD_LOCK.acquire(blocking=False): return
-        if self.socketio: self.socketio.emit('system_status', {'sql_syncing': True})
+
+        # Initial Signal: System is busy, progress is 0
+        if self.socketio:
+            self.socketio.emit('system_status', {
+                'sql_syncing': True,
+                'reason': 'processing',
+                'rag': {'state': 'processing', 'current_file': 'Starting Sync...', 'progress': 0}
+            })
 
         try:
             self.is_syncing = True
             active_views = set()
-
-            # Simplified Handlers (Excel handled separately for sheets)
             HANDLERS = {".csv": "read_csv_auto", ".parquet": "parquet_scan"}
+
+            # Get list of all potential files first to calculate progress
+            all_files = []
+            for root, _, files in os.walk(self.watch_dir):
+                for f in files:
+                    if not f.startswith("~$") and f.lower().endswith(
+                            (".csv", ".parquet", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")):
+                        all_files.append(Path(root, f).resolve())
+
+            total_files = len(all_files)
 
             with duckdb.connect(str(self.db_path)) as con, \
                     duckdb.connect(str(self.state_db)) as state_con:
@@ -341,81 +356,77 @@ class StructuredDataAgent:
                 con.execute(f"SET extension_directory = '{self.agent.ext_dir}';")
                 con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite; LOAD excel; LOAD spatial; LOAD sqlite;")
 
-                for root, _, files in os.walk(self.watch_dir):
-                    for fname in files:
-                        if fname.startswith("~$") or not fname.lower().endswith(
-                                (".csv", ".parquet", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")):
-                            continue
+                for idx, fp in enumerate(all_files):
+                    v_name = self._get_unique_name(fp)
+                    ext = fp.suffix.lower()
 
-                        fp = Path(root, fname).resolve()
-                        v_name = self._get_unique_name(fp)
-                        ext = fp.suffix.lower()
+                    # Update UI for every file processed
+                    if self.socketio:
+                        progress = int(((idx + 1) / total_files) * 100)
+                        self.socketio.emit('system_status', {
+                            'sql_syncing': True,
+                            'reason': 'processing',
+                            'rag': {
+                                'state': 'processing',
+                                'current_file': f"Indexing: {fp.name}",
+                                'progress': progress
+                            }
+                        })
 
-                        # --- FAST PATH: Unchanged Files ---
-                        if not self._needs_update(state_con, fp):
-                            if ext in (".db", ".sqlite", ".sqlite3", ".xlsx", ".xls"):
-                                self._track_multi_table_names(con, fp, v_name, ext, active_views)
-                            else:
-                                active_views.add(v_name)
-                            continue
-
-                        # --- SLOW PATH: Ingestion ---
-                        # A. Handle Standard Flat Files (CSV/Parquet)
-                        if ext in HANDLERS:
-                            con.execute(f"CREATE OR REPLACE VIEW {v_name} AS SELECT * FROM {HANDLERS[ext]}('{fp}')")
-                            # ADD COMMENT HERE
-                            con.execute(f"COMMENT ON TABLE {v_name} IS 'Source: {fp.name}'")
+                    # --- FAST PATH: Unchanged Files ---
+                    if not self._needs_update(state_con, fp):
+                        if ext in (".db", ".sqlite", ".sqlite3", ".xlsx", ".xls"):
+                            self._track_multi_table_names(con, fp, v_name, ext, active_views)
+                        else:
                             active_views.add(v_name)
+                        continue
 
-                        # B. Handle Excel Sheets (Splitting)
-                        elif ext in (".xlsx", ".xls"):
-                            xls = pd.ExcelFile(fp)
-                            for sheet in xls.sheet_names:
-                                sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
-                                sub_v = f"{v_name}_{sheet_clean}"
-                                con.execute(
-                                    f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
-                                # ADD COMMENT HERE
-                                con.execute(f"COMMENT ON TABLE {sub_v} IS 'Source: {fp.name} (Sheet: {sheet})'")
-                                active_views.add(sub_v)
+                    # --- SLOW PATH: Ingestion ---
+                    if ext in HANDLERS:
+                        con.execute(f"CREATE OR REPLACE VIEW {v_name} AS SELECT * FROM {HANDLERS[ext]}('{fp}')")
+                        active_views.add(v_name)
+                    elif ext in (".xlsx", ".xls"):
+                        xls = pd.ExcelFile(fp)
+                        for sheet in xls.sheet_names:
+                            sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
+                            sub_v = f"{v_name}_{sheet_clean}"
+                            con.execute(
+                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
+                            active_views.add(sub_v)
+                    elif ext in (".db", ".sqlite", ".sqlite3"):
+                        sqlite_tables = con.execute(
+                            f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
+                        for (t_name,) in sqlite_tables:
+                            sub_v = f"{v_name}_{t_name.lower()}"
+                            con.execute(
+                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM sqlite_scan('{fp}', '{t_name}')")
+                            active_views.add(sub_v)
 
-                        # C. Handle SQLite Tables
-                        elif ext in (".db", ".sqlite", ".sqlite3"):
-                            sqlite_tables = con.execute(
-                                f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
-                            for (t_name,) in sqlite_tables:
-                                sub_v = f"{v_name}_{t_name.lower()}"
-                                con.execute(
-                                    f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM sqlite_scan('{fp}', '{t_name}')")
-                                # ADD COMMENT HERE
-                                con.execute(f"COMMENT ON TABLE {sub_v} IS 'Source: {fp.name} (Table: {t_name})'")
-                                active_views.add(sub_v)
-
-                        # Record Success
-                        stats = fp.stat()
-                        state_con.execute(
-                            "INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
-                            [str(fp.relative_to(self.watch_dir)), stats.st_mtime, stats.st_size]
-                        )
+                    # Record Success in State DB
+                    stats = fp.stat()
+                    state_con.execute(
+                        "INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
+                        [str(fp.relative_to(self.watch_dir)), stats.st_mtime, stats.st_size]
+                    )
 
                 self._cleanup_orphans(con, active_views)
 
         except Exception as e:
-            # This catches things like 'File in use' or 'Invalid CSV format'
             console.print(f"[bold red]✖ Sync Error:[/bold red] {e}")
             if self.socketio:
                 self.socketio.emit('system_error', {'message': f"Sync failed: {str(e)}"})
-
         finally:
-            # THIS IS THE MOST CRITICAL PART
             self.is_syncing = False
-            # If we don't release this, the File Watcher will never be able to sync again!
             SQL_THREAD_LOCK.release()
 
+            # Final Signal: Idle state
             if self.socketio:
-                self.socketio.emit('system_status', {'sql_syncing': False})
-
-            console.print(f"[bold green]✅ Sync Finished. {len(active_views)} views active.[/bold green]")
+                self.socketio.emit('system_status', {
+                    'sql_syncing': False,
+                    'reason': 'idle',
+                    'rag': {'state': 'idle', 'progress': 100}
+                })
+            console.print(f"[bold green]✅ Sync Finished.[/bold green]")
 
 
     def start_monitoring(self):
