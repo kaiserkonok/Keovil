@@ -251,6 +251,7 @@ class StructuredDataAgent:
         storage_env = os.getenv("STORAGE_BASE", str(host_root))
         self.base_storage = Path(storage_env).absolute()
         self.socketio = socketio
+        self.handler = IngestionHandler(self)
 
         # 2. ISOLATED PATHS
         self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
@@ -428,12 +429,10 @@ class StructuredDataAgent:
                 })
             console.print(f"[bold green]✅ Sync Finished.[/bold green]")
 
-
     def start_monitoring(self):
         self.sync_database()
-        self.observer.schedule(IngestionHandler(self), str(self.watch_dir), recursive=True)
+        self.observer.schedule(self.handler, str(self.watch_dir), recursive=True)
         self.observer.start()
-        console.print(Panel(f"Watching: {self.watch_dir}", title="Watcher Active", border_style="yellow"))
 
     def query(self, text, chat_history=None):
         return self.agent.ask(text, chat_history)
