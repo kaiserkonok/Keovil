@@ -7,7 +7,8 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from langchain_ollama import OllamaLLM
+from langchain_openai import ChatOpenAI
+from langchain_core.output_parsers import StrOutputParser
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -34,12 +35,16 @@ class SQLQueryAgent:
         # Isolate extensions within the database folder to prevent cross-contamination
         self.ext_dir = Path(db_path).parent / "duckdb_extensions"
         self.ext_dir.mkdir(exist_ok=True)
-        self.model_name = model_name
 
-        # Optimized for 16GB VRAM (Higher ctx + Flash Attention if supported)
-        self.llm = OllamaLLM(
-            model=self.model_name,
+        llm_base_url = os.getenv("LLM_SERVER_URL", "http://localhost:7977/v1")
+
+        # Optimized for your 5060 Ti
+        self.llm = ChatOpenAI(
+            base_url=llm_base_url,
+            api_key="not-needed",
+            model=model_name,
             temperature=0,
+            max_retries=2
         )
 
         # Persistence of extensions in the specific storage folder
@@ -76,7 +81,9 @@ class SQLQueryAgent:
                 ("human", "{input}")
             ])
             try:
-                standalone_query = (context_prompt | self.llm).invoke({
+                # Add the pipe to StrOutputParser() to get a clean string back
+                refiner_chain = context_prompt | self.llm | StrOutputParser()
+                standalone_query = refiner_chain.invoke({
                     "history": formatted_history,
                     "input": query
                 }).strip()
@@ -107,7 +114,7 @@ class SQLQueryAgent:
                 "Output ONLY the table names as a comma-separated list. If none, say NONE."
             )
 
-            router_output = self.llm.invoke(router_prompt).strip()
+            router_output = (self.llm | StrOutputParser()).invoke(router_prompt).strip()
 
             found_words = re.findall(r'\b\w+\b', router_output)
             relevant_names = [name for name in found_words if name in all_table_names]
@@ -138,7 +145,7 @@ class SQLQueryAgent:
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
                 # We provide the original query context but emphasize the standalone_query intent
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {standalone_query}")
+                initial_response = (self.llm | StrOutputParser()).invoke(f"{system_context}\n\nUser: {standalone_query}")
 
                 # Extract Thought
                 thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
@@ -189,7 +196,7 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.llm.invoke(voice_prompt)
+                final_chat = (self.llm | StrOutputParser()).invoke(voice_prompt)
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI

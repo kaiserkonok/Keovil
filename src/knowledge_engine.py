@@ -19,7 +19,7 @@ from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_ollama import OllamaLLM
+from langchain_openai import ChatOpenAI
 import knowledge_splitter
 from utils.document_processor import DocumentProcessor
 from neural_db import ColBERTEngine
@@ -147,17 +147,22 @@ class CollegeRAG:
         # ---------------------------------------------------------
         # 3. LLM & RETRIEVER SETUP
         # ---------------------------------------------------------
-        ollama_base = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        llm_base_url = os.getenv("LLM_SERVER_URL", "http://localhost:7977/v1")
 
-        self.llm = OllamaLLM(
+        # Your main response generator
+        self.llm = ChatOpenAI(
             model=llm_model,
             temperature=temperature,
-            base_url=ollama_base
+            base_url=llm_base_url,
+            api_key="not-needed",
         )
-        self.query_llm = OllamaLLM(
+
+        # Your query rewriter (Temperature 0 for maximum accuracy)
+        self.query_llm = ChatOpenAI(
             model=llm_model,
             temperature=0,
-            base_url=ollama_base
+            base_url=llm_base_url,
+            api_key="not-needed"
         )
 
         contextualize_q_system_prompt = (
