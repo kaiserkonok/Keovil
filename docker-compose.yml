@@ -29,4 +29,5 @@ services:
       - ${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
       - ${HOME}/.keovil_storage/keo:/opt/.vault/binaries
+      - ${HOME}/.EasyOCR:/root/.EasyOCR
     restart: unless-stopped

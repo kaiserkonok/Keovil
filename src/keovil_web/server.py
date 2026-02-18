@@ -291,16 +291,12 @@ ENGINE_INIT_LOCK = threading.RLock()
 
 def initialize_engines():
     """
-    Initializes heavy GPU engines with full interactive feedback.
+    Initializes heavy GPU engines with local llama-cpp support.
     Optimized for RTX 5060 Ti performance.
     """
-
-    # Dynamic URL: Docker vs Localhost
-    OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
-
+    # Force Python to look at the module-level variables
     global rag, sql_system
 
-    # 1. Double-check lock to prevent race conditions during boot
     with ENGINE_INIT_LOCK:
         if rag is not None and sql_system is not None:
             return
@@ -314,76 +310,65 @@ def initialize_engines():
                 "progress": progress
             })
 
-        # Reloader check (Standard Flask/Gevent behavior)
-        is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-        is_debug_disabled = not app.debug
+        update_status("Detecting RTX GPU Hardware...", progress=5)
 
-        update_status("Detecting GPU Hardware...", progress=5)
+        # 1. Verification
+        home = str(Path.home())
+        model_path = os.path.join(home, ".keovil_storage/keo/evil.gguf")
+        if not os.path.exists(model_path):
+            update_status("Model Weights Missing", state="error")
+            return
 
-        # --- 1. Ollama Hardware Handshake ---
-        try:
-            import requests
-            model_name = current_cfg["llm_model"]
-            update_status(f"Verifying {model_name} layers...", progress=15)
-
-            # Check Ollama connection
-            r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
-            if r.status_code != 200:
-                update_status("Model missing. Initiating pull...", progress=30)
-                requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-            update_status("Neural weights verified.", progress=45)
-        except Exception as e:
-            print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
-            update_status("Ollama Connection Pending...", progress=45)
-
-        # --- 2. RAG & VRAM Allocation ---
-        if CollegeRAG and rag is None:
+        # 2. RAG Initialization (The Fix)
+        if rag is None:
             try:
                 update_status("Allocating VRAM & Loading ColBERT...", progress=65)
 
-                # We initialize into a local variable first to ensure
-                # we don't set the global 'rag' to a half-broken object
-                temp_rag = CollegeRAG(
+                # Assign to a local temp variable first
+                temp_rag_instance = CollegeRAG(
                     data_dir=str(DATA_DIR),
                     llm_model=current_cfg["llm_model"],
                     temperature=current_cfg["temperature"],
                     socketio=socketio
                 )
-                rag = temp_rag
+
+                # CRITICAL: Force update the global reference using the globals() dict
+                # This bypasses any local shadowing issues.
+                globals()['rag'] = temp_rag_instance
+
                 update_status("Knowledge Engine Synchronized.", progress=85)
             except Exception as e:
-                # CRITICAL: This is where your DNS Error -3 is hiding.
-                print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
+                print(f"RAG Error: {e}")
                 traceback.print_exc()
-                update_status(f"RAG Error: {str(e)}", state="error")
-                rag = None  # Ensure it stays None so api_chat knows it's broken
+                update_status("RAG Init Failed", state="error")
 
-        # --- 3. SQL Agent Boot ---
-        if StructuredDataAgent and sql_system is None:
+        # 3. SQL Agent Boot
+        if sql_system is None:
             try:
                 update_status("Waking up SQL Agent...", progress=95)
                 temp_sql = StructuredDataAgent(socketio=socketio)
-                if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
-                    temp_sql.agent.llm.temperature = 0.0
-                temp_sql.start_monitoring()
-                sql_system = temp_sql
-            except Exception as e:
-                print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
-                traceback.print_exc()
-                update_status("SQL Agent Failure", state="error")
-                sql_system = None
 
-        # --- 4. Final Handshake ---
-        if rag and sql_system:
-            import time
-            time.sleep(0.8)
+                # Force update global SQL system
+                globals()['sql_system'] = temp_sql
+
+                temp_sql.start_monitoring()
+                update_status("SQL Agent Active.", progress=98)
+            except Exception as e:
+                print(f"SQL Error: {e}")
+                update_status("SQL Agent Failed", state="error")
+
+        # 4. Final Verification
+        # Using globals() here to be 100% sure we are checking the right variables
+        if globals().get('rag') and globals().get('sql_system'):
             update_status("System Fully Operational.", state="ready", progress=100)
         else:
-            update_status("System Partial Failure.", state="error", progress=0)
+            # pinpoint exactly which one is still None
+            missing = "RAG" if globals().get('rag') is None else "SQL Agent"
+            print(f"DEBUG: Still missing {missing}")
+            update_status(f"Partial Failure: {missing}", state="error", progress=0)
 
 
 # Trigger initialization
-# We keep this as a daemon thread so the Flask server starts instantly
 Thread(target=initialize_engines, daemon=True).start()
 
 # ---------------------------------------------------------

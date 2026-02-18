@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 import pandas as pd
-from langchain_openai import ChatOpenAI
+from src.utils.model_engine import KeovilModelEngine
 from langchain_core.output_parsers import StrOutputParser
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
@@ -36,16 +36,7 @@ class SQLQueryAgent:
         self.ext_dir = Path(db_path).parent / "duckdb_extensions"
         self.ext_dir.mkdir(exist_ok=True)
 
-        llm_base_url = os.getenv("LLM_SERVER_URL", "http://localhost:7977/v1")
-
-        # Optimized for your 5060 Ti
-        self.llm = ChatOpenAI(
-            base_url=llm_base_url,
-            api_key="not-needed",
-            model=model_name,
-            temperature=0,
-            max_retries=2
-        )
+        self.llm = KeovilModelEngine.get_llm()
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:
@@ -104,6 +95,8 @@ class SQLQueryAgent:
                 return "Database is empty."
 
             all_table_names = [t[0] for t in tables_raw]
+
+            print(all_table_names)
 
             # --- STEP A: IDENTIFY RELEVANT TABLES ---
             # We use the standalone_query here for better routing accuracy

@@ -19,7 +19,7 @@ from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_openai import ChatOpenAI
+from src.utils.model_engine import KeovilModelEngine
 import knowledge_splitter
 from utils.document_processor import DocumentProcessor
 from neural_db import ColBERTEngine
@@ -144,26 +144,9 @@ class CollegeRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = knowledge_splitter.IntelligentChunker()
 
-        # ---------------------------------------------------------
-        # 3. LLM & RETRIEVER SETUP
-        # ---------------------------------------------------------
-        llm_base_url = os.getenv("LLM_SERVER_URL", "http://localhost:7977/v1")
+        self.llm = KeovilModelEngine.get_llm()
 
-        # Your main response generator
-        self.llm = ChatOpenAI(
-            model=llm_model,
-            temperature=temperature,
-            base_url=llm_base_url,
-            api_key="not-needed",
-        )
-
-        # Your query rewriter (Temperature 0 for maximum accuracy)
-        self.query_llm = ChatOpenAI(
-            model=llm_model,
-            temperature=0,
-            base_url=llm_base_url,
-            api_key="not-needed"
-        )
+        self.query_llm = KeovilModelEngine.get_llm()
 
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "

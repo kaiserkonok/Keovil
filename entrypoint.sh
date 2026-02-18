@@ -1,29 +1,49 @@
 #!/bin/bash
 
-# 1. Start Qdrant
-export QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
-export QDRANT__SERVICE__ENABLE_STATIC_CONTENT=true
+MODEL_DIR="/opt/.vault/binaries"
+MODEL_PATH="$MODEL_DIR/evil.gguf"
+DOWNLOAD_URL="https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q8_0.gguf"
+
+# Force CUDA Backend
+export GGML_CUDA=1
+export CUDA_VISIBLE_DEVICES=0
+
+if [ ! -f "$MODEL_PATH" ]; then
+    echo "🚨 Model not found! Downloading..."
+    mkdir -p "$MODEL_DIR"
+    wget "$DOWNLOAD_URL" -O "$MODEL_PATH"
+fi
+
+if nvidia-smi &> /dev/null; then
+    echo "🖥️ NVIDIA GPU Detected. Offloading to VRAM..."
+    NGPU="-1" # -1 automatically offloads ALL layers
+    DEVICE="cuda"
+    KEO_CTX=32768
+    KEO_BATCH=512
+else
+    echo "⚠️ GPU Failed. Falling back to CPU."
+    NGPU="0"
+    DEVICE="cpu"
+    KEO_CTX=4096
+    KEO_BATCH=128
+fi
+
 /usr/bin/qdrant --uri http://0.0.0.0:6333 &
 
-# 2. Start Ollama
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib/ollama
-export OLLAMA_INTEL_GPU=false
-export OLLAMA_FLASH_ATTENTION=1
-export OLLAMA_MODELS=/root/.ollama/models
-/usr/bin/ollama serve &
+echo "🚀 Igniting Llama-CPP..."
+python3 -m llama_cpp.server \
+  --model "$MODEL_PATH" \
+  --n_gpu_layers -1 \
+  --n_ctx "$KEO_CTX" \
+  --flash_attn True \
+  --port 7977 \
+  --host 0.0.0.0 &
 
-# 3. Wait for Services (No more manual sleep!)
-echo "Waiting for services to ignite..."
-while ! curl -s http://localhost:6333/health > /dev/null; do sleep 0.2; done
-while ! curl -s http://localhost:11434/api/tags > /dev/null; do sleep 0.2; done
+while ! curl -s http://localhost:6333/health > /dev/null; do sleep 1; done
+while ! curl -s http://localhost:7977/v1/models > /dev/null; do sleep 2; done
 
-# 4. Pre-warm the Model into VRAM
-# This loads the weights into your 5060 Ti NOW so the first query is instant.
-echo "Pre-loading model into 16GB VRAM..."
-curl -s -X POST http://localhost:11434/api/generate \
-     -d "{\"model\": \"qwen2.5-coder:7b-instruct\", \"keep_alive\": -1}" > /dev/null
+echo "🔍 Checking ColBERT on $DEVICE..."
+python3 -c "from pylate import models; models.ColBERT(model_name_or_path='lightonai/GTE-ModernColBERT-v1', device='$DEVICE')"
 
-echo "Keovil is hot and ready."
-
-# 5. Start the engine
+echo "✅ Keovil is ready."
 exec python3 src/keovil_web/app.py
