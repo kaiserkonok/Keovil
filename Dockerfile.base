@@ -1,0 +1,25 @@
+# --- KEOVIL INFRASTRUCTURE BASE ---
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS base_builder
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y \
+    software-properties-common curl binutils cmake ninja-build git \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y \
+    python3.12 python3.12-dev python3.12-venv python3-pip build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# 🔥 LAYER 1: TORCH (Switch to cu121 for maximum driver compatibility)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121
+
+# 🧠 THE FIX: Set the global build-time library path
+# This physically forces the 'ld' linker to see the CUDA stubs.
+ENV LIBRARY_PATH="/usr/local/cuda/lib64/stubs:${LIBRARY_PATH}"
+
+# 🔥 LAYER 2: LLAMA-CPP (The Easy Way - Pre-compiled for CUDA 12.1)
+RUN pip install llama-cpp-python \
+    --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
