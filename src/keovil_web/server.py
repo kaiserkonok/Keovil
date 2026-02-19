@@ -296,7 +296,13 @@ def initialize_engines():
     """
 
     # Dynamic URL: Docker vs Localhost
-    OLLAMA_BASE_URL = "http://ollama:11434" if os.getenv("APP_MODE") == "production" else "http://localhost:11434"
+    # The "Universal" 2026 Connection Logic
+    if os.getenv("APP_MODE") == "production":
+        # This matches the --add-host flag in your bash script
+        OLLAMA_BASE_URL = "http://host.docker.internal:11434"
+    else:
+        # Use standard localhost for local development outside Docker
+        OLLAMA_BASE_URL = "http://localhost:11434"
 
     global rag, sql_system
 
