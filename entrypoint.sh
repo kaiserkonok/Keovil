@@ -45,7 +45,7 @@ wait_for_200() {
 }
 
 clear
-echo -e "${BLUE}${BOLD}🚀 KEOVIL.IO | NEURAL ENGINE v1.0${NC}"
+echo -e "${BLUE}${BOLD}🚀 KEVIL.IO | Keovil v1.0${NC}"
 echo -e "-------------------------------------------"
 
 # --- 1. Background Services ---
@@ -64,13 +64,13 @@ spinner $! "Syncing Neural Database..."
 echo -e "${GREEN}✅ Database: READY${NC}"
 
 wait_for_200 "http://localhost:11434/api/tags" "$OLLAMA_PID" &
-spinner $! "Warming RTX 5060 Ti Cores..."
+spinner $! "Warming GPU Cores..."
 echo -e "${GREEN}✅ AI Service: ONLINE${NC}"
 
 # --- 3. Pre-warm Model into VRAM ---
 ( curl -s -X POST http://localhost:11434/api/generate \
      -d "{\"model\": \"qwen2.5-coder:7b-instruct\", \"keep_alive\": -1}" > /dev/null ) &
-spinner $! "Charging Model into 16GB VRAM..."
+spinner $! "Charging Model into VRAM..."
 echo -e "${GREEN}✅ GPU Cache: LOADED${NC}"
 
 # --- 4. Flask Server Ignition ---
