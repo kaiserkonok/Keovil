@@ -6,8 +6,6 @@ def _shield():
     H = "b6e792214fdc0151bc12ffe2fffb4c61d9de247b2975fe632b9608333c4d7afd"
     key_file = os.path.join(os.path.expanduser("~"), ".keovil", ".god_mode")
 
-    print(key_file)
-
     is_admin = False
     try:
         if os.path.exists(key_file):
@@ -18,9 +16,6 @@ def _shield():
         pass
 
     if not is_admin:
-        # 1. This prints to the ACTUAL terminal
-        print("Keovil Starting...")
-
         # 2. MANDATORY: Push the text out of the buffer now!
         sys.stdout.flush()
 
