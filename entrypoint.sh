@@ -46,6 +46,13 @@ wait_for_200() {
     done
 }
 
+# New helper to ensure model is actually in VRAM
+load_model_sync() {
+    # stream: false makes curl wait for the full load and a response
+    curl -s -X POST http://localhost:11434/api/generate \
+         -d "{\"model\": \"qwen2.5-coder:7b-instruct\", \"prompt\": \"hi\", \"stream\": false}" > /dev/null
+}
+
 clear
 echo -e "${BLUE}${BOLD}${SYMB_PULSE} KEVIL.IO | Keovil v1.0${NC}"
 
@@ -68,10 +75,10 @@ wait_for_200 "http://localhost:11434/api/tags" "$OLLAMA_PID" &
 spinner $! "Warming GPU Cores"
 echo -e "${BLUE}⌬${NC}  AI Service    ${GREEN}${BOLD}Online${NC}"
 
-# --- 3. Pre-warm Model into VRAM ---
-( curl -s -X POST http://localhost:11434/api/generate \
-     -d "{\"model\": \"qwen2.5-coder:7b-instruct\", \"keep_alive\": -1}" > /dev/null ) &
-spinner $! "Charging Model into VRAM"
+# --- 3. Pre-warm Model into VRAM (FIXED) ---
+# We now wait for the model to actually respond before moving on.
+load_model_sync &
+spinner $! "Charging 16GB VRAM Cache"
 echo -e "${BLUE}⚡${NC}  GPU Cache     ${GREEN}${BOLD}Charged${NC}"
 
 # --- 4. Flask Server Ignition ---

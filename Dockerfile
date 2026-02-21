@@ -91,6 +91,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
     CUDA_MODULE_LOADING=LAZY \
     PYTHONDONTWRITEBYTECODE=1
 
+ENV TRANSFORMERS_CACHE=/root/.cache/huggingface
+
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 ENTRYPOINT ["/entrypoint.sh"]
