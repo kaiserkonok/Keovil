@@ -179,7 +179,7 @@ class CollegeRAG:
         ).with_config({"tags": ["rewriter"]})
 
         qa_system_prompt = (
-            "You are Lora, a private AI Assistant. "
+            "You are Keo, a private AI Agent who works with unstructured data. "
             "Answer the question **only using the given context**. "
             "If names are misspelled, correct them using the context provided. "
             "Keep answers concise and friendly. Current time: {time}\n\n"
