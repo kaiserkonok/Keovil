@@ -48,7 +48,6 @@ wait_for_200() {
 
 clear
 echo -e "${BLUE}${BOLD}${SYMB_PULSE} KEVIL.IO | Keovil v1.0${NC}"
-echo -e "${GRAY}-------------------------------------------${NC}"
 
 # --- 1. Background Services ---
 export QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
@@ -89,10 +88,8 @@ fi
 echo -e "${BLUE}🌐${NC}  Interface     ${GREEN}${BOLD}Active${NC}"
 
 # --- 5. Final Clean Dashboard ---
-echo -e "${GRAY}-------------------------------------------${NC}"
 echo -e "${GREEN}${BOLD}${SYMB_OK} ALL SYSTEMS OPERATIONAL${NC}"
 echo -e "🔗 ACCESS LINK: ${BLUE}${BOLD}http://localhost:5000${NC}"
-echo -e "${GRAY}-------------------------------------------${NC}"
 echo -e "${GRAY}Press [Ctrl+C] to shutdown engine safely.${NC}"
 
 wait $APP_PID
