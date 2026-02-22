@@ -78,7 +78,7 @@ echo -e "${BLUE}⌬${NC}  AI Service    ${GREEN}${BOLD}Online${NC}"
 # --- 3. Pre-warm Model into VRAM (FIXED) ---
 # We now wait for the model to actually respond before moving on.
 load_model_sync &
-spinner $! "Charging 16GB VRAM Cache"
+spinner $! "Charging VRAM Cache"
 echo -e "${BLUE}⚡${NC}  GPU Cache     ${GREEN}${BOLD}Charged${NC}"
 
 # --- 4. Flask Server Ignition ---
