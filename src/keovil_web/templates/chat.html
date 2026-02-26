@@ -381,7 +381,7 @@
 
     <div class="query-bar">
       <div class="query-container">
-        <input id="inputBox" class="query-input" placeholder="Ask Lora anything..." autocomplete="off" autofocus />
+        <input id="inputBox" class="query-input" placeholder="Ask Keo anything..." autocomplete="off" autofocus />
         <button id="sendBtn" class="run-btn">Run</button>
       </div>
     </div>
@@ -424,10 +424,10 @@ const confirmDelBtn = document.getElementById('confirmDelBtn');
 
 let currentSessionId = null;
 
-let userId = localStorage.getItem('lora_user_id');
+let userId = localStorage.getItem('keo_user_id');
 if (!userId) {
     userId = 'user_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-    localStorage.setItem('lora_user_id', userId);
+    localStorage.setItem('keo_user_id', userId);
 }
 
 async function apiFetch(url, options = {}) {
@@ -564,12 +564,12 @@ function scrollToBottom() {
     messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
-let isLoraBusy = false; // The "Pro" Lock
+let isKeoBusy = false; // The "Pro" Lock
 
 async function handleQuery(query) {
-    if (isLoraBusy) return;
+    if (isKeoBusy) return;
 
-    isLoraBusy = true;
+    isKeoBusy = true;
     $('#ingest-status-card').stop(true, true).fadeOut(200);
     // UI Feedback: Immediately lock the buttons
     inputBox.disabled = true;
@@ -600,7 +600,7 @@ async function handleQuery(query) {
     } catch (err) {
         placeholder.textContent = "Connection lost. Please try again.";
     } finally {
-        isLoraBusy = false;
+        isKeoBusy = false;
         // ALWAYS re-enable here so you never get stuck
         inputBox.disabled = false;
         sendBtn.disabled = false;
@@ -610,7 +610,7 @@ async function handleQuery(query) {
 
 // Update the click handler to respect the lock
 sendBtn.onclick = () => {
-    if (isLoraBusy) return; // Don't even try if busy
+    if (isKeoBusy) return; // Don't even try if busy
     const q = inputBox.value.trim();
     if (!q) return;
     inputBox.value = '';
@@ -641,20 +641,14 @@ socket.on('system_status', function(data) {
 
     // 2. TOGGLE INPUT LOCK
     // We disable the input if the AI is answering OR if the engine is vectorizing
-    const shouldLockInput = isLoraBusy || isVectorizing;
-
-    inputBox.disabled = shouldLockInput;
-    sendBtn.disabled = shouldLockInput;
-
-    // Update placeholder text to explain why it's locked
-    if (isVectorizing && !isLoraBusy) {
+    const shouldLockInput = isKeoBusy || isVectorizing;
+    if (isVectorizing && !isKeoBusy) {
         inputBox.placeholder = "System updating... please wait.";
-    } else if (!isLoraBusy) {
-        inputBox.placeholder = "Ask Lora anything...";
+    } else if (!isKeoBusy) {
+        inputBox.placeholder = "Ask Keo anything...";
     }
 
-    // 3. UI VISIBILITY RULES
-    if (isLoraBusy) {
+    if (isKeoBusy) {
         card.stop(true, true).fadeOut(200);
         return;
     }
