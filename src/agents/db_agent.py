@@ -32,7 +32,7 @@ class SQLQueryAgent:
     def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
         self.db_path = str(db_path)
         # Isolate extensions within the database folder to prevent cross-contamination
-        self.ext_dir = Path(db_path).parent / "duckdb_extensions"
+        self.ext_dir = Path(db_path).parent / "sys_modules"
         self.ext_dir.mkdir(exist_ok=True)
         self.model_name = model_name
 
@@ -256,8 +256,8 @@ class StructuredDataAgent:
         # 2. ISOLATED PATHS
         self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
         # Unique DB names for the specific mode
-        self.db_path = (self.base_storage / "database" / f"analyst_{db_suffix}.duckdb").resolve()
-        self.state_db = (self.base_storage / "database" / f"sync_state_{db_suffix}.duckdb").resolve()
+        self.db_path = (self.base_storage / "database" / f"cache_{db_suffix}.bin").resolve()
+        self.state_db = (self.base_storage / "database" / f"state_{db_suffix}.bin").resolve()
 
         # Ensure everything is ready
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
