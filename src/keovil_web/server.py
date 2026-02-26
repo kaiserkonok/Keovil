@@ -1,14 +1,16 @@
-from gevent import monkey
-monkey.patch_all()
+import os
+import sys
+
+# Only apply gevent monkey patching in production mode
+if os.getenv("APP_MODE") == "production":
+    from gevent import monkey
+    monkey.patch_all()
 
 import torch
 def dummy_compile(fn=None, **kwargs):
     if fn is not None: return fn
     return lambda x: x
 torch.compile = dummy_compile
-
-import os
-import sys
 import shutil
 import json
 import sqlite3
@@ -275,6 +277,8 @@ except ImportError as e:
 # Flask Initialization
 # ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.jinja_env.auto_reload = True
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
