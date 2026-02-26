@@ -172,34 +172,16 @@
             outline: none; font-size: 16px; transition: all 0.3s ease;
             resize: none;
             min-height: 56px;
-            max-height: 200px;
+            max-height: 300px;
             overflow-y: auto;
             font-family: 'Inter', sans-serif;
             line-height: 1.5;
-        }
-
-        .query-input.expanded {
-            min-height: 150px;
-            max-height: 400px;
         }
 
         /* 1. THE BLUISH OUTLINE EFFECT (Restored) */
         .query-input:focus {
             border-color: var(--accent);
             box-shadow: 0 0 20px rgba(88, 166, 255, 0.15);
-        }
-
-        .input-hint {
-            display: flex;
-            justify-content: space-between;
-            width: 90%; max-width: 850px; margin: 8px auto 0;
-            font-size: 11px; color: var(--input-num);
-            font-family: 'Fira Code', monospace;
-        }
-
-        .input-hint kbd {
-            background: #21262d; padding: 2px 6px; border-radius: 4px;
-            border: 1px solid var(--border); font-size: 10px;
         }
 
         @media (max-width: 900px) {
@@ -314,15 +296,6 @@
         <button class="new-chat-btn" onclick="startNewChat()">
             <span>+</span> New Analysis
         </button>
-        <div style="margin-top: 12px;">
-            <div class="sidebar-label" style="margin: 8px 0 8px 5px;">Quick Actions</div>
-            <div style="display:flex; flex-wrap:wrap; gap:6px;">
-                <button onclick="quickQuery('Show me all tables')" style="background:#21262d; border:1px solid var(--border); color:var(--input-num); padding:6px 10px; border-radius:4px; font-size:11px; cursor:pointer; transition:0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--input-num)'">📋 Tables</button>
-                <button onclick="quickQuery('What is the total count of records?')" style="background:#21262d; border:1px solid var(--border); color:var(--input-num); padding:6px 10px; border-radius:4px; font-size:11px; cursor:pointer; transition:0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--input-num)'">🔢 Count</button>
-                <button onclick="quickQuery('Show me the first 10 rows')" style="background:#21262d; border:1px solid var(--border); color:var(--input-num); padding:6px 10px; border-radius:4px; font-size:11px; cursor:pointer; transition:0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--input-num)'">👁️ Preview</button>
-                <button onclick="quickQuery('Show me summary statistics')" style="background:#21262d; border:1px solid var(--border); color:var(--input-num); padding:6px 10px; border-radius:4px; font-size:11px; cursor:pointer; transition:0.2s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--input-num)'">📊 Stats</button>
-            </div>
-        </div>
     </div>
     <div class="session-container">
         <div class="sidebar-label">Recent History</div>
@@ -346,11 +319,7 @@
     </div>
 
     <div class="query-bar">
-        <textarea class="query-input" id="userInput" placeholder="Ask your data... (e.g., 'What is the total revenue by region?')" onkeydown="handleKey(event)" rows="1" autofocus></textarea>
-        <div class="input-hint">
-            <span><kbd>Ctrl</kbd> + <kbd>Enter</kbd> to expand</span>
-            <span><kbd>Enter</kbd> to run</span>
-        </div>
+        <textarea class="query-input" id="userInput" placeholder="Ask your data..." onkeydown="handleKey(event)" rows="1" autofocus></textarea>
     </div>
 </div>
 
@@ -469,20 +438,8 @@
     });
 
     async function handleKey(e) {
-        // Ctrl + Enter to expand/collapse
-        if (e.ctrlKey && e.key === 'Enter') {
-            e.preventDefault();
-            userInput.classList.toggle('expanded');
-            if (userInput.classList.contains('expanded')) {
-                userInput.style.height = '150px';
-            } else {
-                userInput.style.height = '56px';
-            }
-            return;
-        }
-        
-        // Regular Enter to submit
-        if (e.key === 'Enter' && !e.shiftKey && !userInput.classList.contains('expanded') && userInput.value.trim() !== '' && !userInput.disabled) {
+        // Enter to submit
+        if (e.key === 'Enter' && !e.shiftKey && userInput.value.trim() !== '' && !userInput.disabled) {
             e.preventDefault();
             const query = userInput.value;
             userInput.value = '';
@@ -493,10 +450,8 @@
     
     // Auto-resize textarea
     userInput.addEventListener('input', function() {
-        if (!this.classList.contains('expanded')) {
-            this.style.height = 'auto';
-            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
-        }
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 300) + 'px';
     });
 
     async function addCell(query) {
@@ -673,13 +628,6 @@
         }
     }
 
-    function quickQuery(query) {
-        userInput.value = query;
-        userInput.focus();
-        userInput.style.height = 'auto';
-        userInput.style.height = Math.min(userInput.scrollHeight, 200) + 'px';
-    }
-    
     window.onload = loadSessions;
 </script>
 </body>
