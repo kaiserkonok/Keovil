@@ -777,7 +777,20 @@
         async function deleteItem(path){
             if(!confirm(`Delete "${path}"?`)) return;
             const resp=await fetch('/api/explorer/files/delete',{method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({path})});
-            if((await resp.json()).ok) { refreshTree(); showPlaceholder(); }
+            if((await resp.json()).ok) { 
+                // Clear selection state after delete
+                selectedPath = null;
+                
+                // If deleted folder was current folder, reset to root
+                if (currentFolder && (path === currentFolder || path.startsWith(currentFolder + '/'))) {
+                    currentFolder = '';
+                }
+                
+                refreshTree(); 
+                showPlaceholder(); 
+                updateFileInfo('Explorer', 'Root');
+                hideFileActions();
+            }
         }
 
         async function renameItem(oldPath, oldName){
