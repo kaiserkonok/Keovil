@@ -91,14 +91,8 @@ if [ $OLLAMA_FOUND -eq 1 ]; then
     echo -e "${BLUE}⌬${NC}  Ollama       ${GREEN}${BOLD}Online ($OLLAMA_URL)${NC}"
     export OLLAMA_HOST=$OLLAMA_URL
 else
-    echo -e "${RED}✖${NC}  Ollama       ${RED}Not Found${NC}"
-    echo ""
-    echo -e "${GRAY}Please ensure Ollama is running on your host machine.${NC}"
-    echo -e "${GRAY}Install: https://ollama.com${NC}"
-    echo -e "${GRAY}Then run: ollama pull qwen2.5-coder:7b-instruct${NC}"
-    echo ""
-    echo -e "${YELLOW}If using Docker, ensure --add-host is set or use --network=host${NC}"
-    exit 1
+    echo -e "${RED}✖${NC}  Ollama       ${RED}Not Found - continuing anyway${NC}"
+    export OLLAMA_HOST="http://127.0.0.1:11434"
 fi
 
 # --- 3. Flask Server Ignition ---
