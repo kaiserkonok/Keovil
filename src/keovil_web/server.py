@@ -350,8 +350,6 @@ def initialize_engines():
                 # we don't set the global 'rag' to a half-broken object
                 temp_rag = CollegeRAG(
                     data_dir=str(DATA_DIR),
-                    llm_model=current_cfg["llm_model"],
-                    temperature=current_cfg["temperature"],
                     socketio=socketio
                 )
                 rag = temp_rag
