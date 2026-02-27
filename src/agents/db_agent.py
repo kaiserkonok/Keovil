@@ -29,18 +29,14 @@ SQL_THREAD_LOCK = threading.Lock()
 # SQL QUERY AGENT
 # ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_path, model_name="qwen2.5-coder:7b-instruct"):
+    def __init__(self, db_path):
         self.db_path = str(db_path)
         # Isolate extensions within the database folder to prevent cross-contamination
         self.ext_dir = Path(db_path).parent / "sys_modules"
         self.ext_dir.mkdir(exist_ok=True)
-        self.model_name = model_name
 
-        # Optimized for 16GB VRAM (Higher ctx + Flash Attention if supported)
-        self.llm = OllamaLLM(
-            model=self.model_name,
-            temperature=0,
-        )
+        from utils.model_engine import get_llm
+        self.llm = get_llm()
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:

@@ -19,9 +19,9 @@ from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-from langchain_ollama import OllamaLLM
 import knowledge_splitter
 from utils.document_processor import DocumentProcessor
+from utils.model_engine import get_llm
 from neural_db import ColBERTEngine
 import torch
 
@@ -88,7 +88,7 @@ def format_docs_safely(docs):
 # College RAG System
 # ----------------------
 class CollegeRAG:
-    def __init__(self, data_dir=None, top_k=5, llm_model='qwen2.5-coder:7b-instruct', temperature=0, socketio=None):
+    def __init__(self, data_dir=None, top_k=5, socketio=None):
         # ---------------------------------------------------------
         # 1. TOTAL ISOLATION LOGIC (SSD Side)
         # ---------------------------------------------------------
@@ -147,18 +147,8 @@ class CollegeRAG:
         # ---------------------------------------------------------
         # 3. LLM & RETRIEVER SETUP
         # ---------------------------------------------------------
-        ollama_base = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-
-        self.llm = OllamaLLM(
-            model=llm_model,
-            temperature=temperature,
-            base_url=ollama_base
-        )
-        self.query_llm = OllamaLLM(
-            model=llm_model,
-            temperature=0,
-            base_url=ollama_base
-        )
+        self.llm = get_llm()
+        self.query_llm = get_llm()
 
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
