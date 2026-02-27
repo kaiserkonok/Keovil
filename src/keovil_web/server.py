@@ -1,11 +1,6 @@
 import os
 import sys
 
-# Only apply gevent monkey patching in production mode
-if os.getenv("APP_MODE") == "production":
-    from gevent import monkey
-    monkey.patch_all()
-
 import shutil
 import json
 import sqlite3
