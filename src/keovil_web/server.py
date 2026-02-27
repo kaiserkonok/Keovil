@@ -6,11 +6,6 @@ if os.getenv("APP_MODE") == "production":
     from gevent import monkey
     monkey.patch_all()
 
-import torch
-def dummy_compile(fn=None, **kwargs):
-    if fn is not None: return fn
-    return lambda x: x
-torch.compile = dummy_compile
 import shutil
 import json
 import sqlite3
@@ -50,7 +45,6 @@ HOME_STORAGE = Path(STORAGE_STR).absolute()
 # 4. Standardized sub-folders (relative to the isolated HOME_STORAGE)
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-SETTINGS_FILE = HOME_STORAGE / "settings.json"
 
 # Mode-specific chat history to prevent cross-talk
 CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
@@ -223,37 +217,7 @@ def init_chat_db():
 init_chat_db()
 
 # ---------------------------------------------------------
-# Settings Management (Optimized for RTX 5060 Ti)
-# ---------------------------------------------------------
-def load_settings():
-    # We force the Coder model for best performance in SQL and RAG
-    defaults = {
-        "llm_model": "qwen2.5-coder:7b-instruct",
-        "temperature": 0.0,
-        "num_ctx": 16384  # High context for college documents
-    }
-    if SETTINGS_FILE.exists():
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                saved = json.load(f)
-                # Ensure we don't accidentally load an old 'dumb' model name
-                saved["llm_model"] = "qwen2.5-coder:7b-instruct"
-                return {**defaults, **saved}
-        except Exception:
-            return defaults
-    return defaults
-
-def save_settings(data):
-    # Sanitize data before saving to ensure accuracy
-    sanitized_data = {
-        "llm_model": "qwen2.5-coder:7b-instruct", # Hard-locked
-        "temperature": min(float(data.get("temperature", 0.0)), 0.5), # Cap at 0.5
-        "num_ctx": 16384
-    }
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(sanitized_data, f)
-
-current_cfg = load_settings()
+DEFAULT_MODEL = "qwen2.5-coder:7b-instruct"
 
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
@@ -328,7 +292,7 @@ def initialize_engines():
         # --- 1. Ollama Hardware Handshake ---
         try:
             import requests
-            model_name = current_cfg["llm_model"]
+            model_name = DEFAULT_MODEL
             update_status(f"Verifying {model_name} layers...", progress=15)
 
             # Check Ollama connection
@@ -631,31 +595,6 @@ def delete_session():
 # ---------------------------------------------------------
 # SETTINGS & FILE EXPLORER API
 # ---------------------------------------------------------
-@app.route("/api/settings", methods=["GET", "POST"])
-def manage_settings():
-    global rag, sql_system
-    if request.method == "GET":
-        return jsonify(load_settings())
-
-    data = request.json
-    save_settings(data)
-
-    new_cfg = load_settings()
-
-    if rag:
-        # Only the RAG gets the 'User' temperature for flexibility
-        rag.llm.temperature = new_cfg["temperature"]
-        print(f"{Fore.CYAN}[System] RAG Intelligence updated: {new_cfg['temperature']}")
-
-    if sql_system:
-        # WE DO NOT USE new_cfg["temperature"] here.
-        # We keep SQL at 0.0 ALWAYS for accuracy.
-        if hasattr(sql_system, 'llm'):
-            sql_system.llm.temperature = 0.0
-        print(f"{Fore.YELLOW}[System] SQL Logic locked at 0.0 for accuracy")
-
-    return jsonify({"ok": True})
-
 @app.route("/api/explorer/files")
 def list_files():
     rel_path = safe_rel_path(request.args.get("path"))
