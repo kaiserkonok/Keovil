@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
     image: keovil-local:latest
     container_name: keovil_container
+    network_mode: host
     deploy:
       resources:
         reservations:
@@ -13,17 +14,12 @@ services:
               count: all
               capabilities: [gpu]
     shm_size: '4gb'
-    ports:
-      - "5000:5000"
-      - "6333:6333"
     environment:
       - APP_MODE=production
+      - OLLAMA_HOST=localhost:11434
       - OLLAMA_KEEP_ALIVE=-1
-      - OLLAMA_FLASH_ATTENTION=1
       - CUDA_MODULE_LOADING=LAZY
     volumes:
-      # These match your 'docker run' exactly
-      - ${HOME}/.keovil:/root/.keovil
       - ${HOME}/.keovil_storage:/root/.keovil_storage
       - ${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface

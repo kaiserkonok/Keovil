@@ -264,8 +264,9 @@ def initialize_engines():
     """
 
     # Dynamic URL: Docker vs Localhost
-    # Updated for universal compatibility
-    OLLAMA_BASE_URL = "http://localhost:11434"
+    # Uses OLLAMA_HOST env var (defaults to localhost for local dev)
+    ollama_host = os.getenv("OLLAMA_HOST", "localhost:11434")
+    OLLAMA_BASE_URL = f"http://{ollama_host}"
 
     global rag, sql_system
 
@@ -283,9 +284,10 @@ def initialize_engines():
             # Check Ollama connection
             r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
             if r.status_code != 200:
-                print(f"{Fore.YELLOW}Model missing. Pulling...{Style.RESET_ALL}")
-                requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-            print(f"{Fore.GREEN}Model verified.{Style.RESET_ALL}")
+                print(f"{Fore.RED}Model '{model_name}' not found on Ollama.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Please run: ollama pull {model_name}{Style.RESET_ALL}")
+            else:
+                print(f"{Fore.GREEN}Model verified.{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
 
@@ -347,7 +349,7 @@ def safe_rel_path(p: str | None) -> str:
 def gatekeeper():
     """The High-Level Bouncer."""
     # 1. Exempt routes (Don't lock the door if we're trying to put the key in)
-    exempt_paths = ['/static', '/activate', '/api/bootstrap']
+    exempt_paths = ['/static', '/activate', '/api/bootstrap', '/', '/index.html']
     if any(request.path.startswith(path) for path in exempt_paths):
         return None
 
