@@ -18,7 +18,7 @@ from flask import (
 import traceback
 from threading import Thread
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
-from colorama import Fore, Style, init, Back
+from colorama import Fore, Style, init
 import hashlib
 import platform
 import subprocess
@@ -274,41 +274,25 @@ def initialize_engines():
         if rag is not None and sql_system is not None:
             return
 
-        def update_status(msg, state="loading", progress=0):
-            prefix = f"{Fore.BLACK}{Back.CYAN} ENGINE {Style.RESET_ALL}"
-            print(f"{prefix} {Fore.WHITE}{msg} {Fore.CYAN}[{progress}%]")
-            socketio.emit('system_init_status', {
-                "message": msg,
-                "state": state,
-                "progress": progress
-            })
-
-        # Reloader check (Standard Flask/Gevent behavior)
-        is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-        is_debug_disabled = not app.debug
-
-        update_status("Detecting GPU Hardware...", progress=5)
-
         # --- 1. Ollama Hardware Handshake ---
         try:
             import requests
             model_name = DEFAULT_MODEL
-            update_status(f"Verifying {model_name} layers...", progress=15)
+            print(f"{Fore.CYAN}Verifying {model_name}...{Style.RESET_ALL}")
 
             # Check Ollama connection
             r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
             if r.status_code != 200:
-                update_status("Model missing. Initiating pull...", progress=30)
+                print(f"{Fore.YELLOW}Model missing. Pulling...{Style.RESET_ALL}")
                 requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-            update_status("Neural weights verified.", progress=45)
+            print(f"{Fore.GREEN}Model verified.{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
-            update_status("Ollama Connection Pending...", progress=45)
 
         # --- 2. RAG & VRAM Allocation ---
         if CollegeRAG and rag is None:
             try:
-                update_status("Allocating VRAM & Loading ColBERT...", progress=65)
+                print(f"{Fore.CYAN}Loading RAG engine...{Style.RESET_ALL}")
 
                 # We initialize into a local variable first to ensure
                 # we don't set the global 'rag' to a half-broken object
@@ -317,36 +301,32 @@ def initialize_engines():
                     socketio=socketio
                 )
                 rag = temp_rag
-                update_status("Knowledge Engine Synchronized.", progress=85)
+                print(f"{Fore.GREEN}RAG engine ready.{Style.RESET_ALL}")
             except Exception as e:
-                # CRITICAL: This is where your DNS Error -3 is hiding.
                 print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
                 traceback.print_exc()
-                update_status(f"RAG Error: {str(e)}", state="error")
                 rag = None  # Ensure it stays None so api_chat knows it's broken
 
         # --- 3. SQL Agent Boot ---
         if StructuredDataAgent and sql_system is None:
             try:
-                update_status("Waking up SQL Agent...", progress=95)
+                print(f"{Fore.CYAN}Loading SQL agent...{Style.RESET_ALL}")
                 temp_sql = StructuredDataAgent(socketio=socketio)
                 if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
                     temp_sql.agent.llm.temperature = 0.0
                 temp_sql.start_monitoring()
                 sql_system = temp_sql
+                print(f"{Fore.GREEN}SQL agent ready.{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
                 traceback.print_exc()
-                update_status("SQL Agent Failure", state="error")
                 sql_system = None
 
-        # --- 4. Final Handshake ---
+        # --- 4. Final ---
         if rag and sql_system:
-            import time
-            time.sleep(0.8)
-            update_status("System Fully Operational.", state="ready", progress=100)
+            print(f"{Fore.GREEN}All engines ready.{Style.RESET_ALL}")
         else:
-            update_status("System Partial Failure.", state="error", progress=0)
+            print(f"{Fore.RED}Partial initialization.{Style.RESET_ALL}")
 
 
 # Trigger initialization
