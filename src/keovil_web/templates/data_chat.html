@@ -204,6 +204,40 @@
             opacity: 0.6;
         }
 
+        /* --- Delete Modal Styles --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            animation: modalFade 0.2s ease;
+        }
+        .modal-box {
+            background: var(--cell-bg);
+            border: 1px solid var(--border);
+            padding: 24px;
+            border-radius: 12px;
+            width: 300px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .modal-msg { font-size: 14px; margin-bottom: 20px; color: var(--text-main); }
+        .modal-btns { display: flex; gap: 10px; }
+        .m-btn {
+            flex: 1; padding: 10px; border-radius: 6px; cursor: pointer;
+            font-family: 'Inter', sans-serif; font-size: 12px; transition: 0.2s;
+            border: 1px solid var(--border);
+        }
+        .m-cancel { background: transparent; color: var(--input-num); }
+        .m-cancel:hover { background: var(--cell-bg); color: var(--text-main); }
+        .m-delete { background: rgba(255, 123, 114, 0.1); color: #ff7b72; border-color: rgba(255, 123, 114, 0.3); }
+        .m-delete:hover { background: #ff7b72; color: white; }
+        @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
+
         /* --- NOTEBOOK DESIGN --- */
         .main-content {
             flex-grow: 1; overflow-y: auto;
@@ -443,13 +477,12 @@
     </div>
 </div>
 
-<div id="customModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px); z-index:2000; align-items:center; justify-content:center;">
-    <div style="background:var(--cell-bg); border:1px solid var(--border); padding:30px; border-radius:12px; width:90%; max-width:400px; box-shadow:0 20px 50px rgba(0,0,0,0.5); text-align:center;">
-        <div style="color:var(--accent); font-family:'Fira Code'; font-size:14px; margin-bottom:15px; text-transform:uppercase; letter-spacing:1px;">System Alert</div>
-        <div style="font-size:16px; margin-bottom:25px; color:var(--text-main);" id="modalMessage">Delete this analysis session?</div>
-        <div style="display:flex; gap:10px; justify-content:center;">
-            <button onclick="closeModal(false)" style="background:transparent; border:1px solid var(--border); color:var(--input-num); padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; transition:0.2s;">Cancel</button>
-            <button onclick="closeModal(true)" style="background:#ff7b72; border:none; color:white; padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; font-weight:600; transition:0.2s;">Confirm Delete</button>
+<div id="deleteModal" class="modal-overlay">
+    <div class="modal-box">
+        <div class="modal-msg">Delete this analysis session?</div>
+        <div class="modal-btns">
+            <button class="m-btn m-cancel" onclick="closeModal(false)">Cancel</button>
+            <button class="m-btn m-delete" onclick="closeModal(true)">Delete</button>
         </div>
     </div>
 </div>
@@ -534,16 +567,15 @@
     });
 
     function showConfirm(message) {
-        document.getElementById('modalMessage').innerText = message;
-        document.getElementById('customModal').style.display = 'flex';
-        // Return a promise that will be resolved when the user clicks a button
+        document.querySelector('.modal-msg').innerText = message;
+        document.getElementById('deleteModal').style.display = 'flex';
         return new Promise((resolve) => {
             modalResolve = resolve;
         });
     }
 
     function closeModal(result) {
-        document.getElementById('customModal').style.display = 'none';
+        document.getElementById('deleteModal').style.display = 'none';
         if (modalResolve) modalResolve(result);
     }
 
