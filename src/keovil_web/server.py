@@ -263,9 +263,8 @@ def initialize_engines():
     Optimized for RTX 5060 Ti performance.
     """
 
-    # Dynamic URL: Docker vs Localhost
-    # Uses OLLAMA_HOST env var (defaults to localhost for local dev)
-    ollama_host = os.getenv("OLLAMA_HOST", "localhost:11434")
+    # Use OLLAMA_HOST env var, default to localhost:11434 for network mode
+    ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1:11434")
     OLLAMA_BASE_URL = f"http://{ollama_host}"
 
     global rag, sql_system

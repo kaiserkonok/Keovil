@@ -21,6 +21,7 @@ services:
       - CUDA_MODULE_LOADING=LAZY
     volumes:
       - ${HOME}/.keovil_storage:/root/.keovil_storage
+      - ${HOME}/.keovil:/root/.keovil
       - ${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage
       - ${HOME}/.cache/huggingface:/root/.cache/huggingface
     restart: unless-stopped
