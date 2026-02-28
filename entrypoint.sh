@@ -6,6 +6,7 @@ GREEN='\033[38;5;82m'   # Neon Green
 BLUE='\033[38;5;39m'    # Deep Sky Blue
 GRAY='\033[38;5;244m'   # Slate Gray
 RED='\033[38;5;196m'    # Vivid Red
+YELLOW='\033[38;5;226m'  # Yellow
 BOLD='\033[1m'
 NC='\033[0m'
 
@@ -91,8 +92,15 @@ if [ $OLLAMA_FOUND -eq 1 ]; then
     echo -e "${BLUE}⌬${NC}  Ollama       ${GREEN}${BOLD}Online ($OLLAMA_URL)${NC}"
     export OLLAMA_HOST=$OLLAMA_URL
 else
-    echo -e "${RED}✖${NC}  Ollama       ${RED}Not Found - continuing anyway${NC}"
-    export OLLAMA_HOST="http://127.0.0.1:11434"
+    echo -e "${RED}✖${NC}  Ollama       ${RED}Not Found${NC}"
+    echo -e "${RED}=================================================${NC}"
+    echo -e "${RED}Ollama is required but not found on your system.${NC}"
+    echo -e "${RED}Please install and run Ollama: ${NC}"
+    echo -e "${YELLOW}  1. Install: curl -fsSL https://ollama.com/install.sh | sh${NC}"
+    echo -e "${YELLOW}  2. Pull model: ollama pull qwen2.5-coder:7b-instruct${NC}"
+    echo -e "${YELLOW}  3. Start: ollama serve${NC}"
+    echo -e "${RED}=================================================${NC}"
+    exit 1
 fi
 
 # --- 3. Flask Server Ignition ---

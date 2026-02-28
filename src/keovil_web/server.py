@@ -260,7 +260,9 @@ def initialize_engines():
 
     # Use OLLAMA_HOST env var, default to localhost:11434 for network mode
     ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1:11434")
-    OLLAMA_BASE_URL = f"http://{ollama_host}"
+    if not ollama_host.startswith("http"):
+        ollama_host = f"http://{ollama_host}"
+    OLLAMA_BASE_URL = ollama_host
 
     global rag, sql_system
 
@@ -280,10 +282,14 @@ def initialize_engines():
             if r.status_code != 200:
                 print(f"{Fore.RED}Model '{model_name}' not found on Ollama.{Style.RESET_ALL}")
                 print(f"{Fore.YELLOW}Please run: ollama pull {model_name}{Style.RESET_ALL}")
+                import sys
+                sys.exit(1)
             else:
                 print(f"{Fore.GREEN}Model verified.{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
+            import sys
+            sys.exit(1)
 
         # --- 2. RAG & VRAM Allocation ---
         if CollegeRAG and rag is None:

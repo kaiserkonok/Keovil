@@ -13,14 +13,10 @@ services:
               count: all
               capabilities: [gpu]
     shm_size: '4gb'
-    ports:
-      - "5000:5000"
-      - "6333:6333"
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    network_mode: host
     environment:
       - APP_MODE=production
-      - OLLAMA_HOST=host.docker.internal:11434
+      - OLLAMA_HOST=localhost:11434
       - OLLAMA_KEEP_ALIVE=-1
       - CUDA_MODULE_LOADING=LAZY
     volumes:
