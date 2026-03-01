@@ -18,14 +18,17 @@ RUN apt-get update && apt-get install -y \
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# 3. INSTALL REQUIREMENTS
+# 3. Install PyTorch with CUDA support first
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu124
+
+# 4. INSTALL REQUIREMENTS
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. DOWNLOAD COLBERT
+# 5. DOWNLOAD COLBERT
 RUN python3 -c "from pylate import models; models.ColBERT(model_name_or_path='lightonai/GTE-ModernColBERT-v1', device='cpu')"
 
-# 5. COMPILE CODE
+# 6. COMPILE CODE
 COPY . .
 RUN NPROC=$(nproc) python3 compile.py build_ext --inplace
 
