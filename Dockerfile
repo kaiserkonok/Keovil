@@ -29,6 +29,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 RUN python3 -c "from pylate import models; models.ColBERT(model_name_or_path='lightonai/GTE-ModernColBERT-v1', device='cpu')"
 
 # 6. COMPILE CODE
+RUN pip install --no-cache-dir Cython
 COPY . .
 RUN NPROC=$(nproc) python3 compile.py build_ext --inplace
 
