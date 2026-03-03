@@ -69,28 +69,26 @@ ollama pull qwen2.5-coder:7b-instruct
 
 ### Start Ollama
 
+In a separate terminal, run:
 ```bash
 ollama serve
 ```
 
 ---
 
-## Step 3: Install & Ignite Keovil
+## Step 3: Install Keovil
 
-### Run Keovil
-
-```bash
-docker compose up -d
-```
-
-Or with docker run:
+Run this command to install Keovil:
 
 ```bash
-docker run --network=host \
-  -v ~/.keovil_storage:/data \
-  -p 5000:5000 \
-  keovil-local
+bash <(curl -s https://kevil.io/Keovil/install/)
 ```
+
+This will:
+1. Download the latest Keovil image
+2. Create the necessary directories
+3. Register the `keovil` command
+4. Launch Keovil automatically
 
 ---
 
@@ -99,14 +97,37 @@ docker run --network=host \
 1. **Ignition:** Watch the terminal for the live status dashboard.
 2. **Access:** Once the dashboard shows **[✔] ALL SYSTEMS OPERATIONAL**, open your browser to: **[http://localhost:5000](http://localhost:5000)**
 3. **Adding master key**: When you try to use `Keovil` for the first time, it will ask you for a master key. For getting the master key, you need to **[Register here](https://kevil.io/sync/)** and get the master key from the top right of the home page. You just need to click the code and it would be copied to your clipboard.
-4. **Control:** To stop the engine and free up your GPU, press `Ctrl + C` or run `docker compose down`.
+4. **Control:** To stop the engine and free up your GPU, press `Ctrl + C`.
+
+---
+
+## Manual Run (Alternative)
+
+If you prefer to run manually without the installer:
+
+```bash
+docker run -it --rm \
+  --name keovil_container \
+  --network=host \
+  --gpus all \
+  --shm-size=4gb \
+  -e APP_MODE=production \
+  -e OLLAMA_HOST=localhost:11434 \
+  -e OLLAMA_KEEP_ALIVE=-1 \
+  -e CUDA_MODULE_LOADING=LAZY \
+  -v "${HOME}/.keovil:/root/.keovil" \
+  -v "${HOME}/.keovil_storage:/root/.keovil_storage" \
+  -v "${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage" \
+  -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
+  kevilai/keovil:latest
+```
 
 ---
 
 ## Architecture
 
 - **Ollama:** Runs on your host machine (not in Docker)
-- **Keovil:** Runs in Docker, connects to host's Ollama via network
+- **Keovil:** Runs in Docker, connects to host's Ollama via host network
 - **Data:** Stored in `~/.keovil_storage` (persists across restarts)
 - **GPU:** Shared with host for fast ColBERT embeddings
 
@@ -117,8 +138,8 @@ docker run --network=host \
 ### Ollama Not Found
 If you see "Ollama is required but not found", make sure:
 1. Ollama is installed: `curl -fsSL https://ollama.com/install.sh | sh`
-2. Ollama is running serve`
-: `ollama3. Model is pulled: `ollama pull qwen2.5-coder:7b-instruct`
+2. Ollama is running: `ollama serve`
+3. Model is pulled: `ollama pull qwen2.5-coder:7b-instruct`
 
 ### GPU Not Detected
 Ensure NVIDIA Container Toolkit is installed and Docker can access your GPU:
