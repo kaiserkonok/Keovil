@@ -99,27 +99,11 @@ This will:
 3. **Adding master key**: When you try to use `Keovil` for the first time, it will ask you for a master key. For getting the master key, you need to **[Register here](https://kevil.io/sync/)** and get the master key from the top right of the home page. You just need to click the code and it would be copied to your clipboard.
 4. **Control:** To stop the engine and free up your GPU, press `Ctrl + C`.
 
----
+### Running Keovil Again
 
-## Manual Run (Alternative)
-
-If you prefer to run manually without the installer:
-
+After the first run, simply type:
 ```bash
-docker run -it --rm \
-  --name keovil_container \
-  --network=host \
-  --gpus all \
-  --shm-size=4gb \
-  -e APP_MODE=production \
-  -e OLLAMA_HOST=localhost:11434 \
-  -e OLLAMA_KEEP_ALIVE=-1 \
-  -e CUDA_MODULE_LOADING=LAZY \
-  -v "${HOME}/.keovil:/root/.keovil" \
-  -v "${HOME}/.keovil_storage:/root/.keovil_storage" \
-  -v "${HOME}/.keovil_storage/qdrant_storage:/qdrant/storage" \
-  -v "${HOME}/.cache/huggingface:/root/.cache/huggingface" \
-  kevilai/keovil:latest
+keovil
 ```
 
 ---
