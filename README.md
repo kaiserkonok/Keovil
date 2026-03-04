@@ -1,9 +1,3 @@
-# Keovil - Private AI Data Agent
-
-A high-performance interface for document query, structured data analysis, and real-time file engineering.
-
----
-
 ## What is Keovil?
 
 Keovil is a private AI Agent that understands everything you own. From PDFs and text files to complex Excel sheets and databases, just ask a question in plain English and get an answer.
