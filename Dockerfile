@@ -2,7 +2,7 @@
 FROM qdrant/qdrant:v1.16.2 AS qdrant_source
 
 # --- STAGE 1: THE FORGE (BUILDER) ---
-FROM nvidia/cuda:12.4.1-devel-ubuntu22.04 AS builder
+FROM nvidia/cuda:12.8.1-devel-ubuntu22.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /build
 
@@ -19,7 +19,7 @@ RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # 3. Install PyTorch with CUDA support first
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu124
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu128
 
 # 4. INSTALL REQUIREMENTS
 COPY requirements.txt .
@@ -34,7 +34,7 @@ COPY . .
 RUN NPROC=$(nproc) python3 compile.py build_ext --inplace
 
 # --- STAGE 2: THE VAULT (PRODUCTION) ---
-FROM nvidia/cuda:12.4.1-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.1-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
