@@ -41,103 +41,143 @@
     /* --- Sidebar --- */
     .sidebar {
       width: var(--sidebar-width);
-      background: var(--bg-sidebar);
+      background: #0d1117;
       border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
       z-index: 100;
     }
 
-    .sidebar-header {
-      padding: 25px 20px;
+    .sidebar-header { 
+      padding: 20px; 
       border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
+      background: linear-gradient(180deg, #0d1117 0%, #0a0c10 100%);
     }
 
     .new-chat-btn {
       width: 100%;
-      background: transparent;
-      border: 1px dashed var(--border);
+      background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
+      border: 1px solid var(--border);
       color: var(--accent);
-      padding: 12px;
-      border-radius: 8px;
+      padding: 14px;
+      border-radius: 10px;
       cursor: pointer;
       font-family: 'Fira Code', monospace;
-      font-size: 12px;
-      transition: all 0.2s;
-    }
-
-    .new-chat-btn:hover {
-      border-color: var(--accent);
-      background: rgba(88, 166, 255, 0.05);
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      transition: all 0.3s ease;
       letter-spacing: 0.5px;
     }
 
-    .history-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 15px 10px;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      min-height: 0;
+    .new-chat-btn:hover {
+      background: linear-gradient(135deg, #21262d 0%, #161b22 100%);
+      border-color: var(--accent);
+      box-shadow: 0 0 20px rgba(88, 166, 255, 0.2), 0 4px 15px rgba(0,0,0,0.3);
+      transform: translateY(-2px);
     }
 
-    .history-container {
+    .new-chat-btn:active {
+      transform: translateY(0);
+    }
+
+    .session-container { 
+      flex-grow: 1; 
+      overflow-y: auto; 
+      padding: 10px;
+    }
+    
+    .history-section-title {
+      font-family: 'Fira Code', monospace;
+      font-size: 10px; 
+      color: var(--muted);
+      text-transform: uppercase; 
+      margin: 15px 10px 10px;
+      letter-spacing: 1.5px;
+      font-weight: 500;
+    }
+
+    .session-item {
       display: flex;
       align-items: center;
-      group: hover;
-      border-radius: 8px;
-      transition: 0.2s;
-      flex-shrink: 0;
+      justify-content: space-between;
+      padding: 12px 14px;
+      margin-bottom: 6px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--muted);
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      border: 1px solid transparent;
+      position: relative;
+      overflow: hidden;
     }
 
-    .history-item {
+    .session-item::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 3px;
+      height: 0;
+      background: var(--accent);
+      border-radius: 0 2px 2px 0;
+      transition: height 0.2s ease;
+    }
+
+    .session-item:hover { 
+      background: rgba(88, 166, 255, 0.08);
+      color: var(--text-main);
+      padding-left: 16px;
+    }
+
+    .session-item:hover::before {
+      height: 60%;
+    }
+
+    .session-item.active {
+      background: linear-gradient(135deg, rgba(88, 166, 255, 0.15) 0%, rgba(88, 166, 255, 0.05) 100%);
+      color: var(--accent);
+      border-color: rgba(88, 166, 255, 0.2);
+      box-shadow: 0 4px 15px rgba(88, 166, 255, 0.1);
+    }
+
+    .session-item.active::before {
+      height: 80%;
+    }
+
+    .session-title {
       flex: 1;
-      padding: 10px 14px;
-      font-size: 13px;
-      cursor: pointer;
-      color: var(--muted);
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      transition: 0.2s;
+      font-weight: 400;
+      text-align: left;
     }
 
-    .history-container:hover {
-      background: var(--user-bg);
-    }
-
-    .history-container:hover .history-item {
-      color: var(--text-main);
-    }
-
-    .history-container.active {
-      background: rgba(88, 166, 255, 0.08);
-      border: 1px solid rgba(88, 166, 255, 0.3);
-    }
-
-    .history-container.active .history-item {
-      color: var(--accent);
-    }
-
-    .delete-session-btn {
-      background: none;
+    .delete-btn {
+      opacity: 0;
+      background: transparent;
       border: none;
-      color: transparent;
-      padding: 0 12px;
-      cursor: pointer;
-      font-size: 16px;
-      transition: 0.2s;
-    }
-
-    .history-container:hover .delete-session-btn {
       color: var(--muted);
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s;
+      font-size: 16px;
     }
 
-    .delete-session-btn:hover {
-      color: var(--danger) !important;
-      transform: scale(1.2);
+    .session-item:hover .delete-btn {
+      opacity: 1;
+    }
+
+    .delete-btn:hover {
+      color: var(--danger);
+      background: rgba(255, 123, 114, 0.1);
     }
 
     /* --- Sexy Modal Styles (Added Only) --- */
@@ -364,9 +404,14 @@
 
   <div class="sidebar">
     <div class="sidebar-header">
-      <button class="new-chat-btn" onclick="startNewChat()">+ New Session</button>
+      <button class="new-chat-btn" onclick="startNewChat()">
+        <span>+</span> New Session
+      </button>
     </div>
-    <div id="historyList" class="history-list"></div>
+    <div class="session-container">
+      <div class="history-section-title">Recent Sessions</div>
+      <div id="historyList"></div>
+    </div>
   </div>
 
   <div class="content-wrapper">
@@ -381,7 +426,7 @@
 
     <div class="query-bar">
       <div class="query-container">
-        <input id="inputBox" class="query-input" placeholder="Ask Lora anything..." autocomplete="off" autofocus />
+        <input id="inputBox" class="query-input" placeholder="Ask Keo anything..." autocomplete="off" autofocus />
         <button id="sendBtn" class="run-btn">Run</button>
       </div>
     </div>
@@ -424,10 +469,10 @@ const confirmDelBtn = document.getElementById('confirmDelBtn');
 
 let currentSessionId = null;
 
-let userId = localStorage.getItem('lora_user_id');
+let userId = localStorage.getItem('keo_user_id');
 if (!userId) {
     userId = 'user_' + Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
-    localStorage.setItem('lora_user_id', userId);
+    localStorage.setItem('keo_user_id', userId);
 }
 
 async function apiFetch(url, options = {}) {
@@ -457,19 +502,18 @@ async function loadSessions() {
         historyList.innerHTML = '';
         sessions.forEach(s => {
             const container = document.createElement('div');
-            container.className = `history-container ${currentSessionId == s.id ? 'active' : ''}`;
+            container.className = `session-item ${currentSessionId == s.id ? 'active' : ''}`;
 
             const item = document.createElement('div');
-            item.className = 'history-item';
+            item.className = 'session-title';
             item.textContent = s.title;
             item.onclick = () => switchSession(s.id);
 
             const delBtn = document.createElement('button');
-            delBtn.className = 'delete-session-btn';
+            delBtn.className = 'delete-btn';
             delBtn.innerHTML = '&times;';
             delBtn.onclick = (e) => {
                 e.stopPropagation();
-                // Instead of native confirm, show sexy modal
                 deleteModal.style.display = 'flex';
                 confirmDelBtn.onclick = () => executeDelete(s.id);
             };
@@ -564,12 +608,12 @@ function scrollToBottom() {
     messages.parentElement.scrollTop = messages.parentElement.scrollHeight;
 }
 
-let isLoraBusy = false; // The "Pro" Lock
+let isKeoBusy = false; // The "Pro" Lock
 
 async function handleQuery(query) {
-    if (isLoraBusy) return;
+    if (isKeoBusy) return;
 
-    isLoraBusy = true;
+    isKeoBusy = true;
     $('#ingest-status-card').stop(true, true).fadeOut(200);
     // UI Feedback: Immediately lock the buttons
     inputBox.disabled = true;
@@ -600,7 +644,7 @@ async function handleQuery(query) {
     } catch (err) {
         placeholder.textContent = "Connection lost. Please try again.";
     } finally {
-        isLoraBusy = false;
+        isKeoBusy = false;
         // ALWAYS re-enable here so you never get stuck
         inputBox.disabled = false;
         sendBtn.disabled = false;
@@ -610,7 +654,7 @@ async function handleQuery(query) {
 
 // Update the click handler to respect the lock
 sendBtn.onclick = () => {
-    if (isLoraBusy) return; // Don't even try if busy
+    if (isKeoBusy) return; // Don't even try if busy
     const q = inputBox.value.trim();
     if (!q) return;
     inputBox.value = '';
@@ -641,20 +685,14 @@ socket.on('system_status', function(data) {
 
     // 2. TOGGLE INPUT LOCK
     // We disable the input if the AI is answering OR if the engine is vectorizing
-    const shouldLockInput = isLoraBusy || isVectorizing;
-
-    inputBox.disabled = shouldLockInput;
-    sendBtn.disabled = shouldLockInput;
-
-    // Update placeholder text to explain why it's locked
-    if (isVectorizing && !isLoraBusy) {
+    const shouldLockInput = isKeoBusy || isVectorizing;
+    if (isVectorizing && !isKeoBusy) {
         inputBox.placeholder = "System updating... please wait.";
-    } else if (!isLoraBusy) {
-        inputBox.placeholder = "Ask Lora anything...";
+    } else if (!isKeoBusy) {
+        inputBox.placeholder = "Ask Keo anything...";
     }
 
-    // 3. UI VISIBILITY RULES
-    if (isLoraBusy) {
+    if (isKeoBusy) {
         card.stop(true, true).fadeOut(200);
         return;
     }

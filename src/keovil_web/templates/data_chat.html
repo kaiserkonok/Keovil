@@ -44,48 +44,199 @@
             z-index: 1001;
         }
 
-        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); }
+        .sidebar-header { 
+            padding: 20px; 
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, #0d1117 0%, #0a0c10 100%);
+        }
 
         .new-chat-btn {
             width: 100%;
-            background: #21262d;
+            background: linear-gradient(135deg, #1a1f2e 0%, #0d1117 100%);
             border: 1px solid var(--border);
-            color: var(--text-main);
-            padding: 12px;
-            border-radius: 6px;
+            color: var(--accent);
+            padding: 14px;
+            border-radius: 10px;
             cursor: pointer;
-            font-family: 'Inter', sans-serif;
-            font-size: 14px;
-            font-weight: 600;
+            font-family: 'Fira Code', monospace;
+            font-size: 13px;
+            font-weight: 500;
             display: flex; align-items: center; justify-content: center; gap: 10px;
             transition: all 0.3s ease;
+            letter-spacing: 0.5px;
         }
 
         .new-chat-btn:hover {
-            background: #30363d;
+            background: linear-gradient(135deg, #21262d 0%, #161b22 100%);
             border-color: var(--accent);
-            box-shadow: 0 0 15px rgba(88, 166, 255, 0.1);
+            box-shadow: 0 0 20px rgba(88, 166, 255, 0.2), 0 4px 15px rgba(0,0,0,0.3);
+            transform: translateY(-2px);
         }
 
-        .session-container { flex-grow: 1; overflow-y: auto; padding: 15px; }
-        .sidebar-label {
+        .new-chat-btn:active {
+            transform: translateY(0);
+        }
+
+        .session-container { 
+            flex-grow: 1; 
+            overflow-y: auto; 
+            padding: 10px;
+        }
+        
+        .history-section-title {
             font-family: 'Fira Code', monospace;
-            font-size: 11px; color: var(--input-num);
-            text-transform: uppercase; margin: 10px 5px; letter-spacing: 1px;
+            font-size: 10px; 
+            color: var(--input-num);
+            text-transform: uppercase; 
+            margin: 15px 10px 10px;
+            letter-spacing: 1.5px;
+            font-weight: 500;
         }
 
         .session-item {
-            padding: 10px 12px; margin-bottom: 4px; border-radius: 6px;
-            cursor: pointer; font-size: 13px; color: var(--input-num);
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            transition: 0.2s; border: 1px solid transparent;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            margin-bottom: 6px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--input-num);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+            border: 1px solid transparent;
+            position: relative;
+            overflow: hidden;
         }
 
-        .session-item:hover { background: #161b22; color: var(--accent); }
-        .session-item.active {
-            background: #1f242c; color: var(--accent);
-            border-color: var(--border); font-weight: 500;
+        .session-item::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 3px;
+            height: 0;
+            background: var(--accent);
+            border-radius: 0 2px 2px 0;
+            transition: height 0.2s ease;
         }
+
+        .session-item:hover { 
+            background: rgba(88, 166, 255, 0.08);
+            color: var(--text-main);
+            padding-left: 16px;
+        }
+
+        .session-item:hover::before {
+            height: 60%;
+        }
+
+        .session-item.active {
+            background: linear-gradient(135deg, rgba(88, 166, 255, 0.15) 0%, rgba(88, 166, 255, 0.05) 100%);
+            color: var(--accent);
+            border-color: rgba(88, 166, 255, 0.2);
+            box-shadow: 0 4px 15px rgba(88, 166, 255, 0.1);
+        }
+
+        .session-item.active::before {
+            height: 80%;
+        }
+
+        .session-title {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 400;
+            text-align: left;
+        }
+
+        .delete-btn {
+            opacity: 0;
+            background: transparent;
+            border: none;
+            color: var(--input-num);
+            width: 28px;
+            height: 28px;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            flex-shrink: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .session-item:hover .delete-btn {
+            opacity: 1;
+            color: var(--input-num);
+        }
+
+        .delete-btn:hover {
+            background: rgba(255, 123, 114, 0.15);
+            color: #ff7b72;
+            transform: scale(1.1);
+        }
+
+        .delete-btn::after {
+            content: '';
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(255,123,114,0.3) 0%, transparent 70%);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .delete-btn:hover::after {
+            opacity: 1;
+        }
+
+        .empty-history {
+            text-align: center;
+            padding: 30px 20px;
+            color: var(--input-num);
+            font-size: 12px;
+            opacity: 0.6;
+        }
+
+        /* --- Delete Modal Styles --- */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(4px);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            animation: modalFade 0.2s ease;
+        }
+        .modal-box {
+            background: var(--cell-bg);
+            border: 1px solid var(--border);
+            padding: 24px;
+            border-radius: 12px;
+            width: 300px;
+            text-align: center;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .modal-msg { font-size: 14px; margin-bottom: 20px; color: var(--text-main); }
+        .modal-btns { display: flex; gap: 10px; }
+        .m-btn {
+            flex: 1; padding: 10px; border-radius: 6px; cursor: pointer;
+            font-family: 'Inter', sans-serif; font-size: 12px; transition: 0.2s;
+            border: 1px solid var(--border);
+        }
+        .m-cancel { background: transparent; color: var(--input-num); }
+        .m-cancel:hover { background: var(--cell-bg); color: var(--text-main); }
+        .m-delete { background: rgba(255, 123, 114, 0.1); color: #ff7b72; border-color: rgba(255, 123, 114, 0.3); }
+        .m-delete:hover { background: #ff7b72; color: white; }
+        @keyframes modalFade { from { opacity: 0; } to { opacity: 1; } }
 
         /* --- NOTEBOOK DESIGN --- */
         .main-content {
@@ -95,12 +246,14 @@
 
         .notebook-container {
             width: 95%; max-width: 1000px;
-            padding: 40px 20px 200px 20px;
+            padding: 20px 20px 200px 20px;
         }
 
         .header-area {
             display: flex; justify-content: space-between; align-items: center;
-            border-bottom: 1px solid var(--border); margin-bottom: 30px; padding-bottom: 15px;
+            border-bottom: 1px solid var(--border); padding: 30px 0;
+            position: sticky; top: 0; background: var(--bg-deep); z-index: 100;
+            margin-bottom: 30px;
         }
 
         /* 2. THE BRAND LINK EFFECT (Restored) */
@@ -121,6 +274,7 @@
         }
 
         .cell { display: flex; margin-bottom: 30px; animation: fadeIn 0.4s ease; }
+        .cell:first-of-type { margin-top: 40px; }
         .cell-label {
             min-width: 75px; font-family: 'Fira Code', monospace;
             font-size: 13px; color: var(--input-num);
@@ -170,6 +324,12 @@
             background: #010409; border: 1px solid var(--border);
             color: white; padding: 16px 24px; border-radius: 12px;
             outline: none; font-size: 16px; transition: all 0.3s ease;
+            resize: none;
+            min-height: 56px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: 'Inter', sans-serif;
+            line-height: 1.5;
         }
 
         /* 1. THE BLUISH OUTLINE EFFECT (Restored) */
@@ -292,7 +452,7 @@
         </button>
     </div>
     <div class="session-container">
-        <div class="sidebar-label">Recent History</div>
+        <div class="history-section-title">Recent Analysis</div>
         <div id="session-list"></div>
     </div>
 </div>
@@ -313,17 +473,16 @@
     </div>
 
     <div class="query-bar">
-        <input type="text" class="query-input" id="userInput" placeholder="Ask your data..." onkeypress="handleKey(event)" autofocus>
+        <textarea class="query-input" id="userInput" placeholder="Ask your data..." onkeydown="handleKey(event)" rows="1" autofocus></textarea>
     </div>
 </div>
 
-<div id="customModal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); backdrop-filter:blur(4px); z-index:2000; align-items:center; justify-content:center;">
-    <div style="background:var(--cell-bg); border:1px solid var(--border); padding:30px; border-radius:12px; width:90%; max-width:400px; box-shadow:0 20px 50px rgba(0,0,0,0.5); text-align:center;">
-        <div style="color:var(--accent); font-family:'Fira Code'; font-size:14px; margin-bottom:15px; text-transform:uppercase; letter-spacing:1px;">System Alert</div>
-        <div style="font-size:16px; margin-bottom:25px; color:var(--text-main);" id="modalMessage">Delete this analysis session?</div>
-        <div style="display:flex; gap:10px; justify-content:center;">
-            <button onclick="closeModal(false)" style="background:transparent; border:1px solid var(--border); color:var(--input-num); padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; transition:0.2s;">Cancel</button>
-            <button onclick="closeModal(true)" style="background:#ff7b72; border:none; color:white; padding:10px 20px; border-radius:6px; cursor:pointer; font-family:'Inter'; font-weight:600; transition:0.2s;">Confirm Delete</button>
+<div id="deleteModal" class="modal-overlay">
+    <div class="modal-box">
+        <div class="modal-msg">Delete this analysis session?</div>
+        <div class="modal-btns">
+            <button class="m-btn m-cancel" onclick="closeModal(false)">Cancel</button>
+            <button class="m-btn m-delete" onclick="closeModal(true)">Delete</button>
         </div>
     </div>
 </div>
@@ -408,16 +567,15 @@
     });
 
     function showConfirm(message) {
-        document.getElementById('modalMessage').innerText = message;
-        document.getElementById('customModal').style.display = 'flex';
-        // Return a promise that will be resolved when the user clicks a button
+        document.querySelector('.modal-msg').innerText = message;
+        document.getElementById('deleteModal').style.display = 'flex';
         return new Promise((resolve) => {
             modalResolve = resolve;
         });
     }
 
     function closeModal(result) {
-        document.getElementById('customModal').style.display = 'none';
+        document.getElementById('deleteModal').style.display = 'none';
         if (modalResolve) modalResolve(result);
     }
 
@@ -432,12 +590,21 @@
     });
 
     async function handleKey(e) {
-        if (e.key === 'Enter' && userInput.value.trim() !== '' && !userInput.disabled) {
+        // Enter to submit
+        if (e.key === 'Enter' && !e.shiftKey && userInput.value.trim() !== '' && !userInput.disabled) {
+            e.preventDefault();
             const query = userInput.value;
             userInput.value = '';
+            userInput.style.height = '56px';
             await addCell(query);
         }
     }
+    
+    // Auto-resize textarea
+    userInput.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 300) + 'px';
+    });
 
     async function addCell(query) {
         const container = document.getElementById('notebook');
@@ -501,16 +668,24 @@
             const sessions = await response.json();
             list.innerHTML = '';
 
-            sessions.forEach(s => {
+            if (sessions.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-history">
+                        <div>No analysis yet</div>
+                        <div style="font-size:11px; margin-top:5px; opacity:0.7;">Start by asking your data</div>
+                    </div>
+                `;
+                return;
+            }
+
+            sessions.forEach((s, index) => {
                 const div = document.createElement('div');
-                // Maintain the active state styling
                 div.className = `session-item ${currentSessionId == s.id ? 'active' : ''}`;
                 div.onclick = () => loadHistory(s.id);
 
-                // The "×" button uses the deleteSession function we just wrote
                 div.innerHTML = `
-                    <span style="flex-grow:1; overflow:hidden; text-overflow:ellipsis;">${s.title}</span>
-                    <span class="delete-btn" onclick="deleteSession('${s.id}', event)">×</span>
+                    <span class="session-title">${s.title}</span>
+                    <span class="delete-btn" onclick="deleteSession('${s.id}', event)">✕</span>
                 `;
                 list.appendChild(div);
             });

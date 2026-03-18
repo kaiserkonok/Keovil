@@ -1,14 +1,6 @@
-from gevent import monkey
-monkey.patch_all()
-
-import torch
-def dummy_compile(fn=None, **kwargs):
-    if fn is not None: return fn
-    return lambda x: x
-torch.compile = dummy_compile
-
 import os
 import sys
+
 import shutil
 import json
 import sqlite3
@@ -21,7 +13,7 @@ from flask import (
 import traceback
 from threading import Thread
 from flask_socketio import SocketIO, emit, join_room # <--- ADD THIS
-from colorama import Fore, Style, init, Back
+from colorama import Fore, Style, init
 import hashlib
 import platform
 import subprocess
@@ -48,7 +40,6 @@ HOME_STORAGE = Path(STORAGE_STR).absolute()
 # 4. Standardized sub-folders (relative to the isolated HOME_STORAGE)
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-SETTINGS_FILE = HOME_STORAGE / "settings.json"
 
 # Mode-specific chat history to prevent cross-talk
 CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
@@ -221,37 +212,7 @@ def init_chat_db():
 init_chat_db()
 
 # ---------------------------------------------------------
-# Settings Management (Optimized for RTX 5060 Ti)
-# ---------------------------------------------------------
-def load_settings():
-    # We force the Coder model for best performance in SQL and RAG
-    defaults = {
-        "llm_model": "qwen2.5-coder:7b-instruct",
-        "temperature": 0.0,
-        "num_ctx": 16384  # High context for college documents
-    }
-    if SETTINGS_FILE.exists():
-        try:
-            with open(SETTINGS_FILE, "r") as f:
-                saved = json.load(f)
-                # Ensure we don't accidentally load an old 'dumb' model name
-                saved["llm_model"] = "qwen2.5-coder:7b-instruct"
-                return {**defaults, **saved}
-        except Exception:
-            return defaults
-    return defaults
-
-def save_settings(data):
-    # Sanitize data before saving to ensure accuracy
-    sanitized_data = {
-        "llm_model": "qwen2.5-coder:7b-instruct", # Hard-locked
-        "temperature": min(float(data.get("temperature", 0.0)), 0.5), # Cap at 0.5
-        "num_ctx": 16384
-    }
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump(sanitized_data, f)
-
-current_cfg = load_settings()
+DEFAULT_MODEL = "qwen2.5-coder:7b-instruct"
 
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
@@ -275,6 +236,8 @@ except ImportError as e:
 # Flask Initialization
 # ---------------------------------------------------------
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.jinja_env.auto_reload = True
+app.config['TEMPLATES_AUTO_RELOAD'] = True
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
@@ -295,9 +258,11 @@ def initialize_engines():
     Optimized for RTX 5060 Ti performance.
     """
 
-    # Dynamic URL: Docker vs Localhost
-    # Updated for universal compatibility
-    OLLAMA_BASE_URL = "http://localhost:11434"
+    # Use OLLAMA_HOST env var, default to localhost:11434 for network mode
+    ollama_host = os.getenv("OLLAMA_HOST", "127.0.0.1:11434")
+    if not ollama_host.startswith("http"):
+        ollama_host = f"http://{ollama_host}"
+    OLLAMA_BASE_URL = ollama_host
 
     global rag, sql_system
 
@@ -306,81 +271,64 @@ def initialize_engines():
         if rag is not None and sql_system is not None:
             return
 
-        def update_status(msg, state="loading", progress=0):
-            prefix = f"{Fore.BLACK}{Back.CYAN} ENGINE {Style.RESET_ALL}"
-            print(f"{prefix} {Fore.WHITE}{msg} {Fore.CYAN}[{progress}%]")
-            socketio.emit('system_init_status', {
-                "message": msg,
-                "state": state,
-                "progress": progress
-            })
-
-        # Reloader check (Standard Flask/Gevent behavior)
-        is_reloader_child = os.environ.get("WERKZEUG_RUN_MAIN") == "true"
-        is_debug_disabled = not app.debug
-
-        update_status("Detecting GPU Hardware...", progress=5)
-
         # --- 1. Ollama Hardware Handshake ---
         try:
             import requests
-            model_name = current_cfg["llm_model"]
-            update_status(f"Verifying {model_name} layers...", progress=15)
+            model_name = DEFAULT_MODEL
+            print(f"{Fore.CYAN}Verifying {model_name}...{Style.RESET_ALL}")
 
             # Check Ollama connection
             r = requests.post(f"{OLLAMA_BASE_URL}/api/show", json={"name": model_name}, timeout=5)
             if r.status_code != 200:
-                update_status("Model missing. Initiating pull...", progress=30)
-                requests.post(f"{OLLAMA_BASE_URL}/api/pull", json={"name": model_name})
-            update_status("Neural weights verified.", progress=45)
+                print(f"{Fore.RED}Model '{model_name}' not found on Ollama.{Style.RESET_ALL}")
+                print(f"{Fore.YELLOW}Please run: ollama pull {model_name}{Style.RESET_ALL}")
+                import sys
+                sys.exit(1)
+            else:
+                print(f"{Fore.GREEN}Model verified.{Style.RESET_ALL}")
         except Exception as e:
             print(f"{Fore.RED}Ollama Link Error: {e}{Style.RESET_ALL}")
-            update_status("Ollama Connection Pending...", progress=45)
+            import sys
+            sys.exit(1)
 
         # --- 2. RAG & VRAM Allocation ---
         if CollegeRAG and rag is None:
             try:
-                update_status("Allocating VRAM & Loading ColBERT...", progress=65)
+                print(f"{Fore.CYAN}Loading RAG engine...{Style.RESET_ALL}")
 
                 # We initialize into a local variable first to ensure
                 # we don't set the global 'rag' to a half-broken object
                 temp_rag = CollegeRAG(
                     data_dir=str(DATA_DIR),
-                    llm_model=current_cfg["llm_model"],
-                    temperature=current_cfg["temperature"],
                     socketio=socketio
                 )
                 rag = temp_rag
-                update_status("Knowledge Engine Synchronized.", progress=85)
+                print(f"{Fore.GREEN}RAG engine ready.{Style.RESET_ALL}")
             except Exception as e:
-                # CRITICAL: This is where your DNS Error -3 is hiding.
                 print(f"{Fore.RED}💥 RAG INIT FATAL ERROR:{Style.RESET_ALL}")
                 traceback.print_exc()
-                update_status(f"RAG Error: {str(e)}", state="error")
                 rag = None  # Ensure it stays None so api_chat knows it's broken
 
         # --- 3. SQL Agent Boot ---
         if StructuredDataAgent and sql_system is None:
             try:
-                update_status("Waking up SQL Agent...", progress=95)
+                print(f"{Fore.CYAN}Loading SQL agent...{Style.RESET_ALL}")
                 temp_sql = StructuredDataAgent(socketio=socketio)
                 if hasattr(temp_sql, 'agent') and hasattr(temp_sql.agent, 'llm'):
                     temp_sql.agent.llm.temperature = 0.0
                 temp_sql.start_monitoring()
                 sql_system = temp_sql
+                print(f"{Fore.GREEN}SQL agent ready.{Style.RESET_ALL}")
             except Exception as e:
                 print(f"{Fore.RED}💥 SQL INIT FATAL ERROR:{Style.RESET_ALL}")
                 traceback.print_exc()
-                update_status("SQL Agent Failure", state="error")
                 sql_system = None
 
-        # --- 4. Final Handshake ---
+        # --- 4. Final ---
         if rag and sql_system:
-            import time
-            time.sleep(0.8)
-            update_status("System Fully Operational.", state="ready", progress=100)
+            print(f"{Fore.GREEN}All engines ready.{Style.RESET_ALL}")
         else:
-            update_status("System Partial Failure.", state="error", progress=0)
+            print(f"{Fore.RED}Partial initialization.{Style.RESET_ALL}")
 
 
 # Trigger initialization
@@ -401,7 +349,7 @@ def safe_rel_path(p: str | None) -> str:
 def gatekeeper():
     """The High-Level Bouncer."""
     # 1. Exempt routes (Don't lock the door if we're trying to put the key in)
-    exempt_paths = ['/static', '/activate', '/api/bootstrap']
+    exempt_paths = ['/static', '/activate', '/api/bootstrap', '/', '/index.html']
     if any(request.path.startswith(path) for path in exempt_paths):
         return None
 
@@ -629,31 +577,6 @@ def delete_session():
 # ---------------------------------------------------------
 # SETTINGS & FILE EXPLORER API
 # ---------------------------------------------------------
-@app.route("/api/settings", methods=["GET", "POST"])
-def manage_settings():
-    global rag, sql_system
-    if request.method == "GET":
-        return jsonify(load_settings())
-
-    data = request.json
-    save_settings(data)
-
-    new_cfg = load_settings()
-
-    if rag:
-        # Only the RAG gets the 'User' temperature for flexibility
-        rag.llm.temperature = new_cfg["temperature"]
-        print(f"{Fore.CYAN}[System] RAG Intelligence updated: {new_cfg['temperature']}")
-
-    if sql_system:
-        # WE DO NOT USE new_cfg["temperature"] here.
-        # We keep SQL at 0.0 ALWAYS for accuracy.
-        if hasattr(sql_system, 'llm'):
-            sql_system.llm.temperature = 0.0
-        print(f"{Fore.YELLOW}[System] SQL Logic locked at 0.0 for accuracy")
-
-    return jsonify({"ok": True})
-
 @app.route("/api/explorer/files")
 def list_files():
     rel_path = safe_rel_path(request.args.get("path"))
