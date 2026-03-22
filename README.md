@@ -1,5 +1,8 @@
 # Keovil
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![GitHub Stars](https://img.shields.io/github/stars/kaiserkonok/Keovil?style=social)](https://github.com/kaiserkonok/Keovil)
+
 A private AI Agent that understands everything you own. From PDFs and text files to complex Excel sheets and databases, just ask a question in plain English and get an answer.
 
 ## Features
@@ -59,8 +62,8 @@ docker run -p 6333:6333 -p 6334:6334 qdrant/qdrant:v1.7.4
 ### 4. Clone and Install Keovil
 
 ```bash
-git clone https://github.com/yourusername/keovil.git
-cd keovil
+git clone https://github.com/kaiserkonok/Keovil.git
+cd Keovil
 pip install -r requirements.txt
 ```
 
