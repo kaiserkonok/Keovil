@@ -7,10 +7,7 @@
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/keo.png') }}">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Outfit', sans-serif; background-color: #050505; color: #ffffff; }
-        .glass-panel { background: rgba(20, 20, 25, 0.6); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.05); }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/settings.css') }}">
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
 
@@ -35,19 +32,6 @@
         </div>
     </div>
 
-    <script>
-        async function deactivateNode() {
-            if (!confirm("CRITICAL: This will unbind the Master Key from this hardware. You will be locked out until re-activation. Proceed?")) return;
-
-            try {
-                const res = await fetch('/api/logout', { method: 'POST' });
-                if (res.ok) {
-                    window.location.href = '/activate';
-                }
-            } catch (err) {
-                alert("Logout failed: " + err);
-            }
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
 </body>
 </html>

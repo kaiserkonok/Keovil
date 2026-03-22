@@ -6,22 +6,7 @@
     <title>KEVIL // NODE_ACTIVATION</title>
     <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='images/keo.png') }}">
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;800&display=swap');
-        body {
-            background-color: #050505;
-            color: #e0e0e0;
-            font-family: 'JetBrains+Mono', monospace;
-        }
-        .chubby-panel {
-            border: 4px solid #1a1a1a;
-            background: #000000;
-            box-shadow: 20px 20px 0px #0a0a0a;
-        }
-        .status-dot {
-            height: 8px; width: 8px; border-radius: 50%; display: inline-block;
-        }
-    </style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/activate.css') }}">
 </head>
 <body class="flex items-center justify-center min-h-screen p-4">
     <div class="max-w-xl w-full">
@@ -59,39 +44,6 @@
         </p>
     </div>
 
-    <script>
-        async function attemptHandshake() {
-            const btn = document.getElementById('btn');
-            const feedback = document.getElementById('feedback');
-            const key = document.getElementById('masterKey').value;
-
-            btn.innerText = "SYNCHRONIZING...";
-            btn.disabled = true;
-            feedback.classList.add('hidden');
-
-            try {
-                const response = await fetch('/api/bootstrap', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ master_key: key })
-                });
-
-                const data = await response.json();
-
-                if (response.ok) {
-                    btn.innerText = "AUTHORIZED";
-                    btn.classList.replace('bg-white', 'bg-green-500');
-                    setTimeout(() => window.location.href = "/", 1000);
-                } else {
-                    throw new Error(data.msg || "Authorization Denied");
-                }
-            } catch (err) {
-                feedback.innerText = `ERROR: ${err.message}`;
-                feedback.classList.remove('hidden');
-                btn.innerText = "INITIALIZE HANDSHAKE";
-                btn.disabled = false;
-            }
-        }
-    </script>
+    <script src="{{ url_for('static', filename='js/activate.js') }}"></script>
 </body>
 </html>
