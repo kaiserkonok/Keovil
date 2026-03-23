@@ -3,14 +3,16 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![GitHub Stars](https://img.shields.io/github/stars/kaiserkonok/Keovil?style=social)](https://github.com/kaiserkonok/Keovil)
 
-A private AI Agent that understands everything you own. From PDFs and text files to complex Excel sheets and databases, just ask a question in plain English and get an answer.
+A private AI-powered query interface for your documents and structured data. Upload files, connect databases, and ask questions in plain English - Keovil generates the queries and returns results.
+
+Works fully offline on your own GPU.
 
 ## Features
 
-- **Instant Learning**: Upload files and start chatting immediately
-- **Cross-File Reasoning**: Ask questions that span across multiple documents at once
-- **Total Privacy**: Everything stays on your machine. No cloud, no subscriptions
-- **Permanent Knowledge Base**: Builds a long-term "Second Brain" from your data
+- **Structured Data Analysis**: Query CSV, Excel, SQLite, and Parquet files using natural language. Keovil generates and executes SQL via DuckDB.
+- **Document Q&A**: Ask questions about your PDFs, text files, and code. Built on ColBERT retrieval with Qdrant.
+- **Automatic Indexing**: Drop files in a folder and Keovil automatically syncs and indexes them.
+- **Total Privacy**: Everything runs locally. No cloud, no subscriptions, no data leaves your machine.
 
 ## Requirements
 
@@ -121,9 +123,10 @@ python src/keovil_web/app.py
 
 ## Architecture
 
-- **Ollama**: Runs locally, handles LLM inference
-- **Qdrant**: Vector database for document embeddings
-- **Keovil**: Flask web interface + RAG engine + ColBERT retrieval
+- **Ollama**: Local LLM inference
+- **Qdrant**: Vector database for document similarity search
+- **DuckDB**: SQL engine for structured data analysis (CSV, Excel, SQLite, Parquet)
+- **Keovil**: Flask web interface combining document RAG with SQL query generation
 
 ## Troubleshooting
 
