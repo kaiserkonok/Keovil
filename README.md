@@ -1,4 +1,4 @@
-![Keovil Logo](src/keovil_web/static/images/keo.png)
+<img src="src/keovil_web/static/images/keo.png" width="120" align="left">
 
 # Keovil
 
