@@ -67,7 +67,7 @@ FOUNDRY_LOCAL = "http://localhost:8000"
 FOUNDRY_PROD = "https://kevil.io"
 
 # Toggle this based on where your Django is running
-REGISTRY_URL = FOUNDRY_LOCAL if APP_MODE == "development" else FOUNDRY_PROD
+REGISTRY_URL = FOUNDRY_PROD
 AUTH_FILE = HOME_STORAGE / ".kevil_auth"
 
 print(f"Auth file path: {AUTH_FILE}")
