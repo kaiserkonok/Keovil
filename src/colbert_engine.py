@@ -1,4 +1,4 @@
-# neural_db.py
+# colbert_engine.py
 import hashlib
 import uuid
 from typing import List, Any, Optional
@@ -7,7 +7,7 @@ from qdrant_client import QdrantClient, models as q_models
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from pydantic import ConfigDict, Field # Make sure to import ConfigDict
+from pydantic import ConfigDict, Field  # Make sure to import ConfigDict
 import os
 import torch
 from colorama import Fore, Style, init
@@ -22,20 +22,22 @@ class ColBERTRetriever(BaseRetriever):
     # This tells Pydantic to ignore the cyfunction that Cython creates
     model_config = ConfigDict(
         arbitrary_types_allowed=True,
-        ignored_types=(type(lambda: None),)  # This usually catches cyfunctions
+        ignored_types=(type(lambda: None),),  # This usually catches cyfunctions
     )
 
     # ADD THIS: This is the entry point LangChain actually uses
-    def invoke(self, input: str, config: Optional[Any] = None, **kwargs: Any) -> List[Document]:
+    def invoke(
+        self, input: str, config: Optional[Any] = None, **kwargs: Any
+    ) -> List[Document]:
         print(f"{Fore.CYAN}[INVOKE] Manual hook triggered for query: {input}")
         return self._get_relevant_documents(input, **kwargs)
 
     def _get_relevant_documents(
-            self,
-            query: str,
-            *,
-            run_manager: Optional[CallbackManagerForRetrieverRun] = None,
-            **kwargs: Any
+        self,
+        query: str,
+        *,
+        run_manager: Optional[CallbackManagerForRetrieverRun] = None,
+        **kwargs: Any,
     ) -> List[Document]:
         print(f"{Fore.YELLOW}[DEBUG] Inside _get_relevant_documents for: {query}")
 
@@ -49,15 +51,17 @@ class ColBERTRetriever(BaseRetriever):
         python_friendly_docs = []
         for res in raw_results:
             # Cython-safe payload access
-            p_load = getattr(res, 'payload', {}) if hasattr(res, 'payload') else {}
+            p_load = getattr(res, "payload", {}) if hasattr(res, "payload") else {}
 
             doc = Document(
                 page_content=str(p_load.get("text", "No content")),
-                metadata={k: v for k, v in p_load.items() if k != "text"}
+                metadata={k: v for k, v in p_load.items() if k != "text"},
             )
             python_friendly_docs.append(doc)
 
-        print(f"{Fore.GREEN}[DEBUG] Returning {len(python_friendly_docs)} docs to chain.")
+        print(
+            f"{Fore.GREEN}[DEBUG] Returning {len(python_friendly_docs)} docs to chain."
+        )
         return python_friendly_docs
 
 
@@ -74,10 +78,12 @@ class ColBERTEngine:
         self.model = pylate_models.ColBERT(
             model_name_or_path="lightonai/GTE-ModernColBERT-v1",
             device=device,
-            document_length=8192
+            document_length=8192,
         )
 
-        print(f"{Fore.MAGENTA} Device checking from colbert: {'GPU' if torch.cuda.is_available() else 'CPU'}")
+        print(
+            f"{Fore.MAGENTA} Device checking from colbert: {'GPU' if torch.cuda.is_available() else 'CPU'}"
+        )
 
         # Critical: Set up the specific isolated collection
         self._ensure_collection()
@@ -96,28 +102,36 @@ class ColBERTEngine:
                         distance=q_models.Distance.COSINE,
                         multivector_config=q_models.MultiVectorConfig(
                             comparator=q_models.MultiVectorComparator.MAX_SIM
-                        )
+                        ),
                     )
-                }
+                },
             )
 
     def ingest_batches(self, documents_with_meta, batch_size=16):
         for i in range(0, len(documents_with_meta), batch_size):
-            batch = documents_with_meta[i: i + batch_size]
+            batch = documents_with_meta[i : i + batch_size]
 
             # 1. Keep the GPU Busy (Fastest Step)
-            embeddings = self.model.encode([d.page_content for d in batch], is_query=False)
+            embeddings = self.model.encode(
+                [d.page_content for d in batch], is_query=False
+            )
 
             # 2. Prepare the points
             all_points = []
             for j, emb in enumerate(embeddings):
-                uid_seed = f"{batch[j].page_content}{batch[j].metadata.get('source', '')}"
-                point_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, hashlib.md5(uid_seed.encode()).hexdigest()))
+                uid_seed = (
+                    f"{batch[j].page_content}{batch[j].metadata.get('source', '')}"
+                )
+                point_id = str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_DNS, hashlib.md5(uid_seed.encode()).hexdigest()
+                    )
+                )
                 all_points.append(
                     q_models.PointStruct(
                         id=point_id,
                         vector={"colbert": emb.tolist()},
-                        payload={"text": batch[j].page_content, **batch[j].metadata}
+                        payload={"text": batch[j].page_content, **batch[j].metadata},
                     )
                 )
 
@@ -125,14 +139,13 @@ class ColBERTEngine:
             # We process in 16, but we upload in sub-chunks of 4 to avoid the 32MB limit.
             upload_chunk_size = 4
             for k in range(0, len(all_points), upload_chunk_size):
-                sub_batch = all_points[k: k + upload_chunk_size]
+                sub_batch = all_points[k : k + upload_chunk_size]
                 self.client.upsert(
-                    collection_name=self.collection_name,
-                    points=sub_batch
+                    collection_name=self.collection_name, points=sub_batch
                 )
 
     def search(self, query, k=5):
-        print('Searching in colbert database')
+        print("Searching in colbert database")
         """Performs MaxSim retrieval using the query embedding."""
         query_emb = self.model.encode([query], is_query=True)[0].tolist()
 
@@ -140,7 +153,7 @@ class ColBERTEngine:
             collection_name=self.collection_name,
             query=query_emb,
             using="colbert",
-            limit=k
+            limit=k,
         ).points
 
         print(f"length of results: {len(results)}")
@@ -164,11 +177,11 @@ class ColBERTEngine:
                     must=[
                         q_models.FieldCondition(
                             key="source",
-                            match=q_models.MatchValue(value=str(source_path))
+                            match=q_models.MatchValue(value=str(source_path)),
                         )
                     ]
                 )
-            )
+            ),
         )
 
     def get_points_count(self):
@@ -184,6 +197,9 @@ ColBERTRetriever._aget_relevant_documents = ColBERTRetriever._aget_relevant_docu
 
 # 2. We manually remove the "Missing" labels from the class registry
 ColBERTRetriever.__abstractmethods__ = frozenset(
-    [m for m in ColBERTRetriever.__abstractmethods__
-     if m not in ('_get_relevant_documents', '_aget_relevant_documents')]
+    [
+        m
+        for m in ColBERTRetriever.__abstractmethods__
+        if m not in ("_get_relevant_documents", "_aget_relevant_documents")
+    ]
 )
