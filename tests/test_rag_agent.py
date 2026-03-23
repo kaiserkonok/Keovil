@@ -15,7 +15,8 @@ print(f"DEBUG: Looking in: {src_path}")
 
 try:
     # Now that we added 'src' to the path, we can import directly
-    from knowledge_engine import CollegeRAG, Colors
+    from college_rag import CollegeRAG, Colors
+
     print("✅ Import Successful!")
 except ImportError as e:
     print(f"\n❌ IMPORT ERROR: {e}")
@@ -28,6 +29,7 @@ TEST_ROOT = Path.home() / ".keovil_test_bench"
 os.environ["APP_MODE"] = "test"
 os.environ["STORAGE_BASE"] = str(TEST_ROOT)
 
+
 def setup_test_bench():
     if TEST_ROOT.exists():
         shutil.rmtree(TEST_ROOT)
@@ -35,13 +37,18 @@ def setup_test_bench():
     (TEST_ROOT / "data").mkdir()
     (TEST_ROOT / "database").mkdir()
 
+
 def generate_mass_data(file_count=100, lines_per_file=50):
     print(f"{Colors.OKCYAN}🏗️  Generating {file_count} test files...{Colors.ENDC}")
     data_dir = TEST_ROOT / "data"
     for i in range(file_count):
         with open(data_dir / f"test_doc_{i}.txt", "w") as f:
             f.write(f"Document ID: {i}\nSecret Key: KEOVIL-SIGMA-{i}\n")
-            f.write("Optimizing RAG performance for RTX 5060 Ti 16GB VRAM.\n" * lines_per_file)
+            f.write(
+                "Optimizing RAG performance for RTX 5060 Ti 16GB VRAM.\n"
+                * lines_per_file
+            )
+
 
 def run_stress_test():
     setup_test_bench()
@@ -64,6 +71,7 @@ def run_stress_test():
     answer = rag.ask(q)
     print(f"{Colors.OKGREEN}🤖 Lora: {answer}{Colors.ENDC}")
     print(f"⏱️  Latency: {time.time() - start_q:.2f}s")
+
 
 if __name__ == "__main__":
     run_stress_test()

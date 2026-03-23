@@ -12,17 +12,19 @@ from datetime import datetime
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.documents import Document
-from langchain_classic.chains.history_aware_retriever import create_history_aware_retriever
+from langchain_classic.chains.history_aware_retriever import (
+    create_history_aware_retriever,
+)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
-import knowledge_splitter
+import rag_chunker
 from utils.document_processor import DocumentProcessor
 from utils.model_engine import get_llm
-from neural_db import ColBERTEngine
+from colbert_engine import ColBERTEngine
 import torch
 
 
@@ -30,15 +32,15 @@ import torch
 # ANSI Color Class for Debugging
 # ----------------------
 class Colors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKCYAN = '\033[96m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    ITALIC = '\033[3m'
+    HEADER = "\033[95m"
+    OKBLUE = "\033[94m"
+    OKCYAN = "\033[96m"
+    OKGREEN = "\033[92m"
+    WARNING = "\033[93m"
+    FAIL = "\033[91m"
+    ENDC = "\033[0m"
+    BOLD = "\033[1m"
+    ITALIC = "\033[3m"
 
 
 # ----------------------
@@ -49,7 +51,7 @@ class NewFileHandler(PatternMatchingEventHandler):
         super().__init__(
             patterns=["*.txt", "*.pdf", "*.docx", "*.pptx", "*.md"],
             ignore_directories=True,
-            case_sensitive=False
+            case_sensitive=False,
         )
         self.rag = rag_instance
 
@@ -73,7 +75,9 @@ class RewriteLogger(StdOutCallbackHandler):
 
         # Only print if this specific chain step was tagged as 'rewriter'
         if "rewriter" in tags and isinstance(outputs, str):
-            print(f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}")
+            print(
+                f"\n{Colors.WARNING}[Rewriter]{Colors.ENDC} Standalone Query: {Colors.BOLD}{outputs}{Colors.ENDC}"
+            )
 
 
 def format_docs_safely(docs):
@@ -116,7 +120,9 @@ class CollegeRAG:
         self.db_dir.mkdir(parents=True, exist_ok=True)
         self._init_manifest_db()
 
-        print(f"{Colors.OKCYAN}🚀 Mode: {self.mode.upper()} | Root: {self.base_storage}{Colors.ENDC}")
+        print(
+            f"{Colors.OKCYAN}🚀 Mode: {self.mode.upper()} | Root: {self.base_storage}{Colors.ENDC}"
+        )
         print(f"{Colors.OKCYAN}📦 Collection: {self.collection_name}{Colors.ENDC}")
 
         # ---------------------------------------------------------
@@ -127,7 +133,7 @@ class CollegeRAG:
             "state": "idle",
             "current_file": "",
             "progress": 0,
-            "total_files": 0
+            "total_files": 0,
         }
         self.top_k = top_k
         self.lock = threading.Lock()
@@ -136,13 +142,15 @@ class CollegeRAG:
         self.chat_history = []
 
         # GPU Detection for your RTX 5060 Ti
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print(f"{Colors.HEADER}Initializing ColBERT Engine on: {Colors.BOLD}{device}{Colors.ENDC}")
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(
+            f"{Colors.HEADER}Initializing ColBERT Engine on: {Colors.BOLD}{device}{Colors.ENDC}"
+        )
 
         # Pass the isolated collection name here!
         self.engine = ColBERTEngine(collection_name=self.collection_name, device=device)
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
-        self.chunker = knowledge_splitter.IntelligentChunker()
+        self.chunker = rag_chunker.IntelligentChunker()
 
         # ---------------------------------------------------------
         # 3. LLM & RETRIEVER SETUP
@@ -156,16 +164,18 @@ class CollegeRAG:
             "formulate a standalone search query. Do NOT answer the question, "
             "just reformulate it if needed and otherwise return it as is."
         )
-        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+        contextualize_q_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", contextualize_q_system_prompt),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
 
         self.history_aware_retriever = create_history_aware_retriever(
             self.query_llm,
             self.engine.as_retriever(search_kwargs={"k": self.top_k}),
-            contextualize_q_prompt
+            contextualize_q_prompt,
         ).with_config({"tags": ["rewriter"]})
 
         qa_system_prompt = (
@@ -176,29 +186,37 @@ class CollegeRAG:
             "CONTEXT:\n{context}"
         )
 
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", qa_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+        qa_prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", qa_system_prompt),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}"),
+            ]
+        )
 
         question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
 
         # This links your Rewriter + Retriever + QA Generation into one unit
         self.rag_chain = (
-                RunnableParallel({
+            RunnableParallel(
+                {
                     "context_docs": self.history_aware_retriever,  # Keep the objects for the Match Box
                     "input": lambda x: x["input"],
                     "chat_history": lambda x: x["chat_history"],
-                    "time": lambda x: x["time"]
-                })
-                | RunnablePassthrough.assign(
-            context=lambda x: format_docs_safely(x["context_docs"])  # Convert objects to string here
-        )
-                | {
-                    "answer": qa_prompt | self.llm | StrOutputParser(),
-                    "docs": lambda x: x["context_docs"]  # Pass the docs through to the final output
+                    "time": lambda x: x["time"],
                 }
+            )
+            | RunnablePassthrough.assign(
+                context=lambda x: format_docs_safely(
+                    x["context_docs"]
+                )  # Convert objects to string here
+            )
+            | {
+                "answer": qa_prompt | self.llm | StrOutputParser(),
+                "docs": lambda x: x[
+                    "context_docs"
+                ],  # Pass the docs through to the final output
+            }
         )
 
         # ---------------------------------------------------------
@@ -210,7 +228,9 @@ class CollegeRAG:
         self.observer = Observer()
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
-        print(f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{Colors.ENDC}")
+        print(
+            f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{Colors.ENDC}"
+        )
 
     def get_status(self):
         """Returns the current state for the UI."""
@@ -219,7 +239,10 @@ class CollegeRAG:
             pending_count = len(self.pending_files)
 
         if self.status["state"] == "idle" and pending_count > 0:
-            return {"state": "waiting", "message": f"Waiting for quiet period... ({pending_count} files queued)"}
+            return {
+                "state": "waiting",
+                "message": f"Waiting for quiet period... ({pending_count} files queued)",
+            }
 
         return self.status
 
@@ -229,12 +252,18 @@ class CollegeRAG:
         try:
             # We add a specific 'reason' so the frontend can distinguish
             # between vectorizing and just thinking.
-            self.socketio.emit('system_status', {
-                "is_busy": self.status["state"] != "idle",
-                "reason": self.status["state"],  # 'processing', 'waiting', or 'idle'
-                "sql_syncing": False,
-                "rag": self.get_status()
-            }, namespace='/')
+            self.socketio.emit(
+                "system_status",
+                {
+                    "is_busy": self.status["state"] != "idle",
+                    "reason": self.status[
+                        "state"
+                    ],  # 'processing', 'waiting', or 'idle'
+                    "sql_syncing": False,
+                    "rag": self.get_status(),
+                },
+                namespace="/",
+            )
         except Exception as e:
             print(f"Socket Error: {e}")
 
@@ -244,7 +273,9 @@ class CollegeRAG:
     def _init_manifest_db(self):
         """Creates the manifest table if it doesn't exist."""
         conn = sqlite3.connect(self.manifest_db)
-        conn.execute("CREATE TABLE IF NOT EXISTS file_hashes (path TEXT PRIMARY KEY, hash TEXT)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS file_hashes (path TEXT PRIMARY KEY, hash TEXT)"
+        )
         conn.commit()
         conn.close()
 
@@ -259,7 +290,9 @@ class CollegeRAG:
     def _update_manifest_batch(self, file_data: Dict[str, str]):
         """Updates the database with a batch of new file hashes."""
         conn = sqlite3.connect(self.manifest_db)
-        conn.executemany("INSERT OR REPLACE INTO file_hashes VALUES (?, ?)", list(file_data.items()))
+        conn.executemany(
+            "INSERT OR REPLACE INTO file_hashes VALUES (?, ?)", list(file_data.items())
+        )
         conn.commit()
         conn.close()
 
@@ -285,16 +318,19 @@ class CollegeRAG:
                 # Set status to processing immediately so UI catches it
                 self.status["state"] = "processing"
                 print(
-                    f"{Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{Colors.ENDC}")
+                    f"{Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{Colors.ENDC}"
+                )
                 self.ingest(to_process)
+
     # ----------------------
     # Core RAG Methods
     # ----------------------
     def _get_file_hash(self, filepath):
         hasher = hashlib.md5()
         try:
-            with open(filepath, 'rb') as f:
-                while chunk := f.read(8192): hasher.update(chunk)
+            with open(filepath, "rb") as f:
+                while chunk := f.read(8192):
+                    hasher.update(chunk)
             return hasher.hexdigest()
         except Exception as e:
             print(f"{Colors.FAIL}Error hashing {filepath}: {e}{Colors.ENDC}")
@@ -306,9 +342,13 @@ class CollegeRAG:
 
         # (Keep your Qdrant empty-check logic as is, it's good)
         try:
-            collection_info = self.engine.client.get_collection(self.engine.collection_name)
+            collection_info = self.engine.client.get_collection(
+                self.engine.collection_name
+            )
             if collection_info.points_count == 0:
-                print(f"{Colors.WARNING}[Sync] Vector store is empty! Forcing full re-sync...{Colors.ENDC}")
+                print(
+                    f"{Colors.WARNING}[Sync] Vector store is empty! Forcing full re-sync...{Colors.ENDC}"
+                )
                 conn = sqlite3.connect(self.manifest_db)
                 conn.execute("DELETE FROM file_hashes")
                 conn.commit()
@@ -316,12 +356,13 @@ class CollegeRAG:
         except Exception as e:
             print(f"{Colors.OKCYAN}[Sync] Starting fresh...{Colors.ENDC}")
 
-        SUPPORTED_EXTENSIONS = {'.txt', '.pdf', '.docx', '.pptx', '.md'}
+        SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".docx", ".pptx", ".md"}
         db_state = self._get_stored_hashes()
 
         # --- THE FIX: Use relative_to(self.base_storage) ---
         current_files = {
-            str(p.relative_to(self.base_storage)): p for p in self.data_dir.rglob('*')
+            str(p.relative_to(self.base_storage)): p
+            for p in self.data_dir.rglob("*")
             if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
         }
 
@@ -341,7 +382,9 @@ class CollegeRAG:
                 to_process.append(str(abs_path))
 
         if to_process:
-            print(f"{Colors.OKBLUE}[Sync] Found {len(to_process)} new/modified files.{Colors.ENDC}")
+            print(
+                f"{Colors.OKBLUE}[Sync] Found {len(to_process)} new/modified files.{Colors.ENDC}"
+            )
             self.ingest(to_process)
         else:
             print(f"{Colors.OKGREEN}[Sync] Filesystem is clean.{Colors.ENDC}")
@@ -354,18 +397,20 @@ class CollegeRAG:
 
         for c in raw_chunks:
             source = c.metadata.get("source", "Unknown")
-            text_content = getattr(c, 'page_content', getattr(c, 'text', ""))
+            text_content = getattr(c, "page_content", getattr(c, "text", ""))
             tokens = self.chunker.count_tokens(text_content)
 
-            file_changed = (source != current_source and current_source is not None)
-            limit_reached = (current_tokens + tokens > token_limit)
+            file_changed = source != current_source and current_source is not None
+            limit_reached = current_tokens + tokens > token_limit
 
             if file_changed or limit_reached:
                 if current_text_block:
-                    standardized_docs.append(Document(
-                        page_content="\n\n".join(current_text_block),
-                        metadata={"source": current_source}
-                    ))
+                    standardized_docs.append(
+                        Document(
+                            page_content="\n\n".join(current_text_block),
+                            metadata={"source": current_source},
+                        )
+                    )
                 current_text_block, current_tokens = [], 0
 
             current_text_block.append(text_content)
@@ -373,14 +418,17 @@ class CollegeRAG:
             current_source = source
 
         if current_text_block:
-            standardized_docs.append(Document(
-                page_content="\n\n".join(current_text_block),
-                metadata={"source": current_source}
-            ))
+            standardized_docs.append(
+                Document(
+                    page_content="\n\n".join(current_text_block),
+                    metadata={"source": current_source},
+                )
+            )
         return standardized_docs
 
     def ingest(self, new_files: List[str] = None):
-        if not new_files: return
+        if not new_files:
+            return
 
         # Update status to Processing
         self.status["state"] = "processing"
@@ -390,7 +438,9 @@ class CollegeRAG:
 
         try:
             with self.lock:
-                valid_paths = [str(Path(f).absolute()) for f in new_files if Path(f).exists()]
+                valid_paths = [
+                    str(Path(f).absolute()) for f in new_files if Path(f).exists()
+                ]
                 if not valid_paths:
                     self.status["state"] = "idle"  # Reset if no valid files
                     return
@@ -399,12 +449,16 @@ class CollegeRAG:
                 for p_str in valid_paths:
                     self.engine.delete_by_source(p_str)
 
-                print(f"{Colors.OKCYAN}[Ingest] Vectorizing {len(valid_paths)} files...{Colors.ENDC}")
+                print(
+                    f"{Colors.OKCYAN}[Ingest] Vectorizing {len(valid_paths)} files...{Colors.ENDC}"
+                )
 
                 # Process phase
                 # Note: If your DocumentProcessor supports single files,
                 # we could loop here to update the progress bar per file.
-                raw_docs = self.doc_processor.convert_to_documents(valid_paths, self.chunker)
+                raw_docs = self.doc_processor.convert_to_documents(
+                    valid_paths, self.chunker
+                )
 
                 if raw_docs:
                     self.status["current_file"] = "Aggregating chunks..."
@@ -412,7 +466,9 @@ class CollegeRAG:
                     for doc in raw_docs:
                         # Convert the absolute source to a relative one for the vector DB
                         abs_src = Path(doc.metadata["source"])
-                        doc.metadata["source"] = str(abs_src.relative_to(self.base_storage))
+                        doc.metadata["source"] = str(
+                            abs_src.relative_to(self.base_storage)
+                        )
 
                     final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
 
@@ -420,11 +476,20 @@ class CollegeRAG:
                     self.engine.ingest_batches(final_docs, batch_size=32)
 
                     # Update manifest in SQLite
-                    updates = {str(Path(p).relative_to(self.base_storage)): self._get_file_hash(p) for p in valid_paths}
+                    updates = {
+                        str(
+                            Path(p).relative_to(self.base_storage)
+                        ): self._get_file_hash(p)
+                        for p in valid_paths
+                    }
                     self._update_manifest_batch(updates)
-                    print(f"{Colors.OKGREEN}[Ingest] Success updated manifest in DB.{Colors.ENDC}")
+                    print(
+                        f"{Colors.OKGREEN}[Ingest] Success updated manifest in DB.{Colors.ENDC}"
+                    )
                 else:
-                    print(f"{Colors.WARNING}[Ingest] No content extracted.{Colors.ENDC}")
+                    print(
+                        f"{Colors.WARNING}[Ingest] No content extracted.{Colors.ENDC}"
+                    )
 
         except Exception as e:
             print(f"❌ Ingestion failed: {e}")
@@ -453,7 +518,9 @@ class CollegeRAG:
                 conn.execute("DELETE FROM file_hashes WHERE path = ?", (p_rel,))
                 conn.commit()
                 conn.close()
-                print(f"{Colors.WARNING}[Remove] Purged: {os.path.basename(fpath)}{Colors.ENDC}")
+                print(
+                    f"{Colors.WARNING}[Remove] Purged: {os.path.basename(fpath)}{Colors.ENDC}"
+                )
         except Exception as e:
             print(f"❌ Removal failed: {e}")
         finally:
@@ -464,7 +531,7 @@ class CollegeRAG:
 
     def _format_chat_history(self, chat_history):
         formatted_chat = ""
-        for (curr_chatter, curr_chat) in chat_history:
+        for curr_chatter, curr_chat in chat_history:
             chat = f"{'User' if curr_chatter == 'You' else 'AI'}: {curr_chat}"
             formatted_chat += chat + "\n"
         return formatted_chat
@@ -477,23 +544,27 @@ class CollegeRAG:
 
         lc_history = []
         for role, text in history[-6:]:
-            lc_history.append(HumanMessage(content=text) if role == "You" else AIMessage(content=text))
+            lc_history.append(
+                HumanMessage(content=text) if role == "You" else AIMessage(content=text)
+            )
 
         input_params = {
             "input": query,
             "chat_history": lc_history,
-            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
         # USE THE CHAIN HERE
-        result = self.rag_chain.invoke(input_params, config=RunnableConfig(callbacks=[RewriteLogger()]))
+        result = self.rag_chain.invoke(
+            input_params, config=RunnableConfig(callbacks=[RewriteLogger()])
+        )
 
         # The chain now returns a dictionary with 'answer' and 'docs'
         answer = result["answer"]
         docs = result["docs"]
 
         if not docs:
-            print('no docs found')
+            print("no docs found")
 
         # Show your Match Box using the docs the chain found
         if docs:
@@ -512,6 +583,8 @@ class CollegeRAG:
             # Handle cases where source is a relative path string
             src = os.path.basename(doc.metadata.get("source", "Unknown"))
             print(f"{Colors.OKCYAN}  Match {i + 1} {Colors.ENDC}| {src}")
-            content_preview = doc.page_content[:150].replace('\n', ' ')
-            print(f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{content_preview}...{Colors.ENDC}")
+            content_preview = doc.page_content[:150].replace("\n", " ")
+            print(
+                f"  {Colors.OKBLUE}↳{Colors.ENDC} {Colors.ITALIC}{content_preview}...{Colors.ENDC}"
+            )
         print(f"{Colors.HEADER}└{'─' * 78}┘{Colors.ENDC}\n")
