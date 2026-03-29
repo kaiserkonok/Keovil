@@ -57,7 +57,7 @@ class CollegeRAG(KeovilRAG):
         super().__init__(
             data_dir=data_dir,
             storage_dir=storage_dir,
-            collection_name="keovil",
+            collection_name="keovil_app",
             auto_index=True,
             top_k=top_k,
             mode="production",
