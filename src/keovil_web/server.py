@@ -1,6 +1,5 @@
 import os
 import sys
-import stat
 
 import shutil
 import json
@@ -44,17 +43,11 @@ def ensure_storage_writable(path):
     try:
         test_file.touch()
         test_file.unlink()
-        # Fix permissions if needed
-        try:
-            os.chmod(str(path), stat.S_IRWXU)
-        except:
-            pass
         return path
     except:
         # Fallback to local storage in project directory
         fallback = Path(__file__).parent.parent.parent / "keovil_data"
         fallback.mkdir(parents=True, exist_ok=True)
-        os.chmod(str(fallback), stat.S_IRWXU)
         print(
             f"{Fore.YELLOW}⚠️ Cannot write to {path}, using fallback: {fallback}{Style.RESET_ALL}"
         )
@@ -65,10 +58,6 @@ HOME_STORAGE = ensure_storage_writable(HOME_STORAGE)
 
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-# Create directories with proper permissions
-for d in [HOME_STORAGE, DATA_DIR, DB_DIR]:
-    d.mkdir(parents=True, exist_ok=True)
-    os.chmod(str(d), stat.S_IRWXU)
 
 # Check for old database file or create new one
 old_chat_db = DB_DIR / "chat_history_production.db"
