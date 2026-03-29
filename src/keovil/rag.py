@@ -1,11 +1,9 @@
 import os
-import json
 import hashlib
 import threading
-import time
 import sqlite3
 from pathlib import Path
-from typing import Any, Union
+from typing import Any
 from datetime import datetime
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
@@ -17,8 +15,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from .chunker import IntelligentChunker
 from .colbert import ColBERTEngine
 from .utils.document_processor import DocumentProcessor
@@ -148,8 +144,6 @@ class KeovilRAG:
                 ("human", "{input}"),
             ]
         )
-
-        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
 
         self.rag_chain = (
             RunnableParallel(
