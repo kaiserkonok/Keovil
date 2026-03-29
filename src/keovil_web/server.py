@@ -30,23 +30,37 @@ init(autoreset=True)
 # ---------------------------------------------------------
 # Path Configurations
 # ---------------------------------------------------------
-APP_MODE = "production"  # Keovil now uses ~/.keovil_storage consistently
+APP_MODE = "production"
 
 HOME_STORAGE = Path.home() / ".keovil_storage"
 STORAGE_STR = os.getenv("STORAGE_BASE", str(HOME_STORAGE))
 HOME_STORAGE = Path(STORAGE_STR).absolute()
 
+
+# Ensure storage is writable, fallback to local if not
+def ensure_storage_writable(path):
+    path.mkdir(parents=True, exist_ok=True)
+    test_file = path / ".write_test"
+    try:
+        test_file.touch()
+        test_file.unlink()
+        return path
+    except:
+        # Fallback to local storage in project directory
+        fallback = Path(__file__).parent.parent.parent / "keovil_data"
+        fallback.mkdir(parents=True, exist_ok=True)
+        print(
+            f"{Fore.YELLOW}⚠️ Cannot write to {path}, using fallback: {fallback}{Style.RESET_ALL}"
+        )
+        return fallback
+
+
+HOME_STORAGE = ensure_storage_writable(HOME_STORAGE)
+
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-
 CHAT_DB = DB_DIR / "chat_history.db"
 print(f"Chat Database: {CHAT_DB}")
-
-# Ensure directories exist
-HOME_STORAGE.mkdir(parents=True, exist_ok=True)
-os.chmod(str(HOME_STORAGE), stat.S_IRWXU)
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_DIR.mkdir(parents=True, exist_ok=True)
 
 # Global for explorer
 FILES_DIR = DATA_DIR
