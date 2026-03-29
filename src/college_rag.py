@@ -63,7 +63,7 @@ class CollegeRAG(KeovilRAG):
             collection_name="keovil_app",
             auto_index=True,
             top_k=top_k,
-            mode="production",
+            mode="webapp",
         )
 
         threading.Thread(target=self._batch_worker, daemon=True).start()

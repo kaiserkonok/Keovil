@@ -74,12 +74,7 @@ class KeovilRAG:
         if storage_dir:
             host_root = Path(storage_dir).absolute()
         else:
-            if self.mode == "production":
-                host_root = Path.home() / ".keovil_storage"
-            elif self.mode == "sdk":
-                host_root = Path.cwd() / "keovil_data"
-            else:
-                host_root = Path.home() / ".keovil_storage_dev"
+            host_root = Path.home() / ".keovil"
 
         storage_env = os.getenv("STORAGE_BASE", str(host_root))
         self.base_storage = Path(storage_env).absolute()
