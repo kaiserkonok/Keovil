@@ -31,8 +31,8 @@ init(autoreset=True)
 # ---------------------------------------------------------
 APP_MODE = "production"
 
-# Always use local storage in project directory - no permission issues
-HOME_STORAGE = Path(__file__).parent.parent.parent / "keovil_data"
+# Use ~/.keovil - clean directory that user owns
+HOME_STORAGE = Path.home() / ".keovil"
 HOME_STORAGE.mkdir(parents=True, exist_ok=True)
 
 # Set env var so other modules use same storage
