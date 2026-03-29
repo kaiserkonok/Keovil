@@ -187,13 +187,8 @@ class ColBERTEngine:
         return self.client.get_collection(self.collection_name).points_count
 
 
-# --- THE FINAL PATCH ---
-
-# 1. We re-link the method to ensure the C-compiled version is recognized
 ColBERTRetriever._get_relevant_documents = ColBERTRetriever._get_relevant_documents
 ColBERTRetriever._aget_relevant_documents = ColBERTRetriever._aget_relevant_documents
-
-# 2. We manually remove the "Missing" labels from the class registry
 ColBERTRetriever.__abstractmethods__ = frozenset(
     [
         m
