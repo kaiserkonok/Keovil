@@ -40,6 +40,8 @@ os.environ["STORAGE_BASE"] = str(HOME_STORAGE)
 
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_DIR.mkdir(parents=True, exist_ok=True)  # Ensure data and database directories exist
 CHAT_DB = DB_DIR / "chat_history.db"
 
 print(f"Storage: {HOME_STORAGE}")
