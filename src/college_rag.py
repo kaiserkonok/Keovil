@@ -13,7 +13,7 @@ from keovil.rag import KeovilRAG, Colors
 class NewFileHandler(PatternMatchingEventHandler):
     def __init__(self, rag_instance):
         super().__init__(
-            patterns=["*.txt", "*.pdf", "*.docx", ".pptx", "*.md"],
+            patterns=["*.txt", "*.pdf", "*.docx", "*.pptx", "*.md"],
             ignore_directories=True,
             case_sensitive=False,
         )
