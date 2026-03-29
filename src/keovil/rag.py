@@ -5,7 +5,7 @@ import threading
 import time
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any, Union
+from typing import Any, Union
 from datetime import datetime
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
@@ -187,7 +187,7 @@ class KeovilRAG:
         conn.close()
         return data
 
-    def _update_manifest_batch(self, file_data: Dict[str, str]):
+    def _update_manifest_batch(self, file_data: dict[str, str]):
         conn = sqlite3.connect(self.manifest_db)
         conn.executemany(
             "INSERT OR REPLACE INTO file_hashes VALUES (?, ?)", list(file_data.items())
@@ -252,7 +252,7 @@ class KeovilRAG:
         else:
             print(f"{Colors.OKGREEN}[Sync] Filesystem is clean.{Colors.ENDC}")
 
-    def aggregate_to_limit(self, raw_chunks: List[Any], token_limit: int = 512):
+    def aggregate_to_limit(self, raw_chunks: list[Any], token_limit: int = 512):
         standardized_docs = []
         current_text_block = []
         current_tokens = 0
@@ -289,7 +289,7 @@ class KeovilRAG:
             )
         return standardized_docs
 
-    def ingest(self, new_files: List[str] = None):
+    def ingest(self, new_files: list[str] = None):
         """Index files into the vector store."""
         if not new_files:
             return
@@ -368,7 +368,7 @@ class KeovilRAG:
         conn.close()
         self._initial_sync()
 
-    def query(self, question: str, chat_history: List = None) -> str:
+    def query(self, question: str, chat_history: list = None) -> str:
         """Ask a question and get an answer."""
         history = chat_history if chat_history is not None else self.chat_history
 

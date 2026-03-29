@@ -5,7 +5,7 @@ import shutil
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Dict
+from typing import Any
 from flask import (
     Flask,
     render_template,
@@ -294,8 +294,6 @@ def initialize_engines():
 
         # --- 1. Ollama Hardware Handshake ---
         try:
-            import requests
-
             model_name = DEFAULT_MODEL
             print(f"{Fore.CYAN}Verifying {model_name}...{Style.RESET_ALL}")
 

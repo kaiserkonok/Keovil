@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 from langchain_ollama import OllamaLLM
+from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -50,9 +52,6 @@ class SQLQueryAgent:
         History-aware SQL Agent.
         chat_history: list of {'role': 'user'|'assistant', 'content': str}
         """
-        from langchain_core.messages import HumanMessage, AIMessage
-        from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-
         # --- STEP 0: CONTEXTUALIZATION (STANDALONE QUERY GENERATION) ---
         # This prevents follow-up questions from breaking the SQL generator.
         formatted_history = []

@@ -72,14 +72,8 @@ class CollegeRAG(KeovilRAG):
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
         print(
-            f"{self.Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{self.Colors.ENDC}"
+            f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{Colors.ENDC}"
         )
-
-    @property
-    def Colors(self):
-        from keovil.rag import Colors
-
-        return Colors
 
     def get_status(self):
         with self.queue_lock:
