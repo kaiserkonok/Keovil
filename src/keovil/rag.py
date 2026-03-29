@@ -80,6 +80,8 @@ class KeovilRAG:
         else:
             if self.mode == "production":
                 host_root = Path.home() / ".keovil_storage"
+            elif self.mode == "sdk":
+                host_root = Path.cwd() / "keovil_data"
             else:
                 host_root = Path.home() / ".keovil_storage_dev"
 

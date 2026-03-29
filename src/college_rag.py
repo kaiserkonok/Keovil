@@ -41,7 +41,7 @@ class CollegeRAG(KeovilRAG):
     - SocketIO status broadcasts
     """
 
-    def __init__(self, data_dir=None, top_k=5, socketio=None):
+    def __init__(self, data_dir=None, storage_dir=None, top_k=5, socketio=None):
         self.socketio = socketio
         self.status = {
             "state": "idle",
@@ -57,6 +57,7 @@ class CollegeRAG(KeovilRAG):
 
         super().__init__(
             data_dir=data_dir,
+            storage_dir=storage_dir,
             collection_name=collection_name,
             auto_index=True,
             top_k=top_k,
