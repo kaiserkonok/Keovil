@@ -48,6 +48,9 @@ dev = [
     "pytest>=8.0.0",
 ]
 
+[project.scripts]
+keovil-web = "keovil_web.app:main"
+
 [project.urls]
 Homepage = "https://github.com/kaiserkonok/Keovil"
 Repository = "https://github.com/kaiserkonok/Keovil"

@@ -52,8 +52,11 @@ brew install qdrant && brew services start qdrant
 # 4. Install Keovil
 pip install git+https://github.com/kaiserkonok/Keovil.git
 
-# 5. Run
-python -m keovil_web.app
+# 5. Run the web app
+keovil-web
+
+# Or alternatively
+python -m keovil_web
 ```
 
 ---
@@ -111,13 +114,11 @@ ollama pull qwen2.5-coder:7b-instruct
 # 3. Start Qdrant (macOS)
 brew install qdrant && brew services start qdrant
 
-# 4. Clone & install
-git clone https://github.com/kaiserkonok/Keovil.git
-cd Keovil
-pip install -r requirements.txt
+# 4. Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git
 
-# 5. Run
-python src/keovil_web/app.py
+# 5. Run the web app
+keovil-web
 ```
 
 Open [http://localhost:5000](http://localhost:5000)
@@ -269,13 +270,11 @@ curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-a
 tar -xzf qdrant.tar.gz
 ./qdrant &
 
-# Clone & install
-git clone https://github.com/kaiserkonok/Keovil.git
-cd Keovil
-pip install -r requirements.txt
+# Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git
 
-# Run
-python src/keovil_web/app.py
+# Run the web app
+keovil-web
 ```
 
 ---
@@ -285,8 +284,11 @@ python src/keovil_web/app.py
 ### Web Application
 
 ```bash
-# Run the web interface
-python -m keovil_web.app
+# After pip install, run:
+keovil-web
+
+# Or use python module
+python -m keovil_web
 ```
 
 - Uses `~/.keovil` for storage
@@ -311,7 +313,7 @@ answer = rag.query("Your question?")
 ```bash
 # Override storage location
 export STORAGE_BASE=/path/to/custom/storage
-python -m keovil_web.app
+keovil-web
 ```
 
 ---
