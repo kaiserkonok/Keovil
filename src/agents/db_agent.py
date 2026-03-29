@@ -14,6 +14,8 @@ from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+from utils.model_engine import get_llm
+
 # Beautiful terminal output
 from rich.console import Console
 from rich.panel import Panel
@@ -36,8 +38,6 @@ class SQLQueryAgent:
         # Isolate extensions within the database folder to prevent cross-contamination
         self.ext_dir = Path(db_path).parent / "sys_modules"
         self.ext_dir.mkdir(exist_ok=True)
-
-        from utils.model_engine import get_llm
 
         self.llm = get_llm()
 

@@ -120,7 +120,7 @@ class CollegeRAG(KeovilRAG):
             if to_process:
                 self.status["state"] = "processing"
                 print(
-                    f"{self.Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{self.Colors.ENDC}"
+                    f"{Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{Colors.ENDC}"
                 )
                 self.ingest(to_process)
 
