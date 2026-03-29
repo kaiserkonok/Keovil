@@ -257,7 +257,7 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 import threading
 
