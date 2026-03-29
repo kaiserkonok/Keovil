@@ -1,5 +1,4 @@
 import hashlib
-from typing import List
 from langchain_text_splitters import (
     MarkdownHeaderTextSplitter,
     RecursiveCharacterTextSplitter,
@@ -16,17 +15,12 @@ class Chunk:
     def __init__(self, text: str, chunk_id: str, metadata: dict):
         self.text = text
         self.id = chunk_id
-        self.metadata = metadata  # Changed from self.meta to self.metadata
+        self.metadata = metadata
 
 
 class IntelligentChunker:
     def __init__(self, model_name="lightonai/GTE-ModernColBERT-v1"):
-        # We use the real tokenizer to know the REAL token limit for your RTX 5060 Ti
-        # This ensures the 512 token limit is exact, not an estimate.
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-
-        # Safety split size (approx 2000 chars ~= 500 tokens)
-        # This acts as the 'worst case' handler for documents with no formatting.
         self._chunk_size = 2000
         self._chunk_overlap = 200
 
@@ -34,7 +28,7 @@ class IntelligentChunker:
         """Returns the exact number of tokens the ColBERT model will see."""
         return len(self.tokenizer.encode(text, add_special_tokens=False))
 
-    def chunk_document(self, text: str) -> List[Chunk]:
+    def chunk_document(self, text: str) -> list[Chunk]:
         """
         Two-stage chunking:
         1. Split by Markdown headers to keep logical sections together.

@@ -67,11 +67,6 @@ print(f"Auth file path: {AUTH_FILE}")
 
 
 def get_chubby_hwid():
-    import subprocess
-    import hashlib
-    import platform
-    import os
-
     system = platform.system()
     components = []
 
