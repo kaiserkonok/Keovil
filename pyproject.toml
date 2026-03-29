@@ -23,6 +23,7 @@ dependencies = [
     "langchain-core>=0.3.0",
     "langchain-community>=0.3.0",
     "langchain-classic>=0.3.0",
+    "langchain-ollama>=0.2.0",
     "qdrant-client>=1.12.0",
     "pylate>=0.4.0",
     "torch>=2.0.0",
