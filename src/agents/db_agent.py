@@ -14,7 +14,7 @@ from colorama import Fore, Style, init
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from utils.model_engine import get_llm
+from keovil.utils.model_engine import get_llm
 
 # Beautiful terminal output
 from rich.console import Console
