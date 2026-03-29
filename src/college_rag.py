@@ -41,7 +41,7 @@ class CollegeRAG(KeovilRAG):
     - SocketIO status broadcasts
     """
 
-    def __init__(self, data_dir=None, storage_dir=None, top_k=5, socketio=None):
+    def __init__(self, data_dir=None, top_k=5, socketio=None):
         self.socketio = socketio
         self.status = {
             "state": "idle",
@@ -52,16 +52,15 @@ class CollegeRAG(KeovilRAG):
         self.pending_files = set()
         self.queue_lock = threading.Lock()
 
-        mode = os.getenv("APP_MODE", "development")
-        collection_name = "keovil" if mode == "production" else "keovil_dev"
+        storage_dir = str(Path.home() / ".keovil_storage")
 
         super().__init__(
             data_dir=data_dir,
             storage_dir=storage_dir,
-            collection_name=collection_name,
+            collection_name="keovil",
             auto_index=True,
             top_k=top_k,
-            mode=mode,
+            mode="production",
         )
 
         threading.Thread(target=self._batch_worker, daemon=True).start()
