@@ -58,6 +58,47 @@ python -m keovil_web.app
 
 ---
 
+## Quick Usage Examples
+
+### Using the SDK in your Python projects
+
+```python
+from keovil import KeovilRAG
+
+# Initialize RAG system
+rag = KeovilRAG(data_dir="/path/to/your/files")
+
+# Index your files (PDF, text, CSV, Excel, etc.)
+rag.ingest(["document1.pdf", "data.csv", "notes.txt"])
+
+# Ask questions in natural language
+answer = rag.query("What are the main findings in the documents?")
+print(answer)
+
+# For chat-like conversations
+history = []
+answer = rag.query("What was the revenue last year?", history)
+history.extend([("You", "What was the revenue last year?"), ("AI", answer)])
+answer = rag.query("How does it compare to this year?", history)
+```
+
+### Using the Full Web Application
+
+```bash
+# After installation, run the web interface
+python -m keovil_web.app
+
+# Then visit http://localhost:5000 in your browser
+# Features:
+# - Drag & drop files for instant indexing
+# - Natural language querying of documents
+# - SQL querying of structured data (CSV, Excel, etc.)
+# - File system explorer
+# - Secure hardware-based authentication
+```
+
+---
+
 ## Quick Start
 
 ```bash
