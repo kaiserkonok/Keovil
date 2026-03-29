@@ -240,16 +240,17 @@ Qdrant VectorDB ────────────────── DuckDB
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_MODE` | `development` | `development` or `production` |
 | `OLLAMA_HOST` | `127.0.0.1:11434` | Ollama server address |
 | `QDRANT_HOST` | `localhost` | Qdrant server address |
-| `STORAGE_BASE` | `~/.keovil_storage(_dev)` | Custom storage path |
+| `STORAGE_BASE` | `~/.keovil` | Custom storage path |
 
 ### Storage Locations
 
 ```
-~/.keovil_storage_dev/     ← Development mode (default)
-~/.keovil_storage/         ← Production mode
+~/.keovil/                 ← Default storage for both SDK and web app
+├── data/                  # Source files
+├── database/              # SQLite manifest + chat history
+└── qdrant/               # Vector embeddings
 ```
 
 ---
@@ -281,25 +282,37 @@ python src/keovil_web/app.py
 
 ## Usage Modes
 
-### Development Mode (Default)
+### Web Application
 
 ```bash
-export APP_MODE=development
-python src/keovil_web/app.py
+# Run the web interface
+python -m keovil_web.app
 ```
 
-- Isolated storage: `~/.keovil_storage_dev`
-- Separate collections for testing
+- Uses `~/.keovil` for storage
+- Collection: `keovil_app`
+- Visit http://localhost:5000
 
-### Production Mode
+### SDK (For Developers)
+
+```python
+from keovil import KeovilRAG
+
+rag = KeovilRAG(data_dir="/path/to/files")
+rag.ingest(["file.pdf"])
+answer = rag.query("Your question?")
+```
+
+- Uses `~/.keovil` for storage
+- Collection: `keovil`
+
+### Custom Storage
 
 ```bash
-export APP_MODE=production
-python src/keovil_web/app.py
+# Override storage location
+export STORAGE_BASE=/path/to/custom/storage
+python -m keovil_web.app
 ```
-
-- Unified storage: `~/.keovil_storage`
-- All data in one place
 
 ---
 
