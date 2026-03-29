@@ -29,6 +29,8 @@ init(autoreset=True)
 # ---------------------------------------------------------
 # Path Configurations
 # ---------------------------------------------------------
+APP_MODE = "production"  # Keovil now uses ~/.keovil_storage consistently
+
 HOME_STORAGE = Path.home() / ".keovil_storage"
 STORAGE_STR = os.getenv("STORAGE_BASE", str(HOME_STORAGE))
 HOME_STORAGE = Path(STORAGE_STR).absolute()
