@@ -59,7 +59,10 @@ HOME_STORAGE = ensure_storage_writable(HOME_STORAGE)
 
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-CHAT_DB = DB_DIR / "chat_history.db"
+# Check for old database file or create new one
+old_chat_db = DB_DIR / "chat_history_production.db"
+new_chat_db = DB_DIR / "chat_history.db"
+CHAT_DB = old_chat_db if old_chat_db.exists() else new_chat_db
 print(f"Chat Database: {CHAT_DB}")
 
 # Global for explorer
