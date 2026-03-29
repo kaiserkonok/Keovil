@@ -14,6 +14,48 @@
 
 Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovil generates the queries and returns results. Everything runs locally on your GPU.
 
+## Installation
+
+### Option 1: Install from GitHub (Recommended)
+
+```bash
+# Install the SDK and web app
+pip install git+https://github.com/kaiserkonok/Keovil.git
+
+# For specific branch (e.g., development)
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+```
+
+### Option 2: Local Development Install
+
+```bash
+# Clone the repository
+git clone https://github.com/kaiserkonok/Keovil.git
+cd Keovil
+
+# Install in development mode
+pip install -e .
+```
+
+### Option 3: Web App Only (Quick Start)
+
+```bash
+# 1. Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Pull model
+ollama pull qwen2.5-coder:7b-instruct
+
+# 3. Start Qdrant (macOS)
+brew install qdrant && brew services start qdrant
+
+# 4. Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git
+
+# 5. Run
+python -m keovil_web.app
+```
+
 ---
 
 ## Quick Start
