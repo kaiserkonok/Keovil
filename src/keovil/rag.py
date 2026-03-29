@@ -206,6 +206,13 @@ class KeovilRAG:
             print(f"{Colors.FAIL}Error hashing {filepath}: {e}{Colors.ENDC}")
             return None
 
+    def _get_storage_key(self, filepath: Path) -> str:
+        """Get storage key for a file. Use relative path if inside base_storage, otherwise use absolute path."""
+        try:
+            return str(filepath.relative_to(self.base_storage))
+        except ValueError:
+            return str(filepath.absolute())
+
     def _initial_sync(self):
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
 
@@ -316,18 +323,14 @@ class KeovilRAG:
                 if raw_docs:
                     for doc in raw_docs:
                         abs_src = Path(doc.metadata["source"])
-                        doc.metadata["source"] = str(
-                            abs_src.relative_to(self.base_storage)
-                        )
+                        doc.metadata["source"] = self._get_storage_key(abs_src)
 
                     final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
 
                     self.engine.ingest_batches(final_docs, batch_size=32)
 
                     updates = {
-                        str(
-                            Path(p).relative_to(self.base_storage)
-                        ): self._get_file_hash(p)
+                        self._get_storage_key(Path(p)): self._get_file_hash(p)
                         for p in valid_paths
                     }
                     self._update_manifest_batch(updates)
@@ -347,11 +350,11 @@ class KeovilRAG:
         try:
             with self.lock:
                 p_abs = Path(fpath).absolute()
-                p_rel = str(p_abs.relative_to(self.base_storage))
+                storage_key = self._get_storage_key(p_abs)
 
-                self.engine.delete_by_source(p_rel)
+                self.engine.delete_by_source(storage_key)
                 conn = sqlite3.connect(self.manifest_db)
-                conn.execute("DELETE FROM file_hashes WHERE path = ?", (p_rel,))
+                conn.execute("DELETE FROM file_hashes WHERE path = ?", (storage_key,))
                 conn.commit()
                 conn.close()
                 print(
