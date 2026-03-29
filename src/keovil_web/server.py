@@ -31,57 +31,18 @@ init(autoreset=True)
 # ---------------------------------------------------------
 APP_MODE = "production"
 
-HOME_STORAGE = Path.home() / ".keovil_storage"
-STORAGE_STR = os.getenv("STORAGE_BASE", str(HOME_STORAGE))
-HOME_STORAGE = Path(STORAGE_STR).absolute()
+# Always use local storage in project directory - no permission issues
+HOME_STORAGE = Path(__file__).parent.parent.parent / "keovil_data"
+HOME_STORAGE.mkdir(parents=True, exist_ok=True)
 
-
-# Ensure storage is writable, fallback to local if not
-def ensure_storage_writable(path):
-    path.mkdir(parents=True, exist_ok=True)
-    test_file = path / ".write_test"
-    try:
-        test_file.touch()
-        test_file.unlink()
-        return path
-    except:
-        # Fallback to local storage in project directory
-        fallback = Path(__file__).parent.parent.parent / "keovil_data"
-        fallback.mkdir(parents=True, exist_ok=True)
-        print(
-            f"{Fore.YELLOW}⚠️ Cannot write to {path}, using fallback: {fallback}{Style.RESET_ALL}"
-        )
-        return fallback
-
-
-HOME_STORAGE = ensure_storage_writable(HOME_STORAGE)
-
-# Set env var so other modules (db_agent) use same storage
+# Set env var so other modules use same storage
 os.environ["STORAGE_BASE"] = str(HOME_STORAGE)
 
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
+CHAT_DB = DB_DIR / "chat_history.db"
 
-# Check if DB_DIR is writable - if not, use fallback
-test_file = DB_DIR / ".write_test"
-try:
-    test_file.touch()
-    test_file.unlink()
-    # Directory is writable, check for old database
-    old_chat_db = DB_DIR / "chat_history_production.db"
-    new_chat_db = DB_DIR / "chat_history.db"
-    CHAT_DB = old_chat_db if old_chat_db.exists() else new_chat_db
-except:
-    # Directory not writable, use fallback
-    HOME_STORAGE = Path(__file__).parent.parent.parent / "keovil_data"
-    HOME_STORAGE.mkdir(parents=True, exist_ok=True)
-    DB_DIR = HOME_STORAGE / "database"
-    DB_DIR.mkdir(parents=True, exist_ok=True)
-    CHAT_DB = DB_DIR / "chat_history.db"
-    print(
-        f"{Fore.YELLOW}⚠️ Cannot write to ~/.keovil_storage, using fallback: {HOME_STORAGE}{Style.RESET_ALL}"
-    )
-
+print(f"Storage: {HOME_STORAGE}")
 print(f"Chat Database: {CHAT_DB}")
 
 # Global for explorer

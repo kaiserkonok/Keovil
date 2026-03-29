@@ -52,7 +52,10 @@ class CollegeRAG(KeovilRAG):
         self.pending_files = set()
         self.queue_lock = threading.Lock()
 
-        storage_dir = str(Path.home() / ".keovil_storage")
+        # Use STORAGE_BASE env var if set, otherwise use local storage
+        storage_dir = os.getenv("STORAGE_BASE")
+        if not storage_dir:
+            storage_dir = str(Path(__file__).parent.parent.parent / "keovil_data")
 
         super().__init__(
             data_dir=data_dir,
