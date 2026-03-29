@@ -54,3 +54,6 @@ Repository = "https://github.com/kaiserkonok/Keovil"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+keovil_web = ["templates/*", "static/*", "static/images/*", "static/css/*", "static/js/*"]
