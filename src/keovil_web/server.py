@@ -56,6 +56,9 @@ def ensure_storage_writable(path):
 
 HOME_STORAGE = ensure_storage_writable(HOME_STORAGE)
 
+# Set env var so other modules (db_agent) use same storage
+os.environ["STORAGE_BASE"] = str(HOME_STORAGE)
+
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
 
