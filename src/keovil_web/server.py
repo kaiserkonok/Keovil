@@ -1,5 +1,6 @@
 import os
 import sys
+import stat
 
 import shutil
 import json
@@ -42,6 +43,8 @@ CHAT_DB = DB_DIR / "chat_history.db"
 print(f"Chat Database: {CHAT_DB}")
 
 # Ensure directories exist
+HOME_STORAGE.mkdir(parents=True, exist_ok=True)
+os.chmod(str(HOME_STORAGE), stat.S_IRWXU)
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_DIR.mkdir(parents=True, exist_ok=True)
 
