@@ -21,8 +21,8 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from .chunker import IntelligentChunker
 from .colbert import ColBERTEngine
-from ..utils.document_processor import DocumentProcessor
-from ..utils.model_engine import get_llm
+from src.utils.document_processor import DocumentProcessor
+from src.utils.model_engine import get_llm
 import torch
 
 
