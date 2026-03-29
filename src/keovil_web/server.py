@@ -27,32 +27,25 @@ import requests
 init(autoreset=True)
 
 # ---------------------------------------------------------
-# Path Configurations (Total Isolation: Dev vs. Prod)
+# Path Configurations
 # ---------------------------------------------------------
-# 1. Determine the Mode
-APP_MODE = os.getenv("APP_MODE", "development")
+APP_MODE = "production"
 
-# 2. Assign completely different Root Folders on your SSD
-if APP_MODE == "production":
-    host_root = Path.home() / ".keovil_storage"
-else:
-    host_root = Path.home() / ".keovil_storage_dev"
+# Use ~/.keovil - clean directory that user owns
+HOME_STORAGE = Path.home() / ".keovil"
+HOME_STORAGE.mkdir(parents=True, exist_ok=True)
 
-# 3. Support Docker Portability
-STORAGE_STR = os.getenv("STORAGE_BASE", str(host_root))
-HOME_STORAGE = Path(STORAGE_STR).absolute()
+# Set env var so other modules use same storage
+os.environ["STORAGE_BASE"] = str(HOME_STORAGE)
 
-# 4. Standardized sub-folders (relative to the isolated HOME_STORAGE)
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
-
-# Mode-specific chat history to prevent cross-talk
-CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
-print(f"Chat Database: {CHAT_DB}")
-
-# Ensure directories exist
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-DB_DIR.mkdir(parents=True, exist_ok=True)
+DB_DIR.mkdir(parents=True, exist_ok=True)  # Ensure data and database directories exist
+CHAT_DB = DB_DIR / "chat_history.db"
+
+print(f"Storage: {HOME_STORAGE}")
+print(f"Chat Database: {CHAT_DB}")
 
 # Global for explorer
 FILES_DIR = DATA_DIR

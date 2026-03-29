@@ -14,6 +14,89 @@
 
 Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovil generates the queries and returns results. Everything runs locally on your GPU.
 
+## Installation
+
+### Option 1: Install from GitHub (Recommended)
+
+```bash
+# Install the SDK and web app
+pip install git+https://github.com/kaiserkonok/Keovil.git
+
+# For specific branch (e.g., development)
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+```
+
+### Option 2: Local Development Install
+
+```bash
+# Clone the repository
+git clone https://github.com/kaiserkonok/Keovil.git
+cd Keovil
+
+# Install in development mode
+pip install -e .
+```
+
+### Option 3: Web App Only (Quick Start)
+
+```bash
+# 1. Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh
+
+# 2. Pull model
+ollama pull qwen2.5-coder:7b-instruct
+
+# 3. Start Qdrant (macOS)
+brew install qdrant && brew services start qdrant
+
+# 4. Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git
+
+# 5. Run
+python -m keovil_web.app
+```
+
+---
+
+## Quick Usage Examples
+
+### Using the SDK in your Python projects
+
+```python
+from keovil import KeovilRAG
+
+# Initialize RAG system
+rag = KeovilRAG(data_dir="/path/to/your/files")
+
+# Index your files (PDF, text, CSV, Excel, etc.)
+rag.ingest(["document1.pdf", "data.csv", "notes.txt"])
+
+# Ask questions in natural language
+answer = rag.query("What are the main findings in the documents?")
+print(answer)
+
+# For chat-like conversations
+history = []
+answer = rag.query("What was the revenue last year?", history)
+history.extend([("You", "What was the revenue last year?"), ("AI", answer)])
+answer = rag.query("How does it compare to this year?", history)
+```
+
+### Using the Full Web Application
+
+```bash
+# After installation, run the web interface
+python -m keovil_web.app
+
+# Then visit http://localhost:5000 in your browser
+# Features:
+# - Drag & drop files for instant indexing
+# - Natural language querying of documents
+# - SQL querying of structured data (CSV, Excel, etc.)
+# - File system explorer
+# - Secure hardware-based authentication
+```
+
 ---
 
 ## Quick Start

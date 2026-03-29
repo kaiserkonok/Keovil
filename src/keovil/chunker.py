@@ -1,6 +1,9 @@
 import hashlib
 from typing import List
-from langchain_text_splitters import MarkdownHeaderTextSplitter, RecursiveCharacterTextSplitter
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 from transformers import AutoTokenizer
 
 
@@ -40,16 +43,14 @@ class IntelligentChunker:
         # 1. Logical Split (Markdown)
         headers_to_split_on = [("#", "H1"), ("##", "H2"), ("###", "H3")]
         md_splitter = MarkdownHeaderTextSplitter(
-            headers_to_split_on=headers_to_split_on,
-            strip_headers=False
+            headers_to_split_on=headers_to_split_on, strip_headers=False
         )
         md_header_splits = md_splitter.split_text(text)
 
         # 2. Safety Split (Character-based)
         # This prevents the 'worst case' where a single header contains 50 pages of text.
         text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self._chunk_size,
-            chunk_overlap=self._chunk_overlap
+            chunk_size=self._chunk_size, chunk_overlap=self._chunk_overlap
         )
         final_docs = text_splitter.split_documents(md_header_splits)
 
@@ -60,10 +61,8 @@ class IntelligentChunker:
             chunk_id = f"chunk_{i}_{content_hash}"
 
             # Wrap in our standardized helper class
-            processed_chunks.append(Chunk(
-                text=doc.page_content,
-                chunk_id=chunk_id,
-                metadata=doc.metadata
-            ))
+            processed_chunks.append(
+                Chunk(text=doc.page_content, chunk_id=chunk_id, metadata=doc.metadata)
+            )
 
         return processed_chunks

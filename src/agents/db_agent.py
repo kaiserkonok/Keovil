@@ -36,6 +36,7 @@ class SQLQueryAgent:
         self.ext_dir.mkdir(exist_ok=True)
 
         from utils.model_engine import get_llm
+
         self.llm = get_llm()
 
         # Persistence of extensions in the specific storage folder
@@ -57,26 +58,35 @@ class SQLQueryAgent:
         formatted_history = []
         if chat_history:
             for msg in chat_history[-10:]:  # Last 10 messages for context
-                if msg['role'] == 'user':
-                    formatted_history.append(HumanMessage(content=msg['content']))
+                if msg["role"] == "user":
+                    formatted_history.append(HumanMessage(content=msg["content"]))
                 else:
                     # Strip the heavy HTML table data from history to keep LLM focused
-                    clean_content = msg['content'].split('### 📊 Data Records')[0].strip()
+                    clean_content = (
+                        msg["content"].split("### 📊 Data Records")[0].strip()
+                    )
                     formatted_history.append(AIMessage(content=clean_content))
 
         if formatted_history:
-            context_prompt = ChatPromptTemplate.from_messages([
-                ("system",
-                 "You are a query refiner. Given the chat history and a follow-up question, rephrase the question into a STANDALONE query that includes all necessary context. Output ONLY the rephrased question."),
-                MessagesPlaceholder(variable_name="history"),
-                ("human", "{input}")
-            ])
+            context_prompt = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        "You are a query refiner. Given the chat history and a follow-up question, rephrase the question into a STANDALONE query that includes all necessary context. Output ONLY the rephrased question.",
+                    ),
+                    MessagesPlaceholder(variable_name="history"),
+                    ("human", "{input}"),
+                ]
+            )
             try:
-                standalone_query = (context_prompt | self.llm).invoke({
-                    "history": formatted_history,
-                    "input": query
-                }).strip()
-                console.print(f"[dim cyan]Refined Query:[/dim cyan] [italic]{standalone_query}[/italic]")
+                standalone_query = (
+                    (context_prompt | self.llm)
+                    .invoke({"history": formatted_history, "input": query})
+                    .strip()
+                )
+                console.print(
+                    f"[dim cyan]Refined Query:[/dim cyan] [italic]{standalone_query}[/italic]"
+                )
             except Exception as e:
                 standalone_query = query
         else:
@@ -105,7 +115,7 @@ class SQLQueryAgent:
 
             router_output = self.llm.invoke(router_prompt).strip()
 
-            found_words = re.findall(r'\b\w+\b', router_output)
+            found_words = re.findall(r"\b\w+\b", router_output)
             relevant_names = [name for name in found_words if name in all_table_names]
 
             if not relevant_names:
@@ -134,26 +144,43 @@ class SQLQueryAgent:
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
                 # We provide the original query context but emphasize the standalone_query intent
-                initial_response = self.llm.invoke(f"{system_context}\n\nUser: {standalone_query}")
+                initial_response = self.llm.invoke(
+                    f"{system_context}\n\nUser: {standalone_query}"
+                )
 
                 # Extract Thought
-                thought_match = re.search(r"Thought:(.*?)(?=```sql|$)", initial_response, re.DOTALL | re.IGNORECASE)
-                thought_process = thought_match.group(1).strip() if thought_match else "Analyzing..."
-                console.print(Panel(thought_process, title="AI Reasoning", border_style="blue"))
+                thought_match = re.search(
+                    r"Thought:(.*?)(?=```sql|$)",
+                    initial_response,
+                    re.DOTALL | re.IGNORECASE,
+                )
+                thought_process = (
+                    thought_match.group(1).strip() if thought_match else "Analyzing..."
+                )
+                console.print(
+                    Panel(thought_process, title="AI Reasoning", border_style="blue")
+                )
 
                 # Extract SQL
-                sql_match = re.search(r"```sql\n(.*?)\n```", initial_response, re.DOTALL)
+                sql_match = re.search(
+                    r"```sql\n(.*?)\n```", initial_response, re.DOTALL
+                )
                 if not sql_match:
                     return initial_response
 
                 sql_raw = sql_match.group(1).strip()
                 console.print(
-                    Panel(Syntax(sql_raw, "sql", theme="monokai"), title="Executing SQL", border_style="green"))
+                    Panel(
+                        Syntax(sql_raw, "sql", theme="monokai"),
+                        title="Executing SQL",
+                        border_style="green",
+                    )
+                )
 
                 # 3. Execution (Running on your RTX 5060 Ti via DuckDB)
                 print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
 
-                sql_statements = [s.strip() for s in sql_raw.split(';') if s.strip()]
+                sql_statements = [s.strip() for s in sql_raw.split(";") if s.strip()]
 
                 all_results = []
                 combined_df_html = ""
@@ -164,11 +191,13 @@ class SQLQueryAgent:
                     table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
                     tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
 
-                    all_results.append({
-                        "source": tag,
-                        "rows": len(res_df),
-                        "data": res_df.head(5).to_dict()
-                    })
+                    all_results.append(
+                        {
+                            "source": tag,
+                            "rows": len(res_df),
+                            "data": res_df.head(5).to_dict(),
+                        }
+                    )
 
                     table_md = res_df.to_markdown(index=False)
                     combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
@@ -189,11 +218,7 @@ class SQLQueryAgent:
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI
-                output = (
-                    f"{final_chat}\n\n"
-                    f"### 📊 Data Records\n"
-                    f"{combined_df_html}"
-                )
+                output = f"{final_chat}\n\n### 📊 Data Records\n{combined_df_html}"
 
                 return output
 
@@ -211,11 +236,21 @@ class IngestionHandler(FileSystemEventHandler):
         self._timer = None
 
     def process(self, event):
-        if event.is_directory: return
+        if event.is_directory:
+            return
         # Cleaned up extensions and added .sqlite
-        valid_extensions = (".csv", ".xlsx", ".xls", ".parquet", ".db", ".sqlite", ".sqlite3")
+        valid_extensions = (
+            ".csv",
+            ".xlsx",
+            ".xls",
+            ".parquet",
+            ".db",
+            ".sqlite",
+            ".sqlite3",
+        )
         if event.src_path.lower().endswith(valid_extensions):
-            if self._timer: self._timer.cancel()
+            if self._timer:
+                self._timer.cancel()
             self._timer = threading.Timer(1.5, self.manager.sync_database)
             self._timer.start()
 
@@ -234,26 +269,14 @@ class IngestionHandler(FileSystemEventHandler):
 # ==================================================
 class StructuredDataAgent:
     def __init__(self, socketio=None, watch_dir=None):
-        # 1. TOTAL ISOLATION LOGIC
-        self.mode = os.getenv("APP_MODE", "development")
-
-        if self.mode == "production":
-            host_root = Path.home() / ".keovil_storage"
-            db_suffix = "prod"
-        else:
-            host_root = Path.home() / ".keovil_storage_dev"
-            db_suffix = "dev"
-
-        storage_env = os.getenv("STORAGE_BASE", str(host_root))
+        storage_env = os.getenv("STORAGE_BASE", str(Path.home() / ".keovil_storage"))
         self.base_storage = Path(storage_env).absolute()
         self.socketio = socketio
         self.handler = IngestionHandler(self)
 
-        # 2. ISOLATED PATHS
         self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
-        # Unique DB names for the specific mode
-        self.db_path = (self.base_storage / "database" / f"cache_{db_suffix}.bin").resolve()
-        self.state_db = (self.base_storage / "database" / f"state_{db_suffix}.bin").resolve()
+        self.db_path = (self.base_storage / "database" / "cache.bin").resolve()
+        self.state_db = (self.base_storage / "database" / "state.bin").resolve()
 
         # Ensure everything is ready
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -280,7 +303,7 @@ class StructuredDataAgent:
         self.observer = Observer()
         self.is_syncing = False
 
-        console.print(f"[bold cyan]🚀 SQL Agent Mode: {self.mode.upper()}[/bold cyan]")
+        console.print(f"[bold cyan]🚀 SQL Agent: {self.base_storage}[/bold cyan]")
 
     def _get_unique_name(self, fp: Path) -> str:
         """Creates a unique, SQL-safe name. Understandable for LLM via stems."""
@@ -288,7 +311,7 @@ class StructuredDataAgent:
         # Unique 4-char hash based on the folder path
         path_hash = hashlib.md5(str(rel_path).encode()).hexdigest()[:4]
         # Clean the filename (e.g., "Sales Data 2026" -> "sales_data_2026")
-        clean_stem = re.sub(r'[^a-zA-Z0-9]', '_', fp.stem).lower()
+        clean_stem = re.sub(r"[^a-zA-Z0-9]", "_", fp.stem).lower()
         return f"v_{clean_stem}_{path_hash}"
 
     def _needs_update(self, state_con, fp: Path) -> bool:
@@ -311,26 +334,36 @@ class StructuredDataAgent:
     def _track_multi_table_names(self, con, fp, v_name, ext, active_views):
         """Purely tracks names for UNCHANGED files so they aren't deleted."""
         if ext in (".db", ".sqlite", ".sqlite3"):
-            tables = con.execute(f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
+            tables = con.execute(
+                f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'"
+            ).fetchall()
             for (t_name,) in tables:
                 active_views.add(f"{v_name}_{t_name.lower()}")
         elif ext in (".xlsx", ".xls"):
             # Use pandas just to get sheet names without loading data
             xls = pd.ExcelFile(fp)
             for sheet in xls.sheet_names:
-                sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
+                sheet_clean = re.sub(r"[^a-zA-Z0-9]", "_", sheet).lower()
                 active_views.add(f"{v_name}_{sheet_clean}")
 
     def sync_database(self):
-        if not SQL_THREAD_LOCK.acquire(blocking=False): return
+        if not SQL_THREAD_LOCK.acquire(blocking=False):
+            return
 
         # Initial Signal: System is busy, progress is 0
         if self.socketio:
-            self.socketio.emit('system_status', {
-                'sql_syncing': True,
-                'reason': 'processing',
-                'rag': {'state': 'processing', 'current_file': 'Starting Sync...', 'progress': 0}
-            })
+            self.socketio.emit(
+                "system_status",
+                {
+                    "sql_syncing": True,
+                    "reason": "processing",
+                    "rag": {
+                        "state": "processing",
+                        "current_file": "Starting Sync...",
+                        "progress": 0,
+                    },
+                },
+            )
 
         try:
             self.is_syncing = True
@@ -342,16 +375,28 @@ class StructuredDataAgent:
             for root, _, files in os.walk(self.watch_dir):
                 for f in files:
                     if not f.startswith("~$") and f.lower().endswith(
-                            (".csv", ".parquet", ".xlsx", ".xls", ".db", ".sqlite", ".sqlite3")):
+                        (
+                            ".csv",
+                            ".parquet",
+                            ".xlsx",
+                            ".xls",
+                            ".db",
+                            ".sqlite",
+                            ".sqlite3",
+                        )
+                    ):
                         all_files.append(Path(root, f).resolve())
 
             total_files = len(all_files)
 
-            with duckdb.connect(str(self.db_path)) as con, \
-                    duckdb.connect(str(self.state_db)) as state_con:
-
+            with (
+                duckdb.connect(str(self.db_path)) as con,
+                duckdb.connect(str(self.state_db)) as state_con,
+            ):
                 con.execute(f"SET extension_directory = '{self.agent.ext_dir}';")
-                con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite; LOAD excel; LOAD spatial; LOAD sqlite;")
+                con.execute(
+                    "INSTALL excel; INSTALL spatial; INSTALL sqlite; LOAD excel; LOAD spatial; LOAD sqlite;"
+                )
 
                 for idx, fp in enumerate(all_files):
                     v_name = self._get_unique_name(fp)
@@ -360,50 +405,64 @@ class StructuredDataAgent:
                     # Update UI for every file processed
                     if self.socketio:
                         progress = int(((idx + 1) / total_files) * 100)
-                        self.socketio.emit('system_status', {
-                            'sql_syncing': True,
-                            'reason': 'processing',
-                            'rag': {
-                                'state': 'processing',
-                                'current_file': f"Indexing: {fp.name}",
-                                'progress': progress
-                            }
-                        })
+                        self.socketio.emit(
+                            "system_status",
+                            {
+                                "sql_syncing": True,
+                                "reason": "processing",
+                                "rag": {
+                                    "state": "processing",
+                                    "current_file": f"Indexing: {fp.name}",
+                                    "progress": progress,
+                                },
+                            },
+                        )
 
                     # --- FAST PATH: Unchanged Files ---
                     if not self._needs_update(state_con, fp):
                         if ext in (".db", ".sqlite", ".sqlite3", ".xlsx", ".xls"):
-                            self._track_multi_table_names(con, fp, v_name, ext, active_views)
+                            self._track_multi_table_names(
+                                con, fp, v_name, ext, active_views
+                            )
                         else:
                             active_views.add(v_name)
                         continue
 
                     # --- SLOW PATH: Ingestion ---
                     if ext in HANDLERS:
-                        con.execute(f"CREATE OR REPLACE VIEW {v_name} AS SELECT * FROM {HANDLERS[ext]}('{fp}')")
+                        con.execute(
+                            f"CREATE OR REPLACE VIEW {v_name} AS SELECT * FROM {HANDLERS[ext]}('{fp}')"
+                        )
                         active_views.add(v_name)
                     elif ext in (".xlsx", ".xls"):
                         xls = pd.ExcelFile(fp)
                         for sheet in xls.sheet_names:
-                            sheet_clean = re.sub(r'[^a-zA-Z0-9]', '_', sheet).lower()
+                            sheet_clean = re.sub(r"[^a-zA-Z0-9]", "_", sheet).lower()
                             sub_v = f"{v_name}_{sheet_clean}"
                             con.execute(
-                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')")
+                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM read_xlsx('{fp}', sheet='{sheet}')"
+                            )
                             active_views.add(sub_v)
                     elif ext in (".db", ".sqlite", ".sqlite3"):
                         sqlite_tables = con.execute(
-                            f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'").fetchall()
+                            f"SELECT name FROM sqlite_scan('{fp}', 'sqlite_master') WHERE type='table'"
+                        ).fetchall()
                         for (t_name,) in sqlite_tables:
                             sub_v = f"{v_name}_{t_name.lower()}"
                             con.execute(
-                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM sqlite_scan('{fp}', '{t_name}')")
+                                f"CREATE OR REPLACE VIEW {sub_v} AS SELECT * FROM sqlite_scan('{fp}', '{t_name}')"
+                            )
                             active_views.add(sub_v)
 
                     # Record Success in State DB
                     stats = fp.stat()
                     state_con.execute(
                         "INSERT OR REPLACE INTO file_history VALUES (?, ?, ?)",
-                        [str(fp.relative_to(self.watch_dir)), stats.st_mtime, stats.st_size]
+                        [
+                            str(fp.relative_to(self.watch_dir)),
+                            stats.st_mtime,
+                            stats.st_size,
+                        ],
                     )
 
                 self._cleanup_orphans(con, active_views)
@@ -411,18 +470,23 @@ class StructuredDataAgent:
         except Exception as e:
             console.print(f"[bold red]✖ Sync Error:[/bold red] {e}")
             if self.socketio:
-                self.socketio.emit('system_error', {'message': f"Sync failed: {str(e)}"})
+                self.socketio.emit(
+                    "system_error", {"message": f"Sync failed: {str(e)}"}
+                )
         finally:
             self.is_syncing = False
             SQL_THREAD_LOCK.release()
 
             # Final Signal: Idle state
             if self.socketio:
-                self.socketio.emit('system_status', {
-                    'sql_syncing': False,
-                    'reason': 'idle',
-                    'rag': {'state': 'idle', 'progress': 100}
-                })
+                self.socketio.emit(
+                    "system_status",
+                    {
+                        "sql_syncing": False,
+                        "reason": "idle",
+                        "rag": {"state": "idle", "progress": 100},
+                    },
+                )
             console.print(f"[bold green]✅ Sync Finished.[/bold green]")
 
     def start_monitoring(self):

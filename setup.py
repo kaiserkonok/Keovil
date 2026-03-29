@@ -1,0 +1,36 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="keovil",
+    version="0.1.0",
+    description="Private RAG System for Documents & Structured Data",
+    author="kaiserkonok",
+    author_email="",
+    url="https://github.com/kaiserkonok/Keovil",
+    packages=find_packages(),
+    package_dir={"": "src"},
+    install_requires=[
+        "langchain",
+        "langchain-core",
+        "langchain-community",
+        "langchain-classic",
+        "qdrant-client",
+        "pylate",
+        "torch",
+        "transformers",
+        "python-docx",
+        "pypdf",
+        "python-pptx",
+        "markdown",
+        "watchdog",
+        "colorama",
+        "requests",
+    ],
+    python_requires=">=3.12",
+    classifiers=[
+        "Development Status :: 3 - Alpha",
+        "Intended Audience :: Developers",
+        "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+        "Programming Language :: Python :: 3.12",
+    ],
+)

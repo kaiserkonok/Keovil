@@ -1,4 +1,4 @@
-# colbert_engine.py
+# colbert.py
 import hashlib
 import uuid
 from typing import List, Any, Optional
@@ -146,7 +146,7 @@ class ColBERTEngine:
 
     def search(self, query, k=5):
         print("Searching in colbert database")
-        """Performs MaxSim retrieval using the query embedding."""
+        """Performs MaxSIM retrieval using the query embedding."""
         query_emb = self.model.encode([query], is_query=True)[0].tolist()
 
         results = self.client.query_points(
