@@ -232,7 +232,6 @@ DEFAULT_MODEL = "qwen2.5-coder:7b-instruct"
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
 # ---------------------------------------------------------
-# server.py is in src/keovil_web/server.py. We need to add 'src' to the path.
 src_root = Path(__file__).resolve().parent.parent
 
 if str(src_root) not in sys.path:
@@ -243,10 +242,19 @@ try:
     from agents.db_agent import StructuredDataAgent
 
     print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
-except ImportError as e:
-    print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
-    CollegeRAG = None
-    StructuredDataAgent = None
+except ImportError:
+    try:
+        from keovil.college_rag import CollegeRAG
+        import sys
+
+        sys.path.insert(0, str(src_root / "agents"))
+        from db_agent import StructuredDataAgent
+
+        print(f"{Fore.GREEN}✅ Engines linked from package{Style.RESET_ALL}")
+    except ImportError as e:
+        print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
+        CollegeRAG = None
+        StructuredDataAgent = None
 
 # ---------------------------------------------------------
 # Flask Initialization
