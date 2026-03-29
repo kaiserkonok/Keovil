@@ -27,27 +27,16 @@ import requests
 init(autoreset=True)
 
 # ---------------------------------------------------------
-# Path Configurations (Total Isolation: Dev vs. Prod)
+# Path Configurations
 # ---------------------------------------------------------
-# 1. Determine the Mode
-APP_MODE = os.getenv("APP_MODE", "development")
-
-# 2. Assign completely different Root Folders on your SSD
-if APP_MODE == "production":
-    host_root = Path.home() / ".keovil_storage"
-else:
-    host_root = Path.home() / ".keovil_storage_dev"
-
-# 3. Support Docker Portability
-STORAGE_STR = os.getenv("STORAGE_BASE", str(host_root))
+HOME_STORAGE = Path.home() / ".keovil_storage"
+STORAGE_STR = os.getenv("STORAGE_BASE", str(HOME_STORAGE))
 HOME_STORAGE = Path(STORAGE_STR).absolute()
 
-# 4. Standardized sub-folders (relative to the isolated HOME_STORAGE)
 DATA_DIR = HOME_STORAGE / "data"
 DB_DIR = HOME_STORAGE / "database"
 
-# Mode-specific chat history to prevent cross-talk
-CHAT_DB = DB_DIR / f"chat_history_{APP_MODE}.db"
+CHAT_DB = DB_DIR / "chat_history.db"
 print(f"Chat Database: {CHAT_DB}")
 
 # Ensure directories exist
