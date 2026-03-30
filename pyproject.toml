@@ -24,6 +24,7 @@ dependencies = [
     "langchain-community>=0.3.0",
     "langchain-classic>=0.3.0",
     "langchain-ollama>=0.2.0",
+    "langchain-text-splitters>=1.0.0",
     "qdrant-client>=1.12.0",
     "pylate>=0.4.0",
     "torch>=2.0.0",
@@ -38,6 +39,8 @@ dependencies = [
     "docling>=2.7.0",
     "flask>=3.0.0",
     "flask-socketio>=5.3.0",
+    "duckdb>=1.0.0",
+    "rich>=13.0.0",
 ]
 
 [project.optional-dependencies]
@@ -51,3 +54,6 @@ Repository = "https://github.com/kaiserkonok/Keovil"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+keovil_web = ["templates/*", "static/*", "static/images/*", "static/css/*", "static/js/*"]

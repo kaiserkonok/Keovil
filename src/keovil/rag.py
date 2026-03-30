@@ -1,11 +1,9 @@
 import os
-import json
 import hashlib
 import threading
-import time
 import sqlite3
 from pathlib import Path
-from typing import List, Dict, Any, Union
+from typing import Any
 from datetime import datetime
 from langchain_core.runnables import RunnablePassthrough, RunnableParallel
 from langchain_core.output_parsers import StrOutputParser
@@ -17,8 +15,6 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
-from langchain_classic.chains import create_retrieval_chain
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from .chunker import IntelligentChunker
 from .colbert import ColBERTEngine
 from .utils.document_processor import DocumentProcessor
@@ -74,12 +70,7 @@ class KeovilRAG:
         if storage_dir:
             host_root = Path(storage_dir).absolute()
         else:
-            if self.mode == "production":
-                host_root = Path.home() / ".keovil_storage"
-            elif self.mode == "sdk":
-                host_root = Path.cwd() / "keovil_data"
-            else:
-                host_root = Path.home() / ".keovil_storage_dev"
+            host_root = Path.home() / ".keovil"
 
         storage_env = os.getenv("STORAGE_BASE", str(host_root))
         self.base_storage = Path(storage_env).absolute()
@@ -154,8 +145,6 @@ class KeovilRAG:
             ]
         )
 
-        question_answer_chain = create_stuff_documents_chain(self.llm, qa_prompt)
-
         self.rag_chain = (
             RunnableParallel(
                 {
@@ -192,7 +181,7 @@ class KeovilRAG:
         conn.close()
         return data
 
-    def _update_manifest_batch(self, file_data: Dict[str, str]):
+    def _update_manifest_batch(self, file_data: dict[str, str]):
         conn = sqlite3.connect(self.manifest_db)
         conn.executemany(
             "INSERT OR REPLACE INTO file_hashes VALUES (?, ?)", list(file_data.items())
@@ -210,6 +199,13 @@ class KeovilRAG:
         except Exception as e:
             print(f"{Colors.FAIL}Error hashing {filepath}: {e}{Colors.ENDC}")
             return None
+
+    def _get_storage_key(self, filepath: Path) -> str:
+        """Get storage key for a file. Use relative path if inside base_storage, otherwise use absolute path."""
+        try:
+            return str(filepath.relative_to(self.base_storage))
+        except ValueError:
+            return str(filepath.absolute())
 
     def _initial_sync(self):
         print(f"{Colors.OKCYAN}[Sync] Reconciling Store...{Colors.ENDC}")
@@ -257,7 +253,7 @@ class KeovilRAG:
         else:
             print(f"{Colors.OKGREEN}[Sync] Filesystem is clean.{Colors.ENDC}")
 
-    def aggregate_to_limit(self, raw_chunks: List[Any], token_limit: int = 512):
+    def aggregate_to_limit(self, raw_chunks: list[Any], token_limit: int = 512):
         standardized_docs = []
         current_text_block = []
         current_tokens = 0
@@ -294,7 +290,7 @@ class KeovilRAG:
             )
         return standardized_docs
 
-    def ingest(self, new_files: List[str] = None):
+    def ingest(self, new_files: list[str] = None):
         """Index files into the vector store."""
         if not new_files:
             return
@@ -321,18 +317,14 @@ class KeovilRAG:
                 if raw_docs:
                     for doc in raw_docs:
                         abs_src = Path(doc.metadata["source"])
-                        doc.metadata["source"] = str(
-                            abs_src.relative_to(self.base_storage)
-                        )
+                        doc.metadata["source"] = self._get_storage_key(abs_src)
 
                     final_docs = self.aggregate_to_limit(raw_docs, token_limit=512)
 
                     self.engine.ingest_batches(final_docs, batch_size=32)
 
                     updates = {
-                        str(
-                            Path(p).relative_to(self.base_storage)
-                        ): self._get_file_hash(p)
+                        self._get_storage_key(Path(p)): self._get_file_hash(p)
                         for p in valid_paths
                     }
                     self._update_manifest_batch(updates)
@@ -352,11 +344,11 @@ class KeovilRAG:
         try:
             with self.lock:
                 p_abs = Path(fpath).absolute()
-                p_rel = str(p_abs.relative_to(self.base_storage))
+                storage_key = self._get_storage_key(p_abs)
 
-                self.engine.delete_by_source(p_rel)
+                self.engine.delete_by_source(storage_key)
                 conn = sqlite3.connect(self.manifest_db)
-                conn.execute("DELETE FROM file_hashes WHERE path = ?", (p_rel,))
+                conn.execute("DELETE FROM file_hashes WHERE path = ?", (storage_key,))
                 conn.commit()
                 conn.close()
                 print(
@@ -373,7 +365,7 @@ class KeovilRAG:
         conn.close()
         self._initial_sync()
 
-    def query(self, question: str, chat_history: List = None) -> str:
+    def query(self, question: str, chat_history: list = None) -> str:
         """Ask a question and get an answer."""
         history = chat_history if chat_history is not None else self.chat_history
 

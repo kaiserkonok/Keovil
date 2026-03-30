@@ -5,7 +5,7 @@ import shutil
 import json
 import sqlite3
 from pathlib import Path
-from typing import List, Dict
+from typing import Any
 from flask import (
     Flask,
     render_template,
@@ -67,11 +67,6 @@ print(f"Auth file path: {AUTH_FILE}")
 
 
 def get_chubby_hwid():
-    import subprocess
-    import hashlib
-    import platform
-    import os
-
     system = platform.system()
     components = []
 
@@ -237,21 +232,26 @@ DEFAULT_MODEL = "qwen2.5-coder:7b-instruct"
 # ---------------------------------------------------------
 # Engine Imports - Clean & Direct
 # ---------------------------------------------------------
-# server.py is in src/keovil_web/server.py. We need to add 'src' to the path.
 src_root = Path(__file__).resolve().parent.parent
 
 if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
 
 try:
-    from college_rag import CollegeRAG
-    from agents.db_agent import StructuredDataAgent
+    from keovil_web.college_rag import CollegeRAG
+    from keovil.agents.db_agent import StructuredDataAgent
 
-    print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
-except ImportError as e:
-    print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
-    CollegeRAG = None
-    StructuredDataAgent = None
+    print(f"{Fore.GREEN}✅ Engines linked from keovil package{Style.RESET_ALL}")
+except ImportError:
+    try:
+        from college_rag import CollegeRAG
+        from agents.db_agent import StructuredDataAgent
+
+        print(f"{Fore.GREEN}✅ Engines linked from dev mode{Style.RESET_ALL}")
+    except ImportError as e:
+        print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
+        CollegeRAG = None
+        StructuredDataAgent = None
 
 # ---------------------------------------------------------
 # Flask Initialization
@@ -262,7 +262,7 @@ app.config["TEMPLATES_AUTO_RELOAD"] = True
 
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024 * 1024  # Allow up to 100GB
 
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="gevent")
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 import threading
 
@@ -294,8 +294,6 @@ def initialize_engines():
 
         # --- 1. Ollama Hardware Handshake ---
         try:
-            import requests
-
             model_name = DEFAULT_MODEL
             print(f"{Fore.CYAN}Verifying {model_name}...{Style.RESET_ALL}")
 

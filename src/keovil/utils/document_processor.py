@@ -1,9 +1,12 @@
 import os
 from pathlib import Path
-from typing import List
 from docling.document_converter import DocumentConverter, PdfFormatOption
 from docling.datamodel.base_models import ConversionStatus, InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, AcceleratorOptions, AcceleratorDevice
+from docling.datamodel.pipeline_options import (
+    PdfPipelineOptions,
+    AcceleratorOptions,
+    AcceleratorDevice,
+)
 from langchain_core.documents import Document
 
 
@@ -15,11 +18,14 @@ class DocumentProcessor:
 
     def __init__(self, use_gpu: bool = True):
         # 1. Use Threaded Options for batching (much faster for GPU)
-        from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions, EasyOcrOptions
+        from docling.datamodel.pipeline_options import (
+            ThreadedPdfPipelineOptions,
+            EasyOcrOptions,
+        )
 
         accel_options = AcceleratorOptions(
             num_threads=8,  # Keep this for the CPU-bound parts
-            device=AcceleratorDevice.CUDA if use_gpu else AcceleratorDevice.CPU
+            device=AcceleratorDevice.CUDA if use_gpu else AcceleratorDevice.CPU,
         )
 
         # 2. Force GPU at the Pipeline AND OCR level
@@ -43,11 +49,9 @@ class DocumentProcessor:
         )
 
         # Formats Docling handles natively
-        self.supported_extensions = {
-            '.pdf', '.docx', '.pptx', '.md'
-        }
+        self.supported_extensions = {".pdf", ".docx", ".pptx", ".md"}
 
-    def convert_to_documents(self, file_paths: List[Path], chunker) -> List[Document]:
+    def convert_to_documents(self, file_paths: list[Path], chunker) -> list[Document]:
         docs = []
         complex_queue = []
 
@@ -58,7 +62,7 @@ class DocumentProcessor:
 
             ext = fpath.suffix.lower()
 
-            if ext == '.txt':
+            if ext == ".txt":
                 self._process_text_file(fpath, chunker, docs)
             elif ext in self.supported_extensions:
                 complex_queue.append(fpath)
@@ -66,7 +70,7 @@ class DocumentProcessor:
         if complex_queue:
             docs.extend(self._process_complex_files(complex_queue, chunker))
 
-        print('=' * 40 + f"\nDocument Processed Successfully!")
+        print("=" * 40 + f"\nDocument Processed Successfully!")
 
         return docs
 
@@ -74,24 +78,27 @@ class DocumentProcessor:
         try:
             abs_path = str(fpath.absolute())
 
-            with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
                 text = f.read()
             if text.strip():
                 chunks = chunker.chunk_document(text)
-                docs_list.extend([
-                    Document(
-                        page_content=c.text,
-                        metadata={
-                            "source": abs_path,
-                            "chunk_id": c.id,
-                            **c.metadata # FIX: Changed from .meta to .metadata
-                        }
-                    ) for c in chunks
-                ])
+                docs_list.extend(
+                    [
+                        Document(
+                            page_content=c.text,
+                            metadata={
+                                "source": abs_path,
+                                "chunk_id": c.id,
+                                **c.metadata,
+                            },
+                        )
+                        for c in chunks
+                    ]
+                )
         except Exception as e:
             print(f"[DocumentProcessor] Failed .txt: {fpath.name} | Error: {e}")
 
-    def _process_complex_files(self, paths, chunker) -> List[Document]:
+    def _process_complex_files(self, paths, chunker) -> list[Document]:
         converted_docs = []
         results = self.converter.convert_all(paths, raises_on_error=False)
 
@@ -102,17 +109,22 @@ class DocumentProcessor:
                 text = res.document.export_to_markdown()
                 if text.strip():
                     chunks = chunker.chunk_document(text)
-                    converted_docs.extend([
-                        Document(
-                            page_content=c.text,
-                            metadata={
-                                "source": abs_path,
-                                "chunk_id": c.id,
-                                **c.metadata # FIX: Changed from .meta to .metadata
-                            }
-                        ) for c in chunks
-                    ])
+                    converted_docs.extend(
+                        [
+                            Document(
+                                page_content=c.text,
+                                metadata={
+                                    "source": abs_path,
+                                    "chunk_id": c.id,
+                                    **c.metadata,
+                                },
+                            )
+                            for c in chunks
+                        ]
+                    )
             else:
-                print(f"[DocumentProcessor] Failed: {res.input.file} | Status: {res.status}")
+                print(
+                    f"[DocumentProcessor] Failed: {res.input.file} | Status: {res.status}"
+                )
 
         return converted_docs

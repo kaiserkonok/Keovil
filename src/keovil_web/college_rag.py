@@ -13,7 +13,7 @@ from keovil.rag import KeovilRAG, Colors
 class NewFileHandler(PatternMatchingEventHandler):
     def __init__(self, rag_instance):
         super().__init__(
-            patterns=["*.txt", "*.pdf", "*.docx", ".pptx", "*.md"],
+            patterns=["*.txt", "*.pdf", "*.docx", "*.pptx", "*.md"],
             ignore_directories=True,
             case_sensitive=False,
         )
@@ -63,7 +63,7 @@ class CollegeRAG(KeovilRAG):
             collection_name="keovil_app",
             auto_index=True,
             top_k=top_k,
-            mode="production",
+            mode="webapp",
         )
 
         threading.Thread(target=self._batch_worker, daemon=True).start()
@@ -72,14 +72,8 @@ class CollegeRAG(KeovilRAG):
         self.observer.schedule(NewFileHandler(self), str(self.data_dir), recursive=True)
         self.observer.start()
         print(
-            f"{self.Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{self.Colors.ENDC}"
+            f"{Colors.OKCYAN}👀 Monitoring {self.data_dir} with 5s batching...{Colors.ENDC}"
         )
-
-    @property
-    def Colors(self):
-        from keovil.rag import Colors
-
-        return Colors
 
     def get_status(self):
         with self.queue_lock:
@@ -126,7 +120,7 @@ class CollegeRAG(KeovilRAG):
             if to_process:
                 self.status["state"] = "processing"
                 print(
-                    f"{self.Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{self.Colors.ENDC}"
+                    f"{Colors.OKCYAN}[Worker] Quiet period detected. Processing {len(to_process)} files.{Colors.ENDC}"
                 )
                 self.ingest(to_process)
 
