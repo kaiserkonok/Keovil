@@ -466,6 +466,106 @@ def logout():
         return jsonify({"status": "error", "msg": str(e)}), 500
 
 
+# --- LLM Config API ---
+@app.route("/api/config", methods=["GET"])
+def get_config():
+    """Get current LLM configuration."""
+    try:
+        config = get_default_config()
+        return jsonify(config.to_dict())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/config", methods=["POST"])
+def save_config():
+    """Save LLM configuration."""
+    try:
+        data = request.json
+
+        # Load existing config or create new one
+        config = get_default_config()
+
+        # Update with new values
+        if "provider" in data:
+            config.provider = data["provider"]
+        if "model" in data:
+            config.model = data["model"]
+        if "ollama_host" in data:
+            config.ollama_host = data["ollama_host"]
+        if "openai_api_key" in data:
+            config.openai_api_key = (
+                data["openai_api_key"] if data["openai_api_key"] else None
+            )
+        if "anthropic_api_key" in data:
+            config.anthropic_api_key = (
+                data["anthropic_api_key"] if data["anthropic_api_key"] else None
+            )
+        if "openrouter_api_key" in data:
+            config.openrouter_api_key = (
+                data["openrouter_api_key"] if data["openrouter_api_key"] else None
+            )
+        if "temperature" in data:
+            config.temperature = float(data["temperature"])
+
+        # Save to file
+        save_config(config)
+
+        return jsonify(
+            {
+                "status": "success",
+                "message": "Configuration saved. Restart server to apply changes.",
+            }
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/config/test", methods=["POST"])
+def test_config():
+    """Test LLM connection."""
+    try:
+        data = request.json
+        provider = data.get("provider", "ollama")
+
+        # Create a test config
+        from keovil.utils.llm_config import LLMConfig
+        from keovil.utils.model_engine import get_llm
+
+        config = get_default_config()
+        config.provider = provider
+
+        # Get API keys from request or config
+        if provider == "openai":
+            config.openai_api_key = data.get("openai_api_key") or config.openai_api_key
+        elif provider == "anthropic":
+            config.anthropic_api_key = (
+                data.get("anthropic_api_key") or config.anthropic_api_key
+            )
+        elif provider == "openrouter":
+            config.openrouter_api_key = (
+                data.get("openrouter_api_key") or config.openrouter_api_key
+            )
+
+        # Try to create LLM and make a test call
+        try:
+            llm = get_llm(config)
+            # Simple test - just check if we can invoke it
+            response = llm.invoke("Say 'OK' if you can hear me")
+            return jsonify(
+                {
+                    "success": True,
+                    "model": config.model,
+                    "response": str(response)[:100],
+                }
+            )
+        except Exception as llm_error:
+            return jsonify({"success": False, "error": str(llm_error)}), 400
+
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 @socketio.on("connect")
 def handle_connect():
     # Automatically put every tab in its own private room based on its ID

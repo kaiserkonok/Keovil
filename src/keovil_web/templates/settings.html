@@ -11,27 +11,190 @@
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-4">
 
-    <div class="mb-10 text-center">
+    <div class="mb-8 text-center">
         <h1 class="text-4xl font-bold tracking-tighter text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-fuchsia-500">SYSTEM PREFERENCES</h1>
         <p class="text-zinc-500 text-sm mt-2 uppercase tracking-widest">Keo Configuration</p>
     </div>
 
-    <div class="w-full max-w-lg glass-panel rounded-[2rem] p-10 shadow-2xl shadow-violet-900/10">
-        <div class="space-y-6">
-            <div class="bg-zinc-900/50 rounded-xl p-4 border border-zinc-800">
-                <p class="text-zinc-500 text-xs uppercase tracking-widest mb-2">Model</p>
-                <p class="text-violet-400 font-mono">qwen2.5-coder:7b-instruct</p>
+    <div class="w-full max-w-2xl glass-panel rounded-[2rem] p-8 shadow-2xl shadow-violet-900/10">
+        <form id="llmForm" class="space-y-6">
+            <!-- Provider Selection -->
+            <div>
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">LLM Provider</label>
+                <select id="provider" name="provider" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    onchange="toggleProviderFields()">
+                    <option value="ollama">Ollama (Local)</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic (Claude)</option>
+                    <option value="openrouter">OpenRouter</option>
+                </select>
             </div>
 
-            <div class="pt-4">
-                <button onclick="deactivateNode()" class="w-full py-4 bg-zinc-900 border border-red-900/30 text-red-500 text-sm font-bold rounded-2xl hover:bg-red-950/30 transition-all uppercase tracking-widest">
-                    Deactivate This Node
-                </button>
+            <!-- Model Name -->
+            <div>
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">Model Name</label>
+                <input type="text" id="model" name="model" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="qwen2.5-coder:7b">
+                <p class="text-zinc-600 text-xs mt-1" id="modelHint">For Ollama: model name (e.g., qwen2.5-coder:7b)</p>
             </div>
-            <a href="/" class="block text-center mt-6 text-zinc-500 hover:text-white text-sm transition-colors tracking-tight">Return to Dashboard</a>
+
+            <!-- Ollama Host (only for Ollama) -->
+            <div id="ollamaHostField">
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">Ollama Host</label>
+                <input type="text" id="ollamaHost" name="ollama_host" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="http://127.0.0.1:11434">
+            </div>
+
+            <!-- OpenAI API Key -->
+            <div id="openaiField" class="hidden">
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">OpenAI API Key</label>
+                <input type="password" id="openaiKey" name="openai_api_key" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="sk-...">
+            </div>
+
+            <!-- Anthropic API Key -->
+            <div id="anthropicField" class="hidden">
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">Anthropic API Key</label>
+                <input type="password" id="anthropicKey" name="anthropic_api_key" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="sk-ant-...">
+            </div>
+
+            <!-- OpenRouter API Key -->
+            <div id="openrouterField" class="hidden">
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">OpenRouter API Key</label>
+                <input type="password" id="openrouterKey" name="openrouter_api_key" 
+                    class="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none"
+                    placeholder="sk-or-...">
+            </div>
+
+            <!-- Temperature -->
+            <div>
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">Temperature: <span id="tempValue">0.0</span></label>
+                <input type="range" id="temperature" name="temperature" min="0" max="2" step="0.1" value="0"
+                    class="w-full accent-violet-500" oninput="document.getElementById('tempValue').textContent = this.value">
+            </div>
+
+            <!-- Save Button -->
+            <button type="submit" 
+                class="w-full py-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold rounded-2xl hover:from-violet-500 hover:to-fuchsia-500 transition-all uppercase tracking-widest">
+                Save Configuration
+            </button>
+
+            <!-- Status Message -->
+            <div id="statusMessage" class="hidden p-4 rounded-xl text-center"></div>
+        </form>
+
+        <div class="pt-6 mt-6 border-t border-zinc-800">
+            <button onclick="testConnection()" 
+                class="w-full py-3 bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm font-bold rounded-2xl hover:bg-zinc-800 transition-all uppercase tracking-widest">
+                Test Connection
+            </button>
         </div>
+
+        <a href="/" class="block text-center mt-6 text-zinc-500 hover:text-white text-sm transition-colors tracking-tight">Return to Dashboard</a>
     </div>
 
-    <script src="{{ url_for('static', filename='js/settings.js') }}"></script>
+    <script>
+        // Load current config on page load
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(config => {
+                document.getElementById('provider').value = config.provider || 'ollama';
+                document.getElementById('model').value = config.model || '';
+                document.getElementById('ollamaHost').value = config.ollama_host || 'http://127.0.0.1:11434';
+                document.getElementById('openaiKey').value = config.openai_api_key || '';
+                document.getElementById('anthropicKey').value = config.anthropic_api_key || '';
+                document.getElementById('openrouterKey').value = config.openrouter_api_key || '';
+                document.getElementById('temperature').value = config.temperature || 0;
+                document.getElementById('tempValue').textContent = config.temperature || 0;
+                toggleProviderFields();
+            });
+
+        function toggleProviderFields() {
+            const provider = document.getElementById('provider').value;
+            
+            document.getElementById('ollamaHostField').classList.toggle('hidden', provider !== 'ollama');
+            document.getElementById('openaiField').classList.toggle('hidden', provider !== 'openai');
+            document.getElementById('anthropicField').classList.toggle('hidden', provider !== 'anthropic');
+            document.getElementById('openrouterField').classList.toggle('hidden', provider !== 'openrouter');
+            
+            // Update model hint
+            const hints = {
+                'ollama': 'For Ollama: model name (e.g., qwen2.5-coder:7b)',
+                'openai': 'For OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.',
+                'anthropic': 'For Anthropic: claude-3-5-sonnet-20241022, claude-3-opus-20240229, etc.',
+                'openrouter': 'For OpenRouter: openai/gpt-4o-mini, anthropic/claude-3.5-sonnet, etc.'
+            };
+            document.getElementById('modelHint').textContent = hints[provider] || '';
+        }
+
+        document.getElementById('llmForm').onsubmit = async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const config = {
+                provider: formData.get('provider'),
+                model: formData.get('model'),
+                ollama_host: formData.get('ollama_host'),
+                openai_api_key: formData.get('openai_api_key'),
+                anthropic_api_key: formData.get('anthropic_api_key'),
+                openrouter_api_key: formData.get('openrouter_api_key'),
+                temperature: parseFloat(formData.get('temperature'))
+            };
+
+            const response = await fetch('/api/config', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(config)
+            });
+
+            const result = await response.json();
+            const statusEl = document.getElementById('statusMessage');
+            
+            if (response.ok) {
+                statusEl.textContent = 'Configuration saved! Restart the server to apply changes.';
+                statusEl.className = 'p-4 rounded-xl text-center bg-green-900/30 text-green-400 border border-green-800';
+            } else {
+                statusEl.textContent = 'Error: ' + (result.error || 'Failed to save');
+                statusEl.className = 'p-4 rounded-xl text-center bg-red-900/30 text-red-400 border border-red-800';
+            }
+            statusEl.classList.remove('hidden');
+        };
+
+        async function testConnection() {
+            const provider = document.getElementById('provider').value;
+            const statusEl = document.getElementById('statusMessage');
+            
+            statusEl.textContent = 'Testing connection...';
+            statusEl.className = 'p-4 rounded-xl text-center bg-yellow-900/30 text-yellow-400 border border-yellow-800';
+            statusEl.classList.remove('hidden');
+
+            try {
+                const response = await fetch('/api/config/test', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({provider})
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.success) {
+                    statusEl.textContent = 'Connection successful! Model: ' + result.model;
+                    statusEl.className = 'p-4 rounded-xl text-center bg-green-900/30 text-green-400 border border-green-800';
+                } else {
+                    statusEl.textContent = 'Error: ' + (result.error || 'Connection failed');
+                    statusEl.className = 'p-4 rounded-xl text-center bg-red-900/30 text-red-400 border border-red-800';
+                }
+            } catch (err) {
+                statusEl.textContent = 'Error: ' + err.message;
+                statusEl.className = 'p-4 rounded-xl text-center bg-red-900/30 text-red-400 border border-red-800';
+            }
+        }
+    </script>
 </body>
 </html>
