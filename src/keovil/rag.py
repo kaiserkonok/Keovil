@@ -19,6 +19,7 @@ from .chunker import IntelligentChunker
 from .colbert import ColBERTEngine
 from .utils.document_processor import DocumentProcessor
 from .utils.model_engine import get_llm
+from .utils.llm_config import LLMConfig, get_default_config
 import torch
 
 
@@ -64,8 +65,14 @@ class KeovilRAG:
         auto_index: bool = True,
         top_k: int = 5,
         mode: str = "development",
+        llm_config: LLMConfig = None,
     ):
         self.mode = mode
+        self.llm_config = llm_config if llm_config else get_default_config()
+
+        print(
+            f"{Colors.OKCYAN}🔮 Provider: {self.llm_config.provider} | Model: {self.llm_config.model}{Colors.ENDC}"
+        )
 
         if storage_dir:
             host_root = Path(storage_dir).absolute()
@@ -106,8 +113,8 @@ class KeovilRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = IntelligentChunker()
 
-        self.llm = get_llm()
-        self.query_llm = get_llm()
+        self.llm = get_llm(self.llm_config)
+        self.query_llm = get_llm(self.llm_config)
 
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "

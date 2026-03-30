@@ -15,6 +15,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from keovil.utils.model_engine import get_llm
+from keovil.utils.llm_config import LLMConfig, get_default_config
 
 # Beautiful terminal output
 from rich.console import Console
@@ -33,13 +34,14 @@ SQL_THREAD_LOCK = threading.Lock()
 # SQL QUERY AGENT
 # ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_path):
+    def __init__(self, db_path, llm_config: LLMConfig = None):
         self.db_path = str(db_path)
         # Isolate extensions within the database folder to prevent cross-contamination
         self.ext_dir = Path(db_path).parent / "sys_modules"
         self.ext_dir.mkdir(exist_ok=True)
 
-        self.llm = get_llm()
+        self.config = llm_config if llm_config else get_default_config()
+        self.llm = get_llm(self.config)
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:
@@ -267,11 +269,12 @@ class IngestionHandler(FileSystemEventHandler):
 # STRUCTURED DATA AGENT (The Core Manager)
 # ==================================================
 class StructuredDataAgent:
-    def __init__(self, socketio=None, watch_dir=None):
-        storage_env = os.getenv("STORAGE_BASE", str(Path.home() / ".keovil_storage"))
+    def __init__(self, socketio=None, watch_dir=None, llm_config: LLMConfig = None):
+        storage_env = os.getenv("STORAGE_BASE", str(Path.home() / ".keovil"))
         self.base_storage = Path(storage_env).absolute()
         self.socketio = socketio
         self.handler = IngestionHandler(self)
+        self.config = llm_config if llm_config else get_default_config()
 
         self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
         self.db_path = (self.base_storage / "database" / "cache.bin").resolve()
@@ -298,7 +301,7 @@ class StructuredDataAgent:
                        """)
 
         # 4. INITIALIZE AGENT (Passing the mode-specific path)
-        self.agent = SQLQueryAgent(self.db_path)
+        self.agent = SQLQueryAgent(self.db_path, self.config)
         self.observer = Observer()
         self.is_syncing = False
 

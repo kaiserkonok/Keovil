@@ -54,6 +54,17 @@ print(f"{Fore.CYAN}🚀 SILO ACTIVE: {APP_MODE.upper()}")
 print(f"📍 STORAGE PATH: {HOME_STORAGE}{Style.RESET_ALL}")
 
 # ---------------------------------------------------------
+# LLM Configuration
+# ---------------------------------------------------------
+from keovil.utils.llm_config import LLMConfig, get_default_config, save_config
+
+# Load config (file -> env -> default)
+llm_config = get_default_config()
+print(
+    f"{Fore.CYAN}🔮 LLM Provider: {llm_config.provider} | Model: {llm_config.model}{Style.RESET_ALL}"
+)
+
+# ---------------------------------------------------------
 # BOUNCER CONFIGURATION (Registry Handshake)
 # ---------------------------------------------------------
 FOUNDRY_LOCAL = "http://localhost:8000"
@@ -326,7 +337,9 @@ def initialize_engines():
 
                 # We initialize into a local variable first to ensure
                 # we don't set the global 'rag' to a half-broken object
-                temp_rag = CollegeRAG(data_dir=str(DATA_DIR), socketio=socketio)
+                temp_rag = CollegeRAG(
+                    data_dir=str(DATA_DIR), socketio=socketio, llm_config=llm_config
+                )
                 rag = temp_rag
                 print(f"{Fore.GREEN}RAG engine ready.{Style.RESET_ALL}")
             except Exception as e:
@@ -338,7 +351,7 @@ def initialize_engines():
         if StructuredDataAgent and sql_system is None:
             try:
                 print(f"{Fore.CYAN}Loading SQL agent...{Style.RESET_ALL}")
-                temp_sql = StructuredDataAgent(socketio=socketio)
+                temp_sql = StructuredDataAgent(socketio=socketio, llm_config=llm_config)
                 if hasattr(temp_sql, "agent") and hasattr(temp_sql.agent, "llm"):
                     temp_sql.agent.llm.temperature = 0.0
                 temp_sql.start_monitoring()
