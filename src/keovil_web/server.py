@@ -238,19 +238,16 @@ if str(src_root) not in sys.path:
     sys.path.insert(0, str(src_root))
 
 try:
-    from college_rag import CollegeRAG
-    from agents.db_agent import StructuredDataAgent
+    from keovil_web.college_rag import CollegeRAG
+    from keovil.agents.db_agent import StructuredDataAgent
 
-    print(f"{Fore.GREEN}✅ Engines linked from: {src_root}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}✅ Engines linked from keovil package{Style.RESET_ALL}")
 except ImportError:
     try:
-        from keovil.college_rag import CollegeRAG
-        import sys
+        from college_rag import CollegeRAG
+        from agents.db_agent import StructuredDataAgent
 
-        sys.path.insert(0, str(src_root / "agents"))
-        from db_agent import StructuredDataAgent
-
-        print(f"{Fore.GREEN}✅ Engines linked from package{Style.RESET_ALL}")
+        print(f"{Fore.GREEN}✅ Engines linked from dev mode{Style.RESET_ALL}")
     except ImportError as e:
         print(f"{Fore.RED}❌ Link Error: {e}{Style.RESET_ALL}")
         CollegeRAG = None
