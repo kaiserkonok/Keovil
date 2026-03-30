@@ -57,6 +57,18 @@ class CollegeRAG(KeovilRAG):
         if not storage_dir:
             storage_dir = str(Path.home() / ".keovil")
 
+        # Set up basic state BEFORE calling parent
+        self.socketio = socketio
+        self.status = {
+            "state": "idle",
+            "current_file": "",
+            "progress": 0,
+            "total_files": 0,
+        }
+        self.pending_files = set()
+        self.queue_lock = threading.Lock()
+
+        # Call parent - this will load models and set self.data_dir
         super().__init__(
             data_dir=data_dir,
             storage_dir=storage_dir,
@@ -66,6 +78,7 @@ class CollegeRAG(KeovilRAG):
             mode="webapp",
         )
 
+        # Start watchdog AFTER parent initialized (data_dir is now set)
         threading.Thread(target=self._batch_worker, daemon=True).start()
 
         self.observer = Observer()
