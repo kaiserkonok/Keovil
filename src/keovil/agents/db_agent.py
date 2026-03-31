@@ -41,10 +41,26 @@ class SQLQueryAgent:
         self.ext_dir.mkdir(exist_ok=True)
 
         self.config = llm_config if llm_config else get_default_config()
-        self.llm = get_llm(self.config)
+        self._llm = None
         print(
             f"{Fore.CYAN}[SQL Agent] Using model: {self.config.model} (provider: {self.config.provider}){Style.RESET_ALL}"
         )
+
+    @property
+    def llm(self):
+        """Get fresh LLM instance from current config (no restart needed)."""
+        current_config = get_default_config()
+        if (
+            self._llm is None
+            or self.config.provider != current_config.provider
+            or self.config.model != current_config.model
+        ):
+            print(
+                f"{Fore.CYAN}[SQL Agent] Reloading model: {current_config.model} (provider: {current_config.provider}){Style.RESET_ALL}"
+            )
+            self._llm = get_llm(current_config)
+            self.config = current_config
+        return self._llm
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:
@@ -52,24 +68,13 @@ class SQLQueryAgent:
             # Auto-installing inside the isolated folder
             con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
 
+    def _ensure_extensions(self):
+        """Ensure DuckDB extensions are loaded."""
+        with duckdb.connect(self.db_path) as con:
+            con.execute(f"SET extension_directory = '{self.ext_dir}';")
+            con.execute("LOAD excel; LOAD spatial; LOAD sqlite;")
+
     def ask(self, query: str, chat_history: list = None):
-        """
-        History-aware SQL Agent.
-        chat_history: list of {'role': 'user'|'assistant', 'content': str}
-        """
-        # --- STEP 0: CONTEXTUALIZATION (STANDALONE QUERY GENERATION) ---
-        # This prevents follow-up questions from breaking the SQL generator.
-        formatted_history = []
-        if chat_history:
-            for msg in chat_history[-10:]:  # Last 10 messages for context
-                if msg["role"] == "user":
-                    formatted_history.append(HumanMessage(content=msg["content"]))
-                else:
-                    # Strip the heavy HTML table data from history to keep LLM focused
-                    clean_content = (
-                        msg["content"].split("### 📊 Data Records")[0].strip()
-                    )
-                    formatted_history.append(AIMessage(content=clean_content))
 
         if formatted_history:
             context_prompt = ChatPromptTemplate.from_messages(

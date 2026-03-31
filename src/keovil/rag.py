@@ -116,11 +116,43 @@ class KeovilRAG:
         self.doc_processor = DocumentProcessor(use_gpu=torch.cuda.is_available())
         self.chunker = IntelligentChunker()
 
-        self.llm = get_llm(self.llm_config)
-        self.query_llm = get_llm(self.llm_config)
+        self._llm = None
+        self._query_llm = None
         print(
             f"{Fore.CYAN}[RAG] Using model: {self.llm_config.model} (provider: {self.llm_config.provider}){Style.RESET_ALL}"
         )
+
+    @property
+    def llm(self):
+        """Get fresh LLM instance from current config (no restart needed)."""
+        current_config = get_default_config()
+        if (
+            self._llm is None
+            or self.llm_config.provider != current_config.provider
+            or self.llm_config.model != current_config.model
+        ):
+            print(
+                f"{Fore.CYAN}[RAG] Reloading model: {current_config.model} (provider: {current_config.provider}){Style.RESET_ALL}"
+            )
+            self._llm = get_llm(current_config)
+            self.llm_config = current_config
+        return self._llm
+
+    @property
+    def query_llm(self):
+        """Get fresh query LLM instance from current config (no restart needed)."""
+        current_config = get_default_config()
+        if (
+            self._query_llm is None
+            or self.llm_config.provider != current_config.provider
+            or self.llm_config.model != current_config.model
+        ):
+            print(
+                f"{Fore.CYAN}[RAG] Reloading query model: {current_config.model} (provider: {current_config.provider}){Style.RESET_ALL}"
+            )
+            self._query_llm = get_llm(current_config)
+            self.llm_config = current_config
+        return self._query_llm
 
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
