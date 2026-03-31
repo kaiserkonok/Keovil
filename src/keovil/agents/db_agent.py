@@ -80,11 +80,11 @@ class SQLQueryAgent:
                 ]
             )
             try:
-                standalone_query = (
-                    (context_prompt | self.llm)
-                    .invoke({"history": formatted_history, "input": query})
-                    .strip()
-                )
+                standalone_query = str(
+                    (context_prompt | self.llm).invoke(
+                        {"history": formatted_history, "input": query}
+                    )
+                ).strip()
                 console.print(
                     f"[dim cyan]Refined Query:[/dim cyan] [italic]{standalone_query}[/italic]"
                 )
@@ -114,7 +114,7 @@ class SQLQueryAgent:
                 "Output ONLY the table names as a comma-separated list. If none, say NONE."
             )
 
-            router_output = self.llm.invoke(router_prompt).strip()
+            router_output = str(self.llm.invoke(router_prompt)).strip()
 
             found_words = re.findall(r"\b\w+\b", router_output)
             relevant_names = [name for name in found_words if name in all_table_names]
@@ -145,8 +145,8 @@ class SQLQueryAgent:
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
                 # We provide the original query context but emphasize the standalone_query intent
-                initial_response = self.llm.invoke(
-                    f"{system_context}\n\nUser: {standalone_query}"
+                initial_response = str(
+                    self.llm.invoke(f"{system_context}\n\nUser: {standalone_query}")
                 )
 
                 # Extract Thought
@@ -215,7 +215,7 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.llm.invoke(voice_prompt)
+                final_chat = str(self.llm.invoke(voice_prompt))
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI

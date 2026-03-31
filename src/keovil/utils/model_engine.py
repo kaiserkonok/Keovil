@@ -11,6 +11,7 @@ DEFAULT_MODELS = {
     "openai": "gpt-4o-mini",
     "anthropic": "claude-3-5-haiku-20241022",
     "openrouter": "openai/gpt-4o-mini",
+    "gemini": "gemini-2.0-flash",
 }
 
 
@@ -40,6 +41,8 @@ def _create_llm(config: LLMConfig):
         return _create_anthropic(config)
     elif config.provider == "openrouter":
         return _create_openrouter(config)
+    elif config.provider == "gemini":
+        return _create_gemini(config)
     else:
         # Fallback to ollama
         return _create_ollama(config)
@@ -115,6 +118,23 @@ def _create_openrouter(config: LLMConfig):
         temperature=config.temperature,
         api_key=api_key,
         base_url="https://openrouter.ai/api/v1",
+    )
+
+
+def _create_gemini(config: LLMConfig):
+    """Create Google Gemini LLM."""
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    api_key = config.gemini_api_key or os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError(
+            "Gemini API key required. Set GEMINI_API_KEY or configure in settings."
+        )
+
+    return ChatGoogleGenerativeAI(
+        model=config.model,
+        temperature=config.temperature,
+        google_api_key=api_key,
     )
 
 

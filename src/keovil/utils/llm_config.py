@@ -6,7 +6,7 @@ from typing import Optional, Literal
 from functools import lru_cache
 
 
-Provider = Literal["ollama", "openai", "anthropic", "openrouter"]
+Provider = Literal["ollama", "openai", "anthropic", "openrouter", "gemini"]
 
 
 @dataclass
@@ -23,6 +23,7 @@ class LLMConfig:
     openai_api_key: Optional[str] = None
     anthropic_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
 
     # Temperature
     temperature: float = 0.0
@@ -51,6 +52,8 @@ class LLMConfig:
             config.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         if os.getenv("OPENROUTER_API_KEY"):
             config.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+        if os.getenv("GEMINI_API_KEY"):
+            config.gemini_api_key = os.getenv("GEMINI_API_KEY")
 
         # Temperature
         if os.getenv("KEOVIL_TEMPERATURE"):
@@ -89,6 +92,8 @@ class LLMConfig:
                 config.anthropic_api_key = data["anthropic_api_key"]
             if "openrouter_api_key" in data:
                 config.openrouter_api_key = data["openrouter_api_key"]
+            if "gemini_api_key" in data:
+                config.gemini_api_key = data["gemini_api_key"]
             if "temperature" in data:
                 config.temperature = data["temperature"]
 
@@ -105,6 +110,8 @@ class LLMConfig:
                 config.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
             if os.getenv("OPENROUTER_API_KEY"):
                 config.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+            if os.getenv("GEMINI_API_KEY"):
+                config.gemini_api_key = os.getenv("GEMINI_API_KEY")
             if os.getenv("KEOVIL_TEMPERATURE"):
                 config.temperature = float(os.getenv("KEOVIL_TEMPERATURE"))
 
@@ -122,6 +129,7 @@ class LLMConfig:
             "openai_api_key": self.openai_api_key or "",
             "anthropic_api_key": self.anthropic_api_key or "",
             "openrouter_api_key": self.openrouter_api_key or "",
+            "gemini_api_key": self.gemini_api_key or "",
             "temperature": self.temperature,
         }
 

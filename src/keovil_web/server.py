@@ -529,6 +529,13 @@ def save_llm_config():
             print(
                 f"{Fore.CYAN}[Save Config] OpenRouter key: {'set' if config.openrouter_api_key else 'empty'}{Style.RESET_ALL}"
             )
+        if "gemini_api_key" in data:
+            config.gemini_api_key = (
+                data["gemini_api_key"] if data["gemini_api_key"] else None
+            )
+            print(
+                f"{Fore.CYAN}[Save Config] Gemini key: {'set' if config.gemini_api_key else 'empty'}{Style.RESET_ALL}"
+            )
         if "temperature" in data:
             config.temperature = float(data["temperature"])
 
@@ -598,6 +605,15 @@ def test_config():
             print(
                 f"{Fore.CYAN}[Test Config] OpenRouter key: {'set' if config.openrouter_api_key else 'NOT SET'}{Style.RESET_ALL}"
             )
+        elif provider == "gemini":
+            config.gemini_api_key = (
+                data.get("google_api_key")
+                or config.gemini_api_key
+                or os.getenv("GEMINI_API_KEY")
+            )
+            print(
+                f"{Fore.CYAN}[Test Config] Gemini key: {'set' if config.gemini_api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
 
         # Try to create LLM and make a test call
         try:
@@ -621,6 +637,146 @@ def test_config():
     except Exception as e:
         print(f"{Fore.RED}[Test Config] ❌ Error: {e}{Style.RESET_ALL}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/models", methods=["POST"])
+def list_models():
+    """List available models for a provider."""
+    try:
+        data = request.json
+        provider = data.get("provider", "ollama")
+        api_key = data.get("api_key")
+
+        print(f"{Fore.CYAN}[List Models] Provider: {provider}{Style.RESET_ALL}")
+
+        models = []
+
+        if provider == "ollama":
+            host = data.get("host", "http://127.0.0.1:11434")
+            if not host.startswith("http"):
+                host = f"http://{host}"
+            try:
+                resp = requests.get(f"{host}/api/tags", timeout=5)
+                if resp.ok:
+                    for m in resp.json().get("models", []):
+                        models.append({"name": m.get("name"), "size": m.get("size")})
+            except Exception as e:
+                print(f"{Fore.RED}[List Models] Ollama error: {e}{Style.RESET_ALL}")
+
+        elif provider == "openai":
+            if not api_key:
+                api_key = os.getenv("OPENAI_API_KEY")
+            print(
+                f"{Fore.CYAN}[List Models] OpenAI key: {'set' if api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
+            if api_key:
+                try:
+                    resp = requests.get(
+                        "https://api.openai.com/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    print(
+                        f"{Fore.CYAN}[List Models] OpenAI response: {resp.status_code}{Style.RESET_ALL}"
+                    )
+                    if resp.ok:
+                        for m in resp.json().get("data", []):
+                            models.append(
+                                {"name": m.get("id"), "owned_by": m.get("owned_by")}
+                            )
+                except Exception as e:
+                    print(f"{Fore.RED}[List Models] OpenAI error: {e}{Style.RESET_ALL}")
+
+        elif provider == "anthropic":
+            if not api_key:
+                api_key = os.getenv("ANTHROPIC_API_KEY")
+            print(
+                f"{Fore.CYAN}[List Models] Anthropic key: {'set' if api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
+            if api_key:
+                try:
+                    resp = requests.get(
+                        "https://api.anthropic.com/v1/models",
+                        headers={
+                            "x-api-key": api_key,
+                            "anthropic-version": "2023-06-01",
+                        },
+                        timeout=10,
+                    )
+                    if resp.ok:
+                        for m in resp.json().get("data", []):
+                            models.append(
+                                {
+                                    "name": m.get("id"),
+                                    "description": m.get("description", ""),
+                                }
+                            )
+                except Exception as e:
+                    print(
+                        f"{Fore.RED}[List Models] Anthropic error: {e}{Style.RESET_ALL}"
+                    )
+
+        elif provider == "openrouter":
+            if not api_key:
+                api_key = os.getenv("OPENROUTER_API_KEY")
+            print(
+                f"{Fore.CYAN}[List Models] OpenRouter key: {'set' if api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
+            if api_key:
+                try:
+                    resp = requests.get(
+                        "https://openrouter.ai/api/v1/models",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        timeout=10,
+                    )
+                    print(
+                        f"{Fore.CYAN}[List Models] OpenRouter response: {resp.status_code}{Style.RESET_ALL}"
+                    )
+                    if resp.ok:
+                        for m in resp.json().get("data", []):
+                            models.append(
+                                {"name": m.get("id"), "provider": m.get("provider")}
+                            )
+                except Exception as e:
+                    print(
+                        f"{Fore.RED}[List Models] OpenRouter error: {e}{Style.RESET_ALL}"
+                    )
+
+        elif provider == "gemini":
+            if not api_key:
+                api_key = os.getenv("GEMINI_API_KEY")
+            print(
+                f"{Fore.CYAN}[List Models] Gemini key: {'set' if api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
+            if api_key:
+                try:
+                    resp = requests.get(
+                        f"https://generativelanguage.googleapis.com/v1/models?key={api_key}",
+                        timeout=10,
+                    )
+                    print(
+                        f"{Fore.CYAN}[List Models] Gemini response: {resp.status_code}{Style.RESET_ALL}"
+                    )
+                    print(
+                        f"{Fore.CYAN}[List Models] Gemini body: {resp.text[:500] if resp.text else 'empty'}{Style.RESET_ALL}"
+                    )
+                    if resp.ok:
+                        for m in resp.json().get("models", []):
+                            models.append(
+                                {
+                                    "name": m.get("name").replace("models/", ""),
+                                    "description": m.get("description", ""),
+                                }
+                            )
+                except Exception as e:
+                    print(f"{Fore.RED}[List Models] Gemini error: {e}{Style.RESET_ALL}")
+
+        print(f"{Fore.CYAN}[List Models] Found {len(models)} models{Style.RESET_ALL}")
+        return jsonify({"models": models})
+
+    except Exception as e:
+        print(f"{Fore.RED}[List Models] ❌ Error: {e}{Style.RESET_ALL}")
+        return jsonify({"error": str(e)}), 500
 
 
 @socketio.on("connect")
