@@ -92,8 +92,23 @@ class LLMConfig:
             if "temperature" in data:
                 config.temperature = data["temperature"]
 
-            # Environment variables override file config
-            return cls.from_env()
+            # Environment variables only override if explicitly set
+            if os.getenv("KEOVIL_PROVIDER"):
+                config.provider = os.getenv("KEOVIL_PROVIDER")
+            if os.getenv("KEOVIL_MODEL"):
+                config.model = os.getenv("KEOVIL_MODEL")
+            if os.getenv("OLLAMA_HOST"):
+                config.ollama_host = os.getenv("OLLAMA_HOST")
+            if os.getenv("OPENAI_API_KEY"):
+                config.openai_api_key = os.getenv("OPENAI_API_KEY")
+            if os.getenv("ANTHROPIC_API_KEY"):
+                config.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+            if os.getenv("OPENROUTER_API_KEY"):
+                config.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+            if os.getenv("KEOVIL_TEMPERATURE"):
+                config.temperature = float(os.getenv("KEOVIL_TEMPERATURE"))
+
+            return config
 
         except (json.JSONDecodeError, IOError):
             return cls.from_env()

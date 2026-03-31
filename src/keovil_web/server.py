@@ -472,8 +472,18 @@ def get_config():
     """Get current LLM configuration."""
     try:
         config = get_default_config()
-        return jsonify(config.to_dict())
+        print(
+            f"{Fore.CYAN}[Get Config] Loaded provider: {config.provider}, model: {config.model}{Style.RESET_ALL}"
+        )
+        result = config.to_dict()
+        # Mask API key in logs
+        if result.get("openrouter_api_key"):
+            print(
+                f"{Fore.CYAN}[Get Config] OpenRouter key: {'set' if result['openrouter_api_key'] else 'not set'}{Style.RESET_ALL}"
+            )
+        return jsonify(result)
     except Exception as e:
+        print(f"{Fore.RED}[Get Config] Error: {e}{Style.RESET_ALL}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -482,6 +492,7 @@ def save_llm_config():
     """Save LLM configuration."""
     try:
         data = request.json
+        print(f"{Fore.CYAN}[Save Config] Received data: {data}{Style.RESET_ALL}")
 
         # Load existing config or create new one
         config = get_default_config()
@@ -489,27 +500,42 @@ def save_llm_config():
         # Update with new values
         if "provider" in data:
             config.provider = data["provider"]
+            print(
+                f"{Fore.CYAN}[Save Config] Provider: {config.provider}{Style.RESET_ALL}"
+            )
         if "model" in data:
             config.model = data["model"]
+            print(f"{Fore.CYAN}[Save Config] Model: {config.model}{Style.RESET_ALL}")
         if "ollama_host" in data:
             config.ollama_host = data["ollama_host"]
         if "openai_api_key" in data:
             config.openai_api_key = (
                 data["openai_api_key"] if data["openai_api_key"] else None
             )
+            print(
+                f"{Fore.CYAN}[Save Config] OpenAI key: {'set' if config.openai_api_key else 'empty'}{Style.RESET_ALL}"
+            )
         if "anthropic_api_key" in data:
             config.anthropic_api_key = (
                 data["anthropic_api_key"] if data["anthropic_api_key"] else None
+            )
+            print(
+                f"{Fore.CYAN}[Save Config] Anthropic key: {'set' if config.anthropic_api_key else 'empty'}{Style.RESET_ALL}"
             )
         if "openrouter_api_key" in data:
             config.openrouter_api_key = (
                 data["openrouter_api_key"] if data["openrouter_api_key"] else None
             )
+            print(
+                f"{Fore.CYAN}[Save Config] OpenRouter key: {'set' if config.openrouter_api_key else 'empty'}{Style.RESET_ALL}"
+            )
         if "temperature" in data:
             config.temperature = float(data["temperature"])
 
         # Save to file
+        print(f"{Fore.CYAN}[Save Config] Saving to file...{Style.RESET_ALL}")
         save_config(config)
+        print(f"{Fore.GREEN}[Save Config] ✅ Saved successfully!{Style.RESET_ALL}")
 
         return jsonify(
             {
@@ -518,6 +544,7 @@ def save_llm_config():
             }
         )
     except Exception as e:
+        print(f"{Fore.RED}[Save Config] ❌ Error: {e}{Style.RESET_ALL}")
         return jsonify({"error": str(e)}), 500
 
 
