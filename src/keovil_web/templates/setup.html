@@ -68,6 +68,24 @@
                 <p class="text-zinc-500 text-xs mt-2" id="apiKeyHint">Get your key from the provider's website</p>
             </div>
 
+            <div id="modelSection" class="hidden mb-6">
+                <label class="block text-zinc-400 text-xs uppercase tracking-widest mb-2">Select Model</label>
+                <div class="relative">
+                    <select id="modelSelect" 
+                        class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-white focus:border-violet-500 focus:outline-none">
+                        <option value="">Loading models...</option>
+                    </select>
+                    <button type="button" onclick="loadModels()" 
+                        class="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-violet-400"
+                        title="Refresh models">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                </div>
+                <p class="text-zinc-500 text-xs mt-2" id="modelHint"></p>
+            </div>
+
             <button onclick="saveAndContinue()" 
                 class="w-full py-4 bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold rounded-2xl hover:from-violet-500 hover:to-fuchsia-500 transition-all uppercase tracking-widest disabled:opacity-50 disabled:cursor-not-allowed"
                 id="continueBtn" disabled>
@@ -82,11 +100,19 @@
 
     <script>
         let selectedProvider = null;
+        let availableModels = [];
         const providerApiKeys = {
-            'openai': { label: 'OpenAI API Key', hint: 'Get from: https://platform.openai.com/api-keys', key: 'openai_api_key' },
-            'gemini': { label: 'Google API Key', hint: 'Get from: https://aistudio.google.com/app/apikey', key: 'gemini_api_key' },
-            'anthropic': { label: 'Anthropic API Key', hint: 'Get from: https://console.anthropic.com/', key: 'anthropic_api_key' },
-            'openrouter': { label: 'OpenRouter API Key', hint: 'Get from: https://openrouter.ai/settings', key: 'openrouter_api_key' }
+            'openai': { label: 'OpenAI API Key', hint: 'Get from: https://platform.openai.com/api-keys', key: 'openai_api_key', defaultModel: 'gpt-4o-mini' },
+            'gemini': { label: 'Google API Key', hint: 'Get from: https://aistudio.google.com/app/apikey', key: 'gemini_api_key', defaultModel: 'gemini-2.0-flash' },
+            'anthropic': { label: 'Anthropic API Key', hint: 'Get from: https://console.anthropic.com/', key: 'anthropic_api_key', defaultModel: 'claude-3-5-haiku-20241022' },
+            'openrouter': { label: 'OpenRouter API Key', hint: 'Get from: https://openrouter.ai/settings', key: 'openrouter_api_key', defaultModel: 'openai/gpt-4o-mini' }
+        };
+        const providerHints = {
+            'ollama': 'For Ollama: model name (e.g., qwen2.5-coder:7b)',
+            'openai': 'For OpenAI: gpt-4o, gpt-4o-mini, gpt-4-turbo, etc.',
+            'anthropic': 'For Anthropic: claude-3-5-sonnet-20241022, claude-3-haiku-20240307, etc.',
+            'openrouter': 'For OpenRouter: openai/gpt-4o-mini, anthropic/claude-3.5-sonnet, etc.',
+            'gemini': 'For Gemini: gemini-2.0-flash, gemini-1.5-pro, etc.'
         };
 
         function selectProvider(provider) {
@@ -94,12 +120,20 @@
             document.querySelectorAll('.provider-card').forEach(card => card.classList.remove('selected'));
             event.currentTarget.classList.add('selected');
             
+            document.getElementById('modelHint').textContent = providerHints[provider] || '';
+            
             const btn = document.getElementById('continueBtn');
+            const apiKeySection = document.getElementById('apiKeySection');
+            const modelSection = document.getElementById('modelSection');
+            
             if (provider === 'ollama') {
+                apiKeySection.classList.add('hidden');
+                modelSection.classList.remove('hidden');
                 btn.disabled = false;
-                document.getElementById('apiKeySection').classList.add('hidden');
+                loadModels();
             } else {
-                document.getElementById('apiKeySection').classList.remove('hidden');
+                apiKeySection.classList.remove('hidden');
+                modelSection.classList.add('hidden');
                 document.getElementById('apiKeyLabel').textContent = providerApiKeys[provider].label;
                 document.getElementById('apiKeyHint').textContent = providerApiKeys[provider].hint;
                 btn.disabled = true;
@@ -107,8 +141,69 @@
         }
 
         document.getElementById('apiKey').addEventListener('input', function() {
-            document.getElementById('continueBtn').disabled = this.value.trim() === '';
+            const btn = document.getElementById('continueBtn');
+            if (this.value.trim() !== '') {
+                btn.disabled = false;
+                loadModels();
+            } else {
+                btn.disabled = true;
+            }
         });
+
+        async function loadModels() {
+            const provider = selectedProvider;
+            const apiKey = document.getElementById('apiKey')?.value || '';
+            const host = 'http://127.0.0.1:11434';
+            const modelSelect = document.getElementById('modelSelect');
+            const modelSection = document.getElementById('modelSection');
+            
+            modelSelect.innerHTML = '<option value="">Loading models...</option>';
+            modelSection.classList.remove('hidden');
+            
+            try {
+                const response = await fetch('/api/models', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        provider,
+                        api_key: apiKey,
+                        host: host
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok && result.models && result.models.length > 0) {
+                    availableModels = result.models;
+                    modelSelect.innerHTML = '';
+                    
+                    // Get default model for this provider
+                    const defaultModel = providerApiKeys[provider]?.defaultModel || '';
+                    
+                    result.models.forEach(m => {
+                        const opt = document.createElement('option');
+                        opt.value = m.name;
+                        opt.textContent = m.name;
+                        if (m.name === defaultModel || (!defaultModel && result.models.indexOf(m) === 0)) {
+                            opt.selected = true;
+                        }
+                        modelSelect.appendChild(opt);
+                    });
+                } else {
+                    // Fallback to default
+                    const defaults = {
+                        'ollama': 'qwen2.5-coder:7b',
+                        'openai': 'gpt-4o-mini',
+                        'anthropic': 'claude-3-5-haiku-20241022',
+                        'openrouter': 'openai/gpt-4o-mini',
+                        'gemini': 'gemini-2.0-flash'
+                    };
+                    modelSelect.innerHTML = `<option value="${defaults[provider]}">${defaults[provider]} (default)</option>`;
+                }
+            } catch (err) {
+                console.error('Error loading models:', err);
+            }
+        }
 
         function saveAndContinue() {
             const data = {
@@ -116,15 +211,17 @@
                 temperature: 0
             };
 
+            // Get model
+            const modelSelect = document.getElementById('modelSelect');
+            if (modelSelect && modelSelect.value) {
+                data.model = modelSelect.value;
+            } else if (selectedProvider !== 'ollama' && providerApiKeys[selectedProvider]) {
+                data.model = providerApiKeys[selectedProvider].defaultModel;
+            }
+
             if (selectedProvider !== 'ollama') {
                 const keyName = providerApiKeys[selectedProvider].key;
                 data[keyName] = document.getElementById('apiKey').value;
-            }
-
-            if (selectedProvider === 'gemini') {
-                data.model = 'gemini-2.0-flash';
-            } else if (selectedProvider === 'openai') {
-                data.model = 'gpt-4o-mini';
             }
 
             fetch('/api/config', {
