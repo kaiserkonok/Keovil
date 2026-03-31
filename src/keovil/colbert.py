@@ -1,6 +1,7 @@
 # colbert.py
 import hashlib
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 from pylate import models as pylate_models
 from qdrant_client import QdrantClient, models as q_models
@@ -65,9 +66,24 @@ class ColBERTRetriever(BaseRetriever):
 
 class ColBERTEngine:
     def __init__(self, collection_name, device="cuda"):
-        # Connect to Qdrant
+        # Connect to Qdrant - try external first, fallback to embedded
         q_host = os.getenv("QDRANT_HOST", "localhost")
-        self.client = QdrantClient(host=q_host, port=6333)
+
+        try:
+            self.client = QdrantClient(host=q_host, port=6333)
+            # Test connection
+            self.client.get_collections()
+            print(
+                f"{Fore.GREEN}Connected to external Qdrant at {q_host}:6333{Style.RESET_ALL}"
+            )
+        except Exception as e:
+            print(
+                f"{Fore.YELLOW}External Qdrant not available ({e}), using embedded mode{Style.RESET_ALL}"
+            )
+            # Use local embedded Qdrant
+            qdrant_path = Path.home() / ".keovil" / "qdrant"
+            qdrant_path.mkdir(parents=True, exist_ok=True)
+            self.client = QdrantClient(location=str(qdrant_path))
 
         # This now receives 'krag_dev' or 'krag_prod' from CollegeRAG
         self.collection_name = collection_name
