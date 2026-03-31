@@ -527,6 +527,7 @@ def test_config():
     try:
         data = request.json
         provider = data.get("provider", "ollama")
+        model = data.get("model", "")
 
         print(f"{Fore.CYAN}[Test Config] Testing provider: {provider}{Style.RESET_ALL}")
 
@@ -536,6 +537,11 @@ def test_config():
 
         config = get_default_config()
         config.provider = provider
+
+        # Override model if provided
+        if model:
+            config.model = model
+            print(f"{Fore.CYAN}[Test Config] Using model: {model}{Style.RESET_ALL}")
 
         # Get API keys from request or config
         if provider == "openai":

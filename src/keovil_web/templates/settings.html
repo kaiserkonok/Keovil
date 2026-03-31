@@ -168,9 +168,10 @@
 
         async function testConnection() {
             const provider = document.getElementById('provider').value;
+            const model = document.getElementById('model').value;
             const statusEl = document.getElementById('statusMessage');
             
-            // Gather the API key based on provider
+            // Gather the API key and model based on provider
             let apiKey = '';
             if (provider === 'openai') {
                 apiKey = document.getElementById('openaiKey').value;
@@ -190,6 +191,7 @@
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
                         provider,
+                        model: model,  // Pass model name
                         openai_api_key: provider === 'openai' ? apiKey : null,
                         anthropic_api_key: provider === 'anthropic' ? apiKey : null,
                         openrouter_api_key: provider === 'openrouter' ? apiKey : null
