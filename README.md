@@ -303,7 +303,9 @@ Qdrant VectorDB ────────────────── DuckDB
 | Python | 3.12+ | Runtime |
 | CUDA | 12.4+ (12.8 for RTX 50) | GPU acceleration (if using GPU) |
 | Ollama | Latest | Local LLM (only if using local) |
-| Qdrant | v1.7.4+ | Vector database |
+| Qdrant | Optional | Vector database (auto-embedded if not running) |
+
+> **No Docker needed!** Qdrant runs automatically in embedded mode if no external server is available. Everything works out of the box.
 
 > **No GPU?** Works with cloud LLMs only. Document processing will be slower but functional.
 
