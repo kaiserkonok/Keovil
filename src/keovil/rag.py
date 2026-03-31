@@ -15,6 +15,9 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage
 from langchain_core.callbacks import StdOutCallbackHandler
 from langchain_core.runnables import RunnableConfig
+from colorama import Fore, Style, init
+
+init(autoreset=True)
 from .chunker import IntelligentChunker
 from .colbert import ColBERTEngine
 from .utils.document_processor import DocumentProcessor
