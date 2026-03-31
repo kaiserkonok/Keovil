@@ -133,10 +133,11 @@ Open [http://localhost:5000](http://localhost:5000)
 | | |
 |:---|:---|
 | 🗄️ **Structured Data Analysis** | Query CSV, Excel, SQLite, Parquet via natural language. Keovil generates and executes SQL via DuckDB. |
-| 📄 **Document Q&A** | Ask questions about PDFs, text files, code. Built on ColBERT retrieval with Qdrant. |
+| 📄 **Document Q&A** | Ask questions about PDFs, text files, code. Built on ColBERT retrieval with Qdrant. Docling parses documents locally. |
 | 🔄 **Automatic Indexing** | Drop files in a folder — Keovil syncs and indexes them automatically. |
 | 🔒 **Total Privacy** | Everything runs locally. No cloud, no subscriptions, no data leaves your machine. |
 | 🌐 **Multi-LLM Support** | Use Ollama (local), OpenAI, Anthropic, OpenRouter, or Gemini. Change anytime without restart. |
+| ⚡ **Flexible Hardware** | Full GPU not required - can use cloud LLMs with local document processing. |
 
 ---
 
@@ -268,19 +269,23 @@ Qdrant VectorDB ────────────────── DuckDB
 
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| GPU | NVIDIA RTX 8GB VRAM | NVIDIA RTX 12GB+ VRAM |
+| GPU | NVIDIA RTX 3060 8GB VRAM | NVIDIA RTX 4070 12GB+ VRAM |
 | RAM | 16GB | 32GB |
-| Storage | 10GB | 50GB |
-| Supported GPUs | RTX 30, 40, 50 series | RTX 40/50 series |
+| Storage | 50GB free | 100GB+ SSD |
+| CPU | 6 cores | 8+ cores |
+
+> **Note:** These requirements are for ColBERT embeddings + Docling document parsing (local). LLM can run on cloud if no local GPU available, but document processing always runs locally.
 
 ### Software
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | Python | 3.12+ | Runtime |
-| CUDA | 12.4+ (12.8 for RTX 50) | GPU acceleration |
-| Ollama | Latest | Local LLM inference (or use cloud) |
+| CUDA | 12.4+ (12.8 for RTX 50) | GPU acceleration for ColBERT |
+| Ollama | Latest | Local LLM inference (optional - cloud works too) |
 | Qdrant | v1.7.4+ | Vector database |
+
+> **No GPU?** Keovil still works but document processing will be slower. Use cloud LLM providers for the AI layer.
 
 ---
 
