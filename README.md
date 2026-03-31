@@ -37,24 +37,33 @@ cd Keovil
 pip install -e .
 ```
 
-### Option 3: Web App Only (Quick Start)
+### Option 3: Web App Only (Quick Start - No Docker!)
 
 ```bash
-# 1. Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+# 1. Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
 
-# 2. Pull model
-ollama pull qwen2.5-coder:7b-instruct
-
-# 3. Start Qdrant (macOS)
-brew install qdrant && brew services start qdrant
-
-# 4. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git
-
-# 5. Run the web app
+# 2. Run the web app (Qdrant runs automatically!)
 python -m keovil_web
 ```
+
+That's it! Qdrant runs in embedded mode automatically.
+
+---
+
+### Optional: Run Qdrant Manually (For Better Performance)
+
+If you want to run Qdrant externally (e.g., via Docker) for better performance:
+
+```bash
+# macOS
+brew install qdrant && brew services start qdrant
+
+# Linux (Docker)
+docker run -d -p 6333:6333 -v qdrant_storage:/qdrant_storage qdrant/qdrant
+```
+
+Then set `QDRANT_HOST=your-server` if not on localhost.
 
 ---
 
@@ -108,23 +117,18 @@ python -m keovil_web.app
 ## Quick Start
 
 ```bash
-# 1. Install Ollama
-curl -fsSL https://ollama.com/install.sh | sh
+# 1. Install Keovil
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
 
-# 2. Pull model
-ollama pull qwen2.5-coder:7b-instruct
-
-# 3. Start Qdrant (macOS)
-brew install qdrant && brew services start qdrant
-
-# 4. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git
-
-# 5. Run the web app
+# 2. Run the web app
 python -m keovil_web
 ```
 
 Open [http://localhost:5000](http://localhost:5000)
+
+> **That's it!** Qdrant runs in embedded mode automatically. No Docker needed.
+> 
+> For local LLM, also install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
 
 ---
 
@@ -342,21 +346,21 @@ Qdrant VectorDB ────────────────── DuckDB
 ## Installation (Linux)
 
 ```bash
-# Install Ollama
+# Option 1: Just Keoil (Qdrant auto-runs in embedded mode)
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+python -m keovil_web
+
+# Option 2: With local Ollama (if using local LLM)
 curl -fsSL https://ollama.com/install.sh | sh
-
-# Pull model
 ollama pull qwen2.5-coder:7b-instruct
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+python -m keovil_web
 
-# Install Qdrant
+# Option 3: With external Qdrant (for better performance)
+pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
 curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-amd64.tar.gz -o qdrant.tar.gz
 tar -xzf qdrant.tar.gz
 ./qdrant &
-
-# Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git
-
-# Run the web app
 python -m keovil_web
 ```
 
