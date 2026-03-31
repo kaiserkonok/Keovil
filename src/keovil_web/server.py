@@ -478,7 +478,7 @@ def get_config():
 
 
 @app.route("/api/config", methods=["POST"])
-def save_config():
+def save_llm_config():
     """Save LLM configuration."""
     try:
         data = request.json
