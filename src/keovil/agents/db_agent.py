@@ -75,6 +75,22 @@ class SQLQueryAgent:
             con.execute("LOAD excel; LOAD spatial; LOAD sqlite;")
 
     def ask(self, query: str, chat_history: list = None):
+        """History-aware SQL Agent.
+        chat_history: list of {'role': 'user'|'assistant', 'content': str}
+        """
+        # --- STEP 0: CONTEXTUALIZATION (STANDALONE QUERY GENERATION) ---
+        # This prevents follow-up questions from breaking the SQL generator.
+        formatted_history = []
+        if chat_history:
+            for msg in chat_history[-10:]:  # Last 10 messages for context
+                if msg["role"] == "user":
+                    formatted_history.append(HumanMessage(content=msg["content"]))
+                else:
+                    # Strip the heavy HTML table data from history to keep LLM focused
+                    clean_content = (
+                        msg["content"].split("### 📊 Data Records")[0].strip()
+                    )
+                    formatted_history.append(AIMessage(content=clean_content))
 
         if formatted_history:
             context_prompt = ChatPromptTemplate.from_messages(
