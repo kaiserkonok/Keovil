@@ -42,6 +42,9 @@ class SQLQueryAgent:
 
         self.config = llm_config if llm_config else get_default_config()
         self.llm = get_llm(self.config)
+        print(
+            f"{Fore.CYAN}[SQL Agent] Using model: {self.config.model} (provider: {self.config.provider}){Style.RESET_ALL}"
+        )
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:

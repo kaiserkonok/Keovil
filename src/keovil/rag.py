@@ -115,6 +115,9 @@ class KeovilRAG:
 
         self.llm = get_llm(self.llm_config)
         self.query_llm = get_llm(self.llm_config)
+        print(
+            f"{Fore.CYAN}[RAG] Using model: {self.llm_config.model} (provider: {self.llm_config.provider}){Style.RESET_ALL}"
+        )
 
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
