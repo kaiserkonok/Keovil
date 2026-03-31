@@ -267,25 +267,45 @@ Qdrant VectorDB ────────────────── DuckDB
 
 ### Hardware
 
+#### With Cloud LLM (OpenAI, Anthropic, Gemini, OpenRouter)
+
 | Component | Minimum | Recommended |
 |-----------|---------|-------------|
-| GPU | NVIDIA RTX 3060 8GB VRAM | NVIDIA RTX 4070 12GB+ VRAM |
+| GPU VRAM | 6GB (RTX 3060) | 8GB+ (RTX 4060/4070) |
 | RAM | 16GB | 32GB |
 | Storage | 50GB free | 100GB+ SSD |
-| CPU | 6 cores | 8+ cores |
 
-> **Note:** These requirements are for ColBERT embeddings + Docling document parsing (local). LLM can run on cloud if no local GPU available, but document processing always runs locally.
+> Cloud LLMs don't use local GPU - GPU only needed for Docling (document parsing) + ColBERT (embeddings). 6GB is unconfirmed but likely works; 8GB tested and works.
+
+#### With Local LLM (Ollama)
+
+| Component | Minimum | Recommended |
+|-----------|---------|-------------|
+| GPU VRAM | 10GB+ | 16GB+ |
+| RAM | 16GB | 32GB |
+| Storage | 50GB free | 100GB+ SSD |
+
+> Local Ollama + ColBERT + Docling all need GPU. 10GB minimum for 7B models + embeddings. 16GB recommended for smooth operation.
+
+#### No GPU (CPU Only)
+
+| Component | Minimum |
+|-----------|---------|
+| RAM | 16GB |
+| Storage | 100GB+ SSD |
+
+> Works but extremely slow. Document ingestion minutes vs seconds. Not recommended for production use.
 
 ### Software
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
 | Python | 3.12+ | Runtime |
-| CUDA | 12.4+ (12.8 for RTX 50) | GPU acceleration for ColBERT |
-| Ollama | Latest | Local LLM inference (optional - cloud works too) |
+| CUDA | 12.4+ (12.8 for RTX 50) | GPU acceleration (if using GPU) |
+| Ollama | Latest | Local LLM (only if using local) |
 | Qdrant | v1.7.4+ | Vector database |
 
-> **No GPU?** Keovil still works but document processing will be slower. Use cloud LLM providers for the AI layer.
+> **No GPU?** Works with cloud LLMs only. Document processing will be slower but functional.
 
 ---
 
