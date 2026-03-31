@@ -170,6 +170,16 @@
             const provider = document.getElementById('provider').value;
             const statusEl = document.getElementById('statusMessage');
             
+            // Gather the API key based on provider
+            let apiKey = '';
+            if (provider === 'openai') {
+                apiKey = document.getElementById('openaiKey').value;
+            } else if (provider === 'anthropic') {
+                apiKey = document.getElementById('anthropicKey').value;
+            } else if (provider === 'openrouter') {
+                apiKey = document.getElementById('openrouterKey').value;
+            }
+            
             statusEl.textContent = 'Testing connection...';
             statusEl.className = 'p-4 rounded-xl text-center bg-yellow-900/30 text-yellow-400 border border-yellow-800';
             statusEl.classList.remove('hidden');
@@ -178,20 +188,25 @@
                 const response = await fetch('/api/config/test', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({provider})
+                    body: JSON.stringify({
+                        provider,
+                        openai_api_key: provider === 'openai' ? apiKey : null,
+                        anthropic_api_key: provider === 'anthropic' ? apiKey : null,
+                        openrouter_api_key: provider === 'openrouter' ? apiKey : null
+                    })
                 });
                 
                 const result = await response.json();
                 
                 if (response.ok && result.success) {
-                    statusEl.textContent = 'Connection successful! Model: ' + result.model;
+                    statusEl.textContent = '✅ Connection successful! Model: ' + result.model;
                     statusEl.className = 'p-4 rounded-xl text-center bg-green-900/30 text-green-400 border border-green-800';
                 } else {
-                    statusEl.textContent = 'Error: ' + (result.error || 'Connection failed');
+                    statusEl.textContent = '❌ Error: ' + (result.error || 'Connection failed');
                     statusEl.className = 'p-4 rounded-xl text-center bg-red-900/30 text-red-400 border border-red-800';
                 }
             } catch (err) {
-                statusEl.textContent = 'Error: ' + err.message;
+                statusEl.textContent = '❌ Error: ' + err.message;
                 statusEl.className = 'p-4 rounded-xl text-center bg-red-900/30 text-red-400 border border-red-800';
             }
         }

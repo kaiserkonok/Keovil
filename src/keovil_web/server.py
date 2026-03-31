@@ -528,6 +528,8 @@ def test_config():
         data = request.json
         provider = data.get("provider", "ollama")
 
+        print(f"{Fore.CYAN}[Test Config] Testing provider: {provider}{Style.RESET_ALL}")
+
         # Create a test config
         from keovil.utils.llm_config import LLMConfig
         from keovil.utils.model_engine import get_llm
@@ -537,21 +539,41 @@ def test_config():
 
         # Get API keys from request or config
         if provider == "openai":
-            config.openai_api_key = data.get("openai_api_key") or config.openai_api_key
+            config.openai_api_key = (
+                data.get("openai_api_key")
+                or config.openai_api_key
+                or os.getenv("OPENAI_API_KEY")
+            )
+            print(
+                f"{Fore.CYAN}[Test Config] OpenAI key: {'set' if config.openai_api_key else 'NOT SET'}{Style.RESET_ALL}"
+            )
         elif provider == "anthropic":
             config.anthropic_api_key = (
-                data.get("anthropic_api_key") or config.anthropic_api_key
+                data.get("anthropic_api_key")
+                or config.anthropic_api_key
+                or os.getenv("ANTHROPIC_API_KEY")
+            )
+            print(
+                f"{Fore.CYAN}[Test Config] Anthropic key: {'set' if config.anthropic_api_key else 'NOT SET'}{Style.RESET_ALL}"
             )
         elif provider == "openrouter":
             config.openrouter_api_key = (
-                data.get("openrouter_api_key") or config.openrouter_api_key
+                data.get("openrouter_api_key")
+                or config.openrouter_api_key
+                or os.getenv("OPENROUTER_API_KEY")
+            )
+            print(
+                f"{Fore.CYAN}[Test Config] OpenRouter key: {'set' if config.openrouter_api_key else 'NOT SET'}{Style.RESET_ALL}"
             )
 
         # Try to create LLM and make a test call
         try:
+            print(f"{Fore.CYAN}[Test Config] Creating LLM...{Style.RESET_ALL}")
             llm = get_llm(config)
+            print(f"{Fore.CYAN}[Test Config] LLM created, testing...{Style.RESET_ALL}")
             # Simple test - just check if we can invoke it
             response = llm.invoke("Say 'OK' if you can hear me")
+            print(f"{Fore.GREEN}[Test Config] ✅ Success!{Style.RESET_ALL}")
             return jsonify(
                 {
                     "success": True,
@@ -560,9 +582,11 @@ def test_config():
                 }
             )
         except Exception as llm_error:
+            print(f"{Fore.RED}[Test Config] ❌ LLM Error: {llm_error}{Style.RESET_ALL}")
             return jsonify({"success": False, "error": str(llm_error)}), 400
 
     except Exception as e:
+        print(f"{Fore.RED}[Test Config] ❌ Error: {e}{Style.RESET_ALL}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 
