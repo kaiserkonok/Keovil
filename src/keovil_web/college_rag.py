@@ -35,13 +35,13 @@ class NewFileHandler(PatternMatchingEventHandler):
 class CollegeRAG(KeovilRAG):
     """Full RAG system with auto-watching and UI status updates.
 
-    Inherits from KeovilRAG and adds:
+    Inherits from KeoilRAG and adds:
     - Automatic file watching via watchdog
     - Background batch processing
     - SocketIO status broadcasts
     """
 
-    def __init__(self, data_dir=None, top_k=5, socketio=None):
+    def __init__(self, data_dir=None, top_k=5, socketio=None, llm_config=None):
         self.socketio = socketio
         self.status = {
             "state": "idle",
@@ -57,6 +57,7 @@ class CollegeRAG(KeovilRAG):
         if not storage_dir:
             storage_dir = str(Path.home() / ".keovil")
 
+        # Call parent - this will load models and set self.data_dir
         super().__init__(
             data_dir=data_dir,
             storage_dir=storage_dir,
@@ -64,8 +65,10 @@ class CollegeRAG(KeovilRAG):
             auto_index=True,
             top_k=top_k,
             mode="webapp",
+            llm_config=llm_config,
         )
 
+        # Start watchdog AFTER parent initialized (data_dir is now set)
         threading.Thread(target=self._batch_worker, daemon=True).start()
 
         self.observer = Observer()

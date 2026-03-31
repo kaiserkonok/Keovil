@@ -15,6 +15,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 from keovil.utils.model_engine import get_llm
+from keovil.utils.llm_config import LLMConfig, get_default_config
 
 # Beautiful terminal output
 from rich.console import Console
@@ -33,13 +34,33 @@ SQL_THREAD_LOCK = threading.Lock()
 # SQL QUERY AGENT
 # ==================================================
 class SQLQueryAgent:
-    def __init__(self, db_path):
+    def __init__(self, db_path, llm_config: LLMConfig = None):
         self.db_path = str(db_path)
         # Isolate extensions within the database folder to prevent cross-contamination
         self.ext_dir = Path(db_path).parent / "sys_modules"
         self.ext_dir.mkdir(exist_ok=True)
 
-        self.llm = get_llm()
+        self.config = llm_config if llm_config else get_default_config()
+        self._llm = None
+        print(
+            f"{Fore.CYAN}[SQL Agent] Using model: {self.config.model} (provider: {self.config.provider}){Style.RESET_ALL}"
+        )
+
+    @property
+    def llm(self):
+        """Get fresh LLM instance from current config (no restart needed)."""
+        current_config = get_default_config()
+        if (
+            self._llm is None
+            or self.config.provider != current_config.provider
+            or self.config.model != current_config.model
+        ):
+            print(
+                f"{Fore.CYAN}[SQL Agent] Reloading model: {current_config.model} (provider: {current_config.provider}){Style.RESET_ALL}"
+            )
+            self._llm = get_llm(current_config)
+            self.config = current_config
+        return self._llm
 
         # Persistence of extensions in the specific storage folder
         with duckdb.connect(self.db_path) as con:
@@ -47,9 +68,14 @@ class SQLQueryAgent:
             # Auto-installing inside the isolated folder
             con.execute("INSTALL excel; INSTALL spatial; INSTALL sqlite;")
 
+    def _ensure_extensions(self):
+        """Ensure DuckDB extensions are loaded."""
+        with duckdb.connect(self.db_path) as con:
+            con.execute(f"SET extension_directory = '{self.ext_dir}';")
+            con.execute("LOAD excel; LOAD spatial; LOAD sqlite;")
+
     def ask(self, query: str, chat_history: list = None):
-        """
-        History-aware SQL Agent.
+        """History-aware SQL Agent.
         chat_history: list of {'role': 'user'|'assistant', 'content': str}
         """
         # --- STEP 0: CONTEXTUALIZATION (STANDALONE QUERY GENERATION) ---
@@ -78,11 +104,11 @@ class SQLQueryAgent:
                 ]
             )
             try:
-                standalone_query = (
-                    (context_prompt | self.llm)
-                    .invoke({"history": formatted_history, "input": query})
-                    .strip()
-                )
+                standalone_query = str(
+                    (context_prompt | self.llm).invoke(
+                        {"history": formatted_history, "input": query}
+                    )
+                ).strip()
                 console.print(
                     f"[dim cyan]Refined Query:[/dim cyan] [italic]{standalone_query}[/italic]"
                 )
@@ -112,7 +138,7 @@ class SQLQueryAgent:
                 "Output ONLY the table names as a comma-separated list. If none, say NONE."
             )
 
-            router_output = self.llm.invoke(router_prompt).strip()
+            router_output = str(self.llm.invoke(router_prompt)).strip()
 
             found_words = re.findall(r"\b\w+\b", router_output)
             relevant_names = [name for name in found_words if name in all_table_names]
@@ -143,8 +169,8 @@ class SQLQueryAgent:
             try:
                 console.print(f"\n[bold yellow]🤔 AI is thinking...[/bold yellow]")
                 # We provide the original query context but emphasize the standalone_query intent
-                initial_response = self.llm.invoke(
-                    f"{system_context}\n\nUser: {standalone_query}"
+                initial_response = str(
+                    self.llm.invoke(f"{system_context}\n\nUser: {standalone_query}")
                 )
 
                 # Extract Thought
@@ -213,7 +239,7 @@ class SQLQueryAgent:
                     "3. Do NOT mention technical SQL details."
                 )
 
-                final_chat = self.llm.invoke(voice_prompt)
+                final_chat = str(self.llm.invoke(voice_prompt))
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
 
                 # 5. Format for UI
@@ -267,11 +293,12 @@ class IngestionHandler(FileSystemEventHandler):
 # STRUCTURED DATA AGENT (The Core Manager)
 # ==================================================
 class StructuredDataAgent:
-    def __init__(self, socketio=None, watch_dir=None):
-        storage_env = os.getenv("STORAGE_BASE", str(Path.home() / ".keovil_storage"))
+    def __init__(self, socketio=None, watch_dir=None, llm_config: LLMConfig = None):
+        storage_env = os.getenv("STORAGE_BASE", str(Path.home() / ".keovil"))
         self.base_storage = Path(storage_env).absolute()
         self.socketio = socketio
         self.handler = IngestionHandler(self)
+        self.config = llm_config if llm_config else get_default_config()
 
         self.watch_dir = Path(watch_dir or self.base_storage / "data").resolve()
         self.db_path = (self.base_storage / "database" / "cache.bin").resolve()
@@ -298,7 +325,7 @@ class StructuredDataAgent:
                        """)
 
         # 4. INITIALIZE AGENT (Passing the mode-specific path)
-        self.agent = SQLQueryAgent(self.db_path)
+        self.agent = SQLQueryAgent(self.db_path, self.config)
         self.observer = Observer()
         self.is_syncing = False
 
