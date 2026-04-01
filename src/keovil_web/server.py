@@ -788,7 +788,16 @@ def handle_connect():
 
 @app.route("/")
 def home():
+    # Check if config exists - if not, show setup wizard
+    config_file = Path(HOME_STORAGE / "config.json")
+    if not config_file.exists():
+        return render_template("setup.html")
     return render_template("index.html")
+
+
+@app.route("/setup")
+def setup():
+    return render_template("setup.html")
 
 
 @app.route("/chat")

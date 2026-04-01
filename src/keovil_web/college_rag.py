@@ -159,9 +159,6 @@ class CollegeRAG(KeovilRAG):
             self.broadcast_status()
 
     def ask(self, query, chat_history=None, stream=False):
-        print(f"DEBUG: Retriever Object Type: {type(self.history_aware_retriever)}")
-        print(f"DEBUG: Engine Object Type: {type(self.engine)}")
-
         history = chat_history if chat_history is not None else self.chat_history
         answer = super().query(query, history)
 
