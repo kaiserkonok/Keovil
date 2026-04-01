@@ -205,39 +205,109 @@ class SQLQueryAgent:
                 # 3. Execution (Running on your RTX 5060 Ti via DuckDB)
                 print(f"{Fore.BLUE}🖥️ Running on GPU...{Style.RESET_ALL}")
 
-                sql_statements = [s.strip() for s in sql_raw.split(";") if s.strip()]
-
+                # ==============================================================
+                # PHASE 2: SELF-CORRECTION LOOP (Max 3 retries)
+                # ==============================================================
+                max_retries = 3
+                last_error = None
+                current_sql = sql_raw
                 all_results = []
                 combined_df_html = ""
 
-                for i, stmt in enumerate(sql_statements):
-                    res_df = con.execute(stmt).df()
+                for attempt in range(max_retries):
+                    try:
+                        console.print(
+                            f"\n{Fore.CYAN}🔄 Execution attempt {attempt + 1}/{max_retries}{Style.RESET_ALL}"
+                        )
 
-                    table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
-                    tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
+                        # Pre-execution validation
+                        validation_result = self._validate_sql(current_sql)
+                        if not validation_result["valid"]:
+                            console.print(
+                                f"{Fore.YELLOW}⚠️ Pre-validation warning: {validation_result['message']}{Style.RESET_ALL}"
+                            )
+                            return f"Blocked: {validation_result['message']}"
 
-                    all_results.append(
-                        {
-                            "source": tag,
-                            "rows": len(res_df),
-                            "data": res_df.head(5).to_dict(),
-                        }
+                        # Execute SQL
+                        sql_statements = [
+                            s.strip() for s in current_sql.split(";") if s.strip()
+                        ]
+
+                        all_results = []
+                        combined_df_html = ""
+
+                        for i, stmt in enumerate(sql_statements):
+                            res_df = con.execute(stmt).df()
+
+                            table_tag = re.search(r"FROM\s+(\w+)", stmt, re.I)
+                            tag = table_tag.group(1) if table_tag else f"Result_{i + 1}"
+
+                            all_results.append(
+                                {
+                                    "source": tag,
+                                    "rows": len(res_df),
+                                    "data": res_df.head(5).to_dict(),
+                                }
+                            )
+
+                            table_md = res_df.to_markdown(index=False)
+                            combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
+
+                        # Success! Break the retry loop
+                        console.print(
+                            f"{Fore.GREEN}✅ SQL executed successfully!{Style.RESET_ALL}"
+                        )
+                        break
+
+                    except Exception as e:
+                        last_error = str(e)
+                        console.print(
+                            f"{Fore.RED}❌ Execution failed: {last_error}{Style.RESET_ALL}"
+                        )
+
+                        if attempt < max_retries - 1:
+                            # Try to fix the SQL
+                            console.print(
+                                f"{Fore.YELLOW}🔧 Analyzing error and generating fix...{Style.RESET_ALL}"
+                            )
+                            current_sql = self._fix_sql(
+                                current_sql,
+                                last_error,
+                                schema_context,
+                                standalone_query,
+                            )
+                            if current_sql:
+                                console.print(
+                                    f"{Fore.CYAN}Generated fix: {current_sql[:100]}...{Style.RESET_ALL}"
+                                )
+                            else:
+                                # Could not generate fix
+                                break
+                        else:
+                            # All retries failed
+                            console.print(
+                                f"{Fore.RED}🚫 All {max_retries} attempts failed.{Style.RESET_ALL}"
+                            )
+
+                # Check if all retries failed
+                if last_error and attempt >= max_retries - 1 and not all_results:
+                    error_explanation = self._explain_error(
+                        last_error, current_sql, schema_context
                     )
+                    return f"I encountered an issue after {max_retries} attempts:\n\n**Error:** {last_error}\n\n{error_explanation}"
 
-                    table_md = res_df.to_markdown(index=False)
-                    combined_df_html += f"#### Source table: {tag}\n<div class='df-scroll-container'>\n\n{table_md}\n\n</div>\n\n"
-
-                # 4. Stage 2: The "Voice" Synthesis
-                voice_prompt = (
-                    f"User Query: {query}\n"
-                    f"Refined Intent: {standalone_query}\n"
-                    f"Context/Logic: {thought_process}\n"
-                    f"Execution Results: {all_results}\n\n"
-                    "As a Senior Data Analyst, interpret the multiple result sets provided to answer the User Query. "
-                    "1. Synthesize the data from all tables into one cohesive answer.\n"
-                    "2. If the user asked for a comparison or 'top rows from all', summarize the findings.\n"
-                    "3. Do NOT mention technical SQL details."
-                )
+                # 4. Stage 2: The "Voice" Synthesis (only if we have results)
+                if all_results:
+                    voice_prompt = (
+                        f"User Query: {query}\n"
+                        f"Refined Intent: {standalone_query}\n"
+                        f"Context/Logic: {thought_process}\n"
+                        f"Execution Results: {all_results}\n\n"
+                        "As a Senior Data Analyst, interpret the multiple result sets provided to answer the User Query. "
+                        "1. Synthesize the data from all tables into one cohesive answer.\n"
+                        "2. If the user asked for a comparison or 'top rows from all', summarize the findings.\n"
+                        "3. Do NOT mention technical SQL details."
+                    )
 
                 final_chat = str(self.llm.invoke(voice_prompt))
                 console.print(f"{Fore.GREEN}🤖 Response Ready.{Style.RESET_ALL}")
@@ -250,6 +320,136 @@ class SQLQueryAgent:
             except Exception as e:
                 console.print(f"[bold red]⚠️ SQL Error: {e}[/bold red]")
                 return f"I ran into an issue executing the SQL: {str(e)}"
+
+    # ==================================================
+    # SELF-CORRECTION HELPER METHODS
+    # ==================================================
+
+    def _validate_sql(self, sql: str) -> dict:
+        """Pre-execution SQL validation."""
+        result = {"valid": True, "message": ""}
+
+        sql_upper = sql.upper()
+
+        # Check for dangerous operations
+        dangerous = ["DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE"]
+        for keyword in dangerous:
+            if keyword in sql_upper:
+                result["valid"] = False
+                result["message"] = f"Contains {keyword} operation - blocked for safety"
+                return result
+
+        return result
+
+    def _fix_sql(self, failed_sql: str, error: str, schema: str, query: str) -> str:
+        """Generate corrected SQL based on error analysis."""
+
+        error_lower = error.lower()
+
+        # Determine error type and fix strategy
+        if "column" in error_lower and "not found" in error_lower:
+            fix_prompt = f"""You are a SQL error fixer. Given the error, schema, and original query, fix the SQL.
+
+ERROR: {error}
+SCHEMA:
+{schema}
+
+ORIGINAL QUERY (user intent): {query}
+FAILED SQL: {failed_sql}
+
+Instructions:
+1. Analyze the error - likely column/table name issue
+2. Look at the schema to find the correct column/table name
+3. Fix the SQL
+4. Output ONLY the fixed SQL in a ```sql block
+5. Keep the same logic as the original query
+"""
+        elif "table" in error_lower and "not found" in error_lower:
+            fix_prompt = f"""You are a SQL error fixer. Given the error, schema, and original query, fix the SQL.
+
+ERROR: {error}
+SCHEMA:
+{schema}
+
+ORIGINAL QUERY (user intent): {query}
+FAILED SQL: {failed_sql}
+
+Instructions:
+1. Analyze the error - likely table name issue
+2. Look at the schema to find the correct table name
+3. Fix the SQL
+4. Output ONLY the fixed SQL in a ```sql block
+5. Keep the same logic as the original query
+"""
+        elif "syntax" in error_lower or "error" in error_lower:
+            fix_prompt = f"""You are a SQL error fixer. Given the error, schema, and original query, fix the SQL.
+
+ERROR: {error}
+SCHEMA:
+{schema}
+
+ORIGINAL QUERY (user intent): {query}
+FAILED SQL: {failed_sql}
+
+Instructions:
+1. Analyze the error - syntax issue
+2. Fix the SQL syntax
+3. Output ONLY the fixed SQL in a ```sql block
+4. Keep the same logic as the original query
+"""
+        else:
+            # General error
+            fix_prompt = f"""You are a SQL error fixer. Given the error, schema, and original query, fix the SQL.
+
+ERROR: {error}
+SCHEMA:
+{schema}
+
+ORIGINAL QUERY (user intent): {query}
+FAILED SQL: {failed_sql}
+
+Instructions:
+1. Analyze the error and understand what went wrong
+2. Fix the SQL to resolve this error
+3. Output ONLY the fixed SQL in a ```sql block
+4. Keep the same logic as the original query
+"""
+
+        try:
+            fix_response = str(self.llm.invoke(fix_prompt))
+
+            # Extract the fixed SQL
+            sql_match = re.search(
+                r"```sql\n?(.*?)```", fix_response, re.DOTALL | re.IGNORECASE
+            )
+            if sql_match:
+                return sql_match.group(1).strip()
+
+            return ""
+        except Exception as e:
+            console.print(f"{Fore.RED}Error generating fix: {e}{Style.RESET_ALL}")
+            return ""
+
+    def _explain_error(self, error: str, sql: str, schema: str) -> str:
+        """Generate human-friendly explanation of what went wrong."""
+
+        explain_prompt = f"""You are a helpful SQL assistant. Explain this error to a non-technical user.
+
+ERROR: {error}
+SQL: {sql}
+SCHEMA: {schema}
+
+Instructions:
+1. Explain what the error means in simple terms
+2. Suggest what the user might try differently
+3. Keep it brief and helpful (2-3 sentences max)
+"""
+
+        try:
+            explanation = str(self.llm.invoke(explain_prompt))
+            return explanation
+        except:
+            return "There seems to be an issue with the query. Try rephrasing your question or checking if the table/column names are correct."
 
 
 # ==================================================
