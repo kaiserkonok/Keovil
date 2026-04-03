@@ -21,9 +21,6 @@ Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovi
 ```bash
 # Install the SDK and web app
 pip install git+https://github.com/kaiserkonok/Keovil.git
-
-# For specific branch (e.g., development)
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
 ```
 
 ### Option 2: Local Development Install
@@ -41,7 +38,7 @@ pip install -e .
 
 ```bash
 # 1. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+pip install git+https://github.com/kaiserkonok/Keovil.git
 
 # 2. Run the web app (Qdrant runs automatically!)
 python -m keovil_web
@@ -118,7 +115,7 @@ python -m keovil_web.app
 
 ```bash
 # 1. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+pip install git+https://github.com/kaiserkonok/Keovil.git
 
 # 2. Run the web app
 python -m keovil_web
@@ -347,17 +344,17 @@ Qdrant VectorDB ────────────────── DuckDB
 
 ```bash
 # Option 1: Just Keovil (Qdrant auto-runs in embedded mode)
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+pip install git+https://github.com/kaiserkonok/Keovil.git
 python -m keovil_web
 
 # Option 2: With local Ollama (if using local LLM)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5-coder:7b-instruct
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+pip install git+https://github.com/kaiserkonok/Keovil.git
 python -m keovil_web
 
 # Option 3: With external Qdrant (for better performance)
-pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
+pip install git+https://github.com/kaiserkonok/Keovil.git
 curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-amd64.tar.gz -o qdrant.tar.gz
 tar -xzf qdrant.tar.gz
 ./qdrant &
