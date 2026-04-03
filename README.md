@@ -7,12 +7,12 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://linux.org)
-[![Hardware: RTX 8GB+](https://img.shields.io/badge/Hardware-RTX%208GB%2B-red.svg)](#requirements)
+[![Hardware: Flexible](https://img.shields.io/badge/Hardware-Flexible-green)](#requirements)
 [![GitHub Stars](https://img.shields.io/github/stars/kaiserkonok/Keovil?style=social)](https://github.com/kaiserkonok/Keovil)
 
 **Ask questions in plain English. Keovil queries your files.**
 
-Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovil generates the queries and returns results. Everything runs locally on your GPU.
+Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovil generates the queries and returns results. Document processing runs locally on your GPU, with flexible LLM options (cloud or local).
 
 ## Installation
 
@@ -139,7 +139,7 @@ Open [http://localhost:5000](http://localhost:5000)
 | 🗄️ **Structured Data Analysis** | Query CSV, Excel, SQLite, Parquet via natural language. Keovil generates and executes SQL via DuckDB. |
 | 📄 **Document Q&A** | Ask questions about PDFs, text files, code. Built on ColBERT retrieval with Qdrant. Docling parses documents locally. |
 | 🔄 **Automatic Indexing** | Drop files in a folder — Keovil syncs and indexes them automatically. |
-| 🔒 **Total Privacy** | Everything runs locally. No cloud, no subscriptions, no data leaves your machine. |
+| 🔒 **Total Privacy** | Document processing runs locally. Cloud LLMs are optional - use local Ollama for full privacy. |
 | 🌐 **Multi-LLM Support** | Use Ollama (local), OpenAI, Anthropic, OpenRouter, or Gemini. Change anytime without restart. |
 | ⚡ **Flexible Hardware** | Full GPU not required - can use cloud LLMs with local document processing. |
 
@@ -346,7 +346,7 @@ Qdrant VectorDB ────────────────── DuckDB
 ## Installation (Linux)
 
 ```bash
-# Option 1: Just Keoil (Qdrant auto-runs in embedded mode)
+# Option 1: Just Keovil (Qdrant auto-runs in embedded mode)
 pip install git+https://github.com/kaiserkonok/Keovil.git@crazy
 python -m keovil_web
 
