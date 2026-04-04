@@ -274,7 +274,6 @@ Qdrant VectorDB ────────────────── DuckDB
 |-----------|---------|-------------|
 | GPU VRAM | 6GB (RTX 3060) | 8GB+ (RTX 4060/4070) |
 | RAM | 16GB | 32GB |
-| Storage | 50GB free | 100GB+ SSD |
 
 > Cloud LLMs don't use local GPU - GPU only needed for Docling (document parsing) + ColBERT (embeddings). 6GB is unconfirmed but likely works; 8GB tested and works.
 
@@ -284,7 +283,6 @@ Qdrant VectorDB ────────────────── DuckDB
 |-----------|---------|-------------|
 | GPU VRAM | 10GB+ | 16GB+ |
 | RAM | 16GB | 32GB |
-| Storage | 50GB free | 100GB+ SSD |
 
 > Local Ollama + ColBERT + Docling all need GPU. 10GB minimum for 7B models + embeddings. 16GB recommended for smooth operation.
 
@@ -293,7 +291,6 @@ Qdrant VectorDB ────────────────── DuckDB
 | Component | Minimum |
 |-----------|---------|
 | RAM | 16GB |
-| Storage | 100GB+ SSD |
 
 > Works but extremely slow. Document ingestion minutes vs seconds. Not recommended for production use.
 
