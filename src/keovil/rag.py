@@ -122,6 +122,11 @@ class KeovilRAG:
             f"{Fore.CYAN}[RAG] Using model: {self.llm_config.model} (provider: {self.llm_config.provider}){Style.RESET_ALL}"
         )
 
+        self._build_rag_chain()
+
+        if auto_index:
+            self._initial_sync()
+
     @property
     def llm(self):
         """Get fresh LLM instance from current config (no restart needed)."""
@@ -154,6 +159,8 @@ class KeovilRAG:
             self.llm_config = current_config
         return self._query_llm
 
+    def _build_rag_chain(self):
+        """Build the RAG chain with history awareness."""
         contextualize_q_system_prompt = (
             "Given a chat history and the latest user question "
             "which might reference context in the chat history, "
@@ -208,8 +215,10 @@ class KeovilRAG:
             }
         )
 
-        if auto_index:
-            self._initial_sync()
+    def _ensure_rag_chain(self):
+        """Ensure RAG chain is built before querying."""
+        if not hasattr(self, 'rag_chain') or self.rag_chain is None:
+            self._build_rag_chain()
 
     def _init_manifest_db(self):
         conn = sqlite3.connect(self.manifest_db)
@@ -412,6 +421,7 @@ class KeovilRAG:
 
     def query(self, question: str, chat_history: list = None) -> str:
         """Ask a question and get an answer."""
+        self._ensure_rag_chain()
         history = chat_history if chat_history is not None else self.chat_history
 
         lc_history = []
