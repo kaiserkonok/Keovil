@@ -280,17 +280,18 @@ class KeovilRAG:
             print(f"{Colors.OKCYAN}[Sync] Starting fresh...{Colors.ENDC}")
 
         SUPPORTED_EXTENSIONS = {".txt", ".pdf", ".docx", ".pptx", ".md"}
+        EXCLUDED_DIRS = {".venv", "venv", "__pycache__", ".git", "node_modules", ".tox", ".mypy_cache", ".pytest_cache"}
         db_state = self._get_stored_hashes()
 
         current_files = {
-            str(p.relative_to(self.base_storage)): p
+            self._get_storage_key(p): p
             for p in self.data_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS and not any(part in EXCLUDED_DIRS for part in p.parts)
         }
 
         for rel_path in list(db_state.keys()):
             if rel_path not in current_files:
-                full_path = self.base_storage / rel_path
+                full_path = Path(rel_path) if Path(rel_path).is_absolute() else self.base_storage / rel_path
                 self.remove_file(str(full_path))
 
         to_process = []
