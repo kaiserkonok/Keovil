@@ -83,7 +83,7 @@ class ColBERTEngine:
             # Use local embedded Qdrant
             qdrant_path = Path.home() / ".keovil" / "qdrant"
             qdrant_path.mkdir(parents=True, exist_ok=True)
-            self.client = QdrantClient(location=str(qdrant_path))
+            self.client = QdrantClient(path=str(qdrant_path))
 
         # This now receives 'krag_dev' or 'krag_prod' from CollegeRAG
         self.collection_name = collection_name
