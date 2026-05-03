@@ -12,7 +12,7 @@
 
 **Ask questions in plain English. Keovil queries your files.**
 
-Upload PDFs, text files, code — or connect CSV, Excel, SQLite databases. Keovil generates the queries and returns results. Document processing runs locally on your GPU, with flexible LLM options (cloud or local).
+Upload PDFs, text files, code, and more. Or query CSV, Excel, SQLite databases via the web app. Keovil generates the queries and returns results. Document processing runs locally on your GPU, with flexible LLM options (cloud or local).
 
 ## Installation
 
@@ -64,68 +64,73 @@ Then set `QDRANT_HOST=your-server` if not on localhost.
 
 ---
 
-## Quick Usage Examples
-
-### Using the SDK in your Python projects
-
-```python
-from keovil import KeovilRAG
-from keovil.utils.llm_config import LLMConfig
-
-# Initialize RAG system with default Ollama
-rag = KeovilRAG(data_dir="/path/to/your/files")
-
-# Or use a specific LLM provider
-config = LLMConfig(provider="openai", model="gpt-4o", openai_api_key="sk-...")
-rag = KeovilRAG(data_dir="/path/to/files", llm_config=config)
-
-# Index your files (PDF, text, CSV, Excel, etc.)
-rag.ingest(["document1.pdf", "data.csv", "notes.txt"])
-
-# Ask questions in natural language
-answer = rag.query("What are the main findings in the documents?")
-print(answer)
-
-# For chat-like conversations
-history = []
-answer = rag.query("What was the revenue last year?", history)
-history.extend([("You", "What was the revenue last year?"), ("AI", answer)])
-answer = rag.query("How does it compare to this year?", history)
-```
-
-### Using the Full Web Application
-
-```bash
-# After installation, run the web interface
-python -m keovil_web.app
-
-# Then visit http://localhost:5000 in your browser
-# Features:
-# - Drag & drop files for instant indexing
-# - Natural language querying of documents
-# - SQL querying of structured data (CSV, Excel, etc.)
-# - File system explorer
-# - Secure hardware-based authentication
-# - Multi-LLM provider support (Ollama, OpenAI, Anthropic, OpenRouter, Gemini)
-```
-
----
-
 ## Quick Start
+
+### Web App
 
 ```bash
 # 1. Install Keovil
 pip install git+https://github.com/kaiserkonok/Keovil.git
 
-# 2. Run the web app
+# 2. Run the web app (Qdrant runs automatically!)
 python -m keovil_web
 ```
 
 Open [http://localhost:5000](http://localhost:5000)
 
 > **That's it!** Qdrant runs in embedded mode automatically. No Docker needed.
-> 
+>
 > For local LLM, also install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`
+
+### SDK (For Developers)
+
+```python
+from keovil import KeovilRAG
+from keovil.utils.llm_config import LLMConfig
+
+# Initialize with default Ollama
+rag = KeovilRAG(data_dir="/path/to/your/files")
+
+# Or use a specific LLM provider
+config = LLMConfig(provider="openai", model="gpt-4o", openai_api_key="sk-...")
+rag = KeovilRAG(data_dir="/path/to/files", llm_config=config)
+
+# Index your files (PDF, text, code, etc.)
+rag.ingest(["document1.pdf", "notes.txt"])
+
+# Ask questions in natural language
+answer = rag.query("What is the recommended dosage for adults over 65?")
+print(answer)
+
+# For chat-like conversations
+history = []
+answer = rag.query("What are the API rate limits for the Pro plan?", history)
+history.extend([("You", "What are the API rate limits for the Pro plan?"), ("AI", answer)])
+answer = rag.query("Does the Enterprise plan include SSO?", history)
+```
+
+---
+
+## Linux Installation
+
+```bash
+# Option 1: Just Keovil (Qdrant auto-runs in embedded mode)
+pip install git+https://github.com/kaiserkonok/Keovil.git
+python -m keovil_web
+
+# Option 2: With local Ollama (if using local LLM)
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull qwen2.5-coder:7b-instruct
+pip install git+https://github.com/kaiserkonok/Keovil.git
+python -m keovil_web
+
+# Option 3: With external Qdrant (for better performance)
+pip install git+https://github.com/kaiserkonok/Keovil.git
+curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-amd64.tar.gz -o qdrant.tar.gz
+tar -xzf qdrant.tar.gz
+./qdrant &
+python -m keovil_web
+```
 
 ---
 
@@ -133,7 +138,7 @@ Open [http://localhost:5000](http://localhost:5000)
 
 | | |
 |:---|:---|
-| 🗄️ **Structured Data Analysis** | Query CSV, Excel, SQLite, Parquet via natural language. Keovil generates and executes SQL via DuckDB. |
+| 🗄️ **Structured Data Analysis (Web App)** | Query CSV, Excel, SQLite, Parquet via natural language. Keovil generates and executes SQL via DuckDB. |
 | 📄 **Document Q&A** | Ask questions about PDFs, text files, code. Built on ColBERT retrieval with Qdrant. Docling parses documents locally. |
 | 🔄 **Automatic Indexing** | Drop files in a folder — Keovil syncs and indexes them automatically. |
 | 🔒 **Total Privacy** | Document processing runs locally. Cloud LLMs are optional - use local Ollama for full privacy. |
@@ -228,8 +233,8 @@ rag = KeovilRAG(data_dir="/path", llm_config=config)
 ## Data Flow
 
 ```
-DOCUMENTS                          STRUCTURED DATA
-─────────                          ───────────────
+DOCUMENTS                          STRUCTURED DATA (Web App Only)
+─────────                          ──────────────────────────────
 
 User drops files ────────────────── User drops files
      │                                    │
@@ -275,7 +280,7 @@ Qdrant VectorDB ────────────────── DuckDB
 | GPU VRAM | 6GB (RTX 3060) | 8GB+ (RTX 4060/4070) |
 | RAM | 16GB | 32GB |
 
-> Cloud LLMs don't use local GPU - GPU only needed for Docling (document parsing) + ColBERT (embeddings). 6GB is unconfirmed but likely works; 8GB tested and works.
+> Cloud LLMs don't use local GPU - GPU only needed for Docling (document parsing) + ColBERT (embeddings). 6GB minimum tested and working; 8GB recommended.
 
 #### With Local LLM (Ollama)
 
@@ -333,29 +338,6 @@ Qdrant VectorDB ────────────────── DuckDB
 ├── database/              # SQLite manifest + chat history
 ├── config.json            # LLM provider settings
 └── qdrant/               # Vector embeddings
-```
-
----
-
-## Installation (Linux)
-
-```bash
-# Option 1: Just Keovil (Qdrant auto-runs in embedded mode)
-pip install git+https://github.com/kaiserkonok/Keovil.git
-python -m keovil_web
-
-# Option 2: With local Ollama (if using local LLM)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull qwen2.5-coder:7b-instruct
-pip install git+https://github.com/kaiserkonok/Keovil.git
-python -m keovil_web
-
-# Option 3: With external Qdrant (for better performance)
-pip install git+https://github.com/kaiserkonok/Keovil.git
-curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-amd64.tar.gz -o qdrant.tar.gz
-tar -xzf qdrant.tar.gz
-./qdrant &
-python -m keovil_web
 ```
 
 ---
