@@ -64,8 +64,29 @@ class ColBERTRetriever(BaseRetriever):
         return python_friendly_docs
 
 
+def _check_cuda_compatible():
+    """Check if GPU can actually run ModernBERT kernels."""
+    if not torch.cuda.is_available():
+        return False
+    major, _ = torch.cuda.get_device_capability()
+    if major < 8:
+        print(f"{Fore.YELLOW}[ColBERT] GPU compute capability {major}.x too old for ModernBERT, falling back to CPU{Style.RESET_ALL}")
+        return False
+    # Test a tiny CUDA operation to catch driver/runtime mismatches
+    try:
+        x = torch.ones(1, device="cuda")
+        _ = x + 1
+        return True
+    except Exception:
+        print(f"{Fore.YELLOW}[ColBERT] CUDA runtime test failed, falling back to CPU{Style.RESET_ALL}")
+        return False
+
+
 class ColBERTEngine:
     def __init__(self, collection_name, device="cuda"):
+        # Validate CUDA compatibility, fallback to CPU if needed
+        if device == "cuda" and not _check_cuda_compatible():
+            device = "cpu"
         # Connect to Qdrant - try external first, fallback to embedded
         q_host = os.getenv("QDRANT_HOST", "localhost")
 
@@ -96,7 +117,7 @@ class ColBERTEngine:
         )
 
         print(
-            f"{Fore.MAGENTA} Device checking from colbert: {'GPU' if torch.cuda.is_available() else 'CPU'}"
+            f"{Fore.MAGENTA} Device checking from colbert: {'GPU' if device == 'cuda' else 'CPU'}{Style.RESET_ALL}"
         )
 
         # Critical: Set up the specific isolated collection
