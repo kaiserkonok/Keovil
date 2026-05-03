@@ -8,6 +8,7 @@
 [![Python: 3.12+](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://python.org)
 [![Platform: Linux](https://img.shields.io/badge/Platform-Linux-green.svg)](https://linux.org)
 [![Hardware: Flexible](https://img.shields.io/badge/Hardware-Flexible-green)](#requirements)
+[![PyPI](https://img.shields.io/pypi/v/keovil.svg)](https://pypi.org/project/keovil/)
 [![GitHub Stars](https://img.shields.io/github/stars/kaiserkonok/Keovil?style=social)](https://github.com/kaiserkonok/Keovil)
 
 **Ask questions in plain English. Keovil queries your files.**
@@ -16,14 +17,19 @@ Upload PDFs, text files, code, and more. Or query CSV, Excel, SQLite databases v
 
 ## Installation
 
-### Option 1: Install from GitHub (Recommended)
+### Option 1: Install from PyPI (Recommended)
 
 ```bash
-# Install the SDK and web app
+pip install keovil
+```
+
+### Option 2: Install from GitHub (Latest Development)
+
+```bash
 pip install git+https://github.com/kaiserkonok/Keovil.git
 ```
 
-### Option 2: Local Development Install
+### Option 3: Local Development Install
 
 ```bash
 # Clone the repository
@@ -34,11 +40,11 @@ cd Keovil
 pip install -e .
 ```
 
-### Option 3: Web App Only (Quick Start - No Docker!)
+### Quick Start
 
 ```bash
 # 1. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git
+pip install keovil
 
 # 2. Run the web app (Qdrant runs automatically!)
 python -m keovil_web
@@ -70,7 +76,7 @@ Then set `QDRANT_HOST=your-server` if not on localhost.
 
 ```bash
 # 1. Install Keovil
-pip install git+https://github.com/kaiserkonok/Keovil.git
+pip install keovil
 
 # 2. Run the web app (Qdrant runs automatically!)
 python -m keovil_web
@@ -115,17 +121,17 @@ answer = rag.query("Does the Enterprise plan include SSO?", history)
 
 ```bash
 # Option 1: Just Keovil (Qdrant auto-runs in embedded mode)
-pip install git+https://github.com/kaiserkonok/Keovil.git
+pip install keovil
 python -m keovil_web
 
 # Option 2: With local Ollama (if using local LLM)
 curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5-coder:7b-instruct
-pip install git+https://github.com/kaiserkonok/Keovil.git
+pip install keovil
 python -m keovil_web
 
 # Option 3: With external Qdrant (for better performance)
-pip install git+https://github.com/kaiserkonok/Keovil.git
+pip install keovil
 curl -L https://github.com/qdrant/qdrant/releases/download/v1.7.4/qdrant-linux-amd64.tar.gz -o qdrant.tar.gz
 tar -xzf qdrant.tar.gz
 ./qdrant &
