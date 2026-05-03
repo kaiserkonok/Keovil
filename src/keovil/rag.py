@@ -124,6 +124,9 @@ class KeovilRAG:
 
         self._build_rag_chain()
 
+        if auto_index:
+            self._initial_sync()
+
     @property
     def llm(self):
         """Get fresh LLM instance from current config (no restart needed)."""
@@ -216,9 +219,6 @@ class KeovilRAG:
         """Ensure RAG chain is built before querying."""
         if not hasattr(self, 'rag_chain') or self.rag_chain is None:
             self._build_rag_chain()
-
-        if auto_index:
-            self._initial_sync()
 
     def _init_manifest_db(self):
         conn = sqlite3.connect(self.manifest_db)
